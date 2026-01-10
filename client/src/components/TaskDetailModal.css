@@ -1,0 +1,258 @@
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.task-detail-modal {
+  background: white;
+  border-radius: 10px;
+  max-width: 700px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #f8f9fa;
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: #333;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 28px;
+  color: #666;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.modal-close:hover {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.task-detail-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Admin Instructions Section - Prominent */
+.admin-instructions-section {
+  background: #fff3cd;
+  border: 2px solid #ffc107;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.admin-instructions-section h3 {
+  margin: 0 0 16px 0;
+  color: #856404;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.admin-instructions-section.no-instructions {
+  background: #f8f9fa;
+  border-color: #dee2e6;
+}
+
+.admin-instructions-section.no-instructions p {
+  margin: 0;
+  color: #6c757d;
+  font-style: italic;
+}
+
+.instruction-block {
+  margin-bottom: 16px;
+}
+
+.instruction-block:last-child {
+  margin-bottom: 0;
+}
+
+.instruction-label {
+  font-weight: 600;
+  color: #856404;
+  margin-bottom: 8px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.instruction-content {
+  color: #333;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: white;
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid #ffc107;
+}
+
+/* Task Information Section */
+.task-info-section {
+  margin-top: 0;
+}
+
+.task-info-section h3 {
+  margin: 0 0 16px 0;
+  color: #333;
+  font-size: 18px;
+  font-weight: 600;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 16px;
+  align-items: start;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-row.full-width {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.info-label {
+  font-weight: 600;
+  color: #666;
+  font-size: 14px;
+}
+
+.info-value {
+  color: #333;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.rejection-remarks {
+  color: #dc3545;
+  background: #fff5f5;
+  padding: 12px;
+  border-radius: 4px;
+  border-left: 3px solid #dc3545;
+  white-space: pre-wrap;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge.status-assigned {
+  background-color: #6c757d;
+  color: white;
+}
+
+.status-badge.status-in-progress-tech {
+  background-color: #007bff;
+  color: white;
+}
+
+.status-badge.status-ready-for-review {
+  background-color: #17a2b8;
+  color: white;
+}
+
+.status-badge.status-approved {
+  background-color: #28a745;
+  color: white;
+}
+
+.status-badge.status-rejected-needs-fix {
+  background-color: #dc3545;
+  color: white;
+}
+
+.modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: flex-end;
+  background: #f8f9fa;
+}
+
+.close-button {
+  padding: 10px 24px;
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.3s;
+}
+
+.close-button:hover {
+  background: #5a6268;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .task-detail-modal {
+    max-width: 95%;
+    max-height: 95vh;
+  }
+
+  .info-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .info-label {
+    font-size: 13px;
+  }
+}

@@ -1,0 +1,50 @@
+.proctor-chart-container {
+  margin: 30px 0;
+  padding: 20px;
+  background-color: #fff;
+  border: 1px solid #000;
+  border-width: 2px;
+}
+
+.chart-message {
+  padding: 40px;
+  text-align: center;
+  color: #666;
+  font-size: 14px;
+  background-color: #f8f9fa;
+  border: 1px dashed #ddd;
+  border-radius: 4px;
+}
+
+.chart-message-small {
+  margin-top: 10px;
+  padding: 10px;
+  text-align: center;
+  color: #666;
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* ZAV Label styling */
+.zav-label {
+  font-family: Arial, sans-serif;
+}
+
+/* Remove default Recharts styling */
+.recharts-wrapper {
+  background-color: #fff !important;
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: #e0e0e0;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .proctor-chart-container {
+    padding: 10px;
+    margin: 20px -10px;
+  }
+}
+

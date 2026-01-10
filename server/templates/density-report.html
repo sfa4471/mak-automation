@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Density Report</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      font-size: 9pt;
+      line-height: 1.2;
+    }
+    
+    body {
+      padding: 15px;
+      position: relative;
+      border: 3px solid #000;
+      min-height: 11in;
+      width: 8.5in;
+      margin: 0 auto;
+    }
+    
+    .header-section {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+    
+    .company-info {
+      font-size: 9pt;
+      line-height: 1.4;
+    }
+    
+    .logo-area {
+      width: 120px;
+      height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    
+    .logo-area img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    
+    .logo-placeholder {
+      width: 120px;
+      height: 80px;
+      border: 1px solid #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8pt;
+      color: #666;
+    }
+    
+    .title {
+      text-align: center;
+      font-size: 14pt;
+      font-weight: bold;
+      text-decoration: underline;
+      margin: 10px 0;
+    }
+    
+    .header-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 20px;
+      margin-bottom: 12px;
+      font-size: 9pt;
+    }
+    
+    .header-field {
+      display: flex;
+    }
+    
+    .header-label {
+      font-weight: bold;
+      margin-right: 5px;
+      min-width: 90px;
+    }
+    
+    .header-value {
+      border-bottom: 1px solid #000;
+      flex: 1;
+      min-height: 14px;
+    }
+    
+    .main-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 10px;
+      font-size: 8pt;
+    }
+    
+    .main-table th,
+    .main-table td {
+      border: 1px solid #000;
+      padding: 3px 4px;
+      text-align: left;
+    }
+    
+    .main-table th {
+      background-color: #f0f0f0;
+      font-weight: bold;
+      text-align: center;
+    }
+    
+    .main-table td {
+      text-align: center;
+    }
+    
+    .main-table td:first-child,
+    .main-table td:nth-child(3),
+    .main-table td:nth-child(7) {
+      text-align: center;
+    }
+    
+    .main-table td:nth-child(2) {
+      text-align: left;
+      padding-left: 4px;
+    }
+    
+    .proctor-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 10px;
+      font-size: 8pt;
+    }
+    
+    .proctor-table th,
+    .proctor-table td {
+      border: 1px solid #000;
+      padding: 3px 4px;
+      text-align: left;
+    }
+    
+    .proctor-table th {
+      background-color: #f0f0f0;
+      font-weight: bold;
+      text-align: center;
+    }
+    
+    .proctor-table td:first-child {
+      text-align: center;
+    }
+    
+    .bottom-sections {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    
+    .section-box {
+      border: 1px solid #000;
+      padding: 4px;
+      font-size: 8pt;
+    }
+    
+    .section-title {
+      font-weight: bold;
+      margin-bottom: 3px;
+      padding-bottom: 2px;
+    }
+    
+    .section-content {
+      line-height: 1.4;
+    }
+    
+    .section-content div {
+      margin-bottom: 2px;
+    }
+    
+    .specs-box {
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .specs-box .section-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    
+    .instrument-box .section-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    
+    .methods-box .section-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    
+    .footer-section {
+      margin-top: 8px;
+      display: flex;
+      gap: 10px;
+    }
+    
+    .remarks-box {
+      flex: 1;
+      border: 1px solid #000;
+      padding: 4px;
+      min-height: 40px;
+      font-size: 8pt;
+    }
+    
+    .tech-time {
+      width: 200px;
+      border: 1px solid #000;
+      padding: 4px;
+      font-size: 8pt;
+    }
+    
+    .disclaimer {
+      margin-top: 8px;
+      font-size: 7pt;
+      font-style: italic;
+      text-align: center;
+      line-height: 1.4;
+      color: #333;
+    }
+    
+    .checkbox {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 1px solid #000;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    
+    .checkbox.checked::after {
+      content: 'X';
+      display: block;
+      text-align: center;
+      line-height: 12px;
+      font-size: 10px;
+      font-weight: bold;
+    }
+    
+    .checkbox:not(.checked)::after {
+      content: '';
+    }
+  </style>
+</head>
+<body>
+  <div class="header-section">
+    <div class="company-info">
+      <div>MAK Lonestar Consulting, LLC</div>
+      <div>940 N Beltline Road, Suite 107, Irving, TX 75061</div>
+      <div>Tel 214-718-1250</div>
+    </div>
+    <div class="logo-area">{{LOGO_IMAGE}}</div>
+  </div>
+  
+  <div class="title">IN-PLACE MOISTURE DENSITY TEST RESULTS</div>
+  
+  <div class="header-fields">
+    <div class="header-field">
+      <span class="header-label">Client:</span>
+      <span class="header-value">{{CLIENT_NAME}}</span>
+    </div>
+    <div class="header-field">
+      <span class="header-label">Date Performed:</span>
+      <span class="header-value">{{DATE_PERFORMED}}</span>
+    </div>
+    <div class="header-field">
+      <span class="header-label">Project:</span>
+      <span class="header-value">{{PROJECT_NAME}}</span>
+    </div>
+    <div class="header-field">
+      <span class="header-label">Project No:</span>
+      <span class="header-value">{{PROJECT_NUMBER}}</span>
+    </div>
+    <div class="header-field">
+      <span class="header-label">Structure:</span>
+      <span class="header-value">{{STRUCTURE}}</span>
+    </div>
+  </div>
+  
+  <table class="main-table">
+    <thead>
+      <tr>
+        <th>Test No.</th>
+        <th>Test Location</th>
+        <th>Dept/Lift</th>
+        <th>Wet Density (pcf)</th>
+        <th>Field Moisture (%)</th>
+        <th>Dry Density (pcf)</th>
+        <th>Proctor No.</th>
+        <th>Percent Proctor Density</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{TEST_ROWS}}
+    </tbody>
+  </table>
+  
+  <table class="proctor-table">
+    <thead>
+      <tr>
+        <th>Proctor No:</th>
+        <th>Description</th>
+        <th>Opt. Moisture</th>
+        <th>Max. Density</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{PROCTOR_ROWS}}
+    </tbody>
+  </table>
+  
+  <div class="bottom-sections">
+    <div class="section-box specs-box">
+      <div class="section-title">Specs.</div>
+      <div class="section-content">
+        <div><strong>Dens. (%)</strong> {{DENS_SPEC}}</div>
+        <div><strong>Moist. (%)</strong> {{MOIST_SPEC}}</div>
+      </div>
+    </div>
+    <div class="section-box instrument-box">
+      <div class="section-title">Gauge No: {{GAUGE_NO}}</div>
+      <div class="section-content">
+        <div>Std. Density Count: {{STD_DENSITY_COUNT}}</div>
+        <div>Std. Moist Count: {{STD_MOIST_COUNT}}</div>
+        <div>Trans. Depth (in.): {{TRANS_DEPTH}}</div>
+      </div>
+    </div>
+    <div class="section-box methods-box">
+      <div class="section-title">Test Methods:</div>
+      <div class="section-content">
+        <div><span class="checkbox {{METHOD_D2922}}"></span>ASTM D 2922</div>
+        <div><span class="checkbox {{METHOD_D3017}}"></span>ASTM D 3017</div>
+        <div><span class="checkbox {{METHOD_D698}}"></span>ASTM D 698</div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="footer-section">
+    <div class="remarks-box">
+      <strong>Remarks:</strong> {{REMARKS}}
+    </div>
+    <div class="tech-time">
+      <div><strong>Tech:</strong> {{TECH_NAME}}</div>
+      <div><strong>Time:</strong> {{TIME}}</div>
+    </div>
+  </div>
+  
+  <div class="disclaimer">
+    The results shown on this report are for the exclusive use of the client for whom they were obtained and apply only to the samples tested and/or inspected. They are not intended to be indicative of the qualities of apparently identical products. The use of our name must receive prior written approval. Reports must be reproduced in their entirety.
+  </div>
+</body>
+</html>
+

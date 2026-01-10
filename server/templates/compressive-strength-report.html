@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Compressive Strength Field Report</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      font-size: 9pt;
+      line-height: 1.2;
+    }
+    
+    body {
+      padding: 15px;
+      position: relative;
+      border: 3px solid #000;
+      min-height: 11in;
+      width: 8.5in;
+      margin: 0 auto;
+    }
+    
+    .header-section {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+    
+    .company-info {
+      font-size: 9pt;
+      line-height: 1.4;
+    }
+    
+    .logo-area {
+      width: 120px;
+      height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    
+    .logo-area img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    
+    .logo-placeholder {
+      width: 120px;
+      height: 80px;
+      border: 1px solid #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8pt;
+      color: #666;
+    }
+    
+    .title {
+      text-align: center;
+      font-size: 14pt;
+      font-weight: bold;
+      text-decoration: underline;
+      margin: 10px 0;
+    }
+    
+    .section {
+      margin-bottom: 12px;
+    }
+    
+    .section-title {
+      font-size: 11pt;
+      font-weight: bold;
+      text-decoration: underline;
+      margin-bottom: 8px;
+    }
+    
+    .project-info-box {
+      border: 1px solid #000;
+      padding: 8px;
+      font-size: 10pt;
+    }
+    
+    .project-info-box div {
+      margin-bottom: 5px;
+    }
+    
+    .placement-info-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 10px;
+      font-size: 10pt;
+    }
+    
+    .placement-info-table td {
+      border: 1px solid #000;
+      padding: 4px 8px;
+      text-align: center;
+    }
+    
+    .sample-info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 20px;
+      margin-bottom: 10px;
+      font-size: 10pt;
+    }
+    
+    .sample-info-row {
+      display: flex;
+      align-items: flex-start;
+    }
+    
+    .sample-info-label {
+      font-weight: bold;
+      margin-right: 5px;
+      min-width: 140px;
+      flex-shrink: 0;
+    }
+    
+    .sample-info-value {
+      flex: 1;
+      border-bottom: 1px solid #000;
+      min-height: 14px;
+    }
+    
+    .test-results-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 9pt;
+    }
+    
+    .test-results-table th,
+    .test-results-table td {
+      border: 1px solid #000;
+      padding: 4px;
+      text-align: center;
+    }
+    
+    .test-results-table th {
+      background-color: #f0f0f0;
+      font-weight: bold;
+    }
+    
+    .specimen-info-box {
+      border: 1px solid #000;
+      padding: 8px;
+      margin-bottom: 10px;
+      font-size: 10pt;
+    }
+    
+    .specimen-dims-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 9pt;
+    }
+    
+    .specimen-dims-table th,
+    .specimen-dims-table td {
+      border: 1px solid #000;
+      padding: 4px;
+      text-align: center;
+    }
+    
+    .specimen-dims-table th {
+      background-color: #f0f0f0;
+      font-weight: bold;
+    }
+    
+    .cylinders-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 10px;
+      font-size: 8pt;
+    }
+    
+    .cylinders-table th,
+    .cylinders-table td {
+      border: 1px solid #000;
+      padding: 3px 4px;
+      text-align: center;
+    }
+    
+    .cylinders-table th {
+      background-color: #f0f0f0;
+      font-weight: bold;
+      font-size: 7pt;
+    }
+    
+    .cylinders-table td:first-child,
+    .cylinders-table td:nth-child(2),
+    .cylinders-table td:nth-child(3) {
+      text-align: center;
+    }
+    
+    .remarks-box {
+      border: 1px solid #000;
+      padding: 8px;
+      min-height: 60px;
+      margin-bottom: 10px;
+      font-size: 9pt;
+    }
+    
+    .disclaimer {
+      margin-top: 10px;
+      font-size: 7pt;
+      font-style: italic;
+      text-align: center;
+      line-height: 1.4;
+      color: #333;
+    }
+    
+    .footer {
+      position: absolute;
+      bottom: 15px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 8pt;
+      padding: 0 15px;
+    }
+    
+    .footer-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header-section">
+    <div class="company-info">
+      <div>MAK Lonestar Consulting, LLC</div>
+      <div>940 N Beltline Road, Suite 107, Irving, TX 75061</div>
+      <div>Tel (214) 718-1250</div>
+    </div>
+    <div class="logo-area">{{LOGO_IMAGE}}</div>
+  </div>
+  
+  <div class="title">COMPRESSIVE STRENGTH FIELD REPORT</div>
+  
+  <!-- Project Information -->
+  <div class="section">
+    <div class="section-title">Project Information</div>
+    <div class="project-info-box">
+      <div><strong>PROJECT:</strong> {{PROJECT_NAME}}</div>
+      <div><strong>PROJECT NO:</strong> {{PROJECT_NUMBER}}</div>
+    </div>
+  </div>
+  
+  <!-- Placement Information -->
+  <div class="section">
+    <div class="section-title">Placement Information</div>
+    <table class="placement-info-table">
+      <tr>
+        <td><strong>TECHNICIAN:</strong> {{TECHNICIAN}}</td>
+        <td><strong>WEATHER:</strong> {{WEATHER}}</td>
+      </tr>
+      <tr>
+        <td><strong>PLACEMENT DATE:</strong> {{PLACEMENT_DATE}}</td>
+        <td><strong>SPEC. STRENGTH, psi:</strong> {{SPEC_STRENGTH}} at {{SPEC_STRENGTH_DAYS}} days</td>
+      </tr>
+    </table>
+  </div>
+  
+  <!-- Sample Information -->
+  <div class="section">
+    <div class="section-title">Sample Information</div>
+    <div class="sample-info-grid">
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>STRUCTURE:</strong></span>
+        <span class="sample-info-value">{{STRUCTURE}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>SUPPLIER:</strong></span>
+        <span class="sample-info-value">{{SUPPLIER}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>SAMPLE LOCATION:</strong></span>
+        <span class="sample-info-value">{{SAMPLE_LOCATION}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>TIME BATCHED:</strong></span>
+        <span class="sample-info-value">{{TIME_BATCHED}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>CLASS/MIX ID:</strong></span>
+        <span class="sample-info-value">{{CLASS_MIX_ID}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>TIME SAMPLED:</strong></span>
+        <span class="sample-info-value">{{TIME_SAMPLED}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>YARDS BATCHED:</strong></span>
+        <span class="sample-info-value">{{YARDS_BATCHED}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>TRUCK NO. / TICKET NO.</strong></span>
+        <span class="sample-info-value">{{TRUCK_NO}}/{{TICKET_NO}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>PLANT:</strong></span>
+        <span class="sample-info-value">{{PLANT}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>YARDS PLACED/TOTAL YARDS:</strong></span>
+        <span class="sample-info-value">{{YARDS_PLACED}}/{{TOTAL_YARDS}}</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>WATER ADDED:</strong></span>
+        <span class="sample-info-value">{{WATER_ADDED}} / Gal.</span>
+      </div>
+      <div class="sample-info-row">
+        <span class="sample-info-label"><strong>FINAL CURE METHOD:</strong></span>
+        <span class="sample-info-value">{{FINAL_CURE_METHOD}}</span>
+      </div>
+    </div>
+    
+    <!-- Test Results Table -->
+    <table class="test-results-table">
+      <thead>
+        <tr>
+          <th>TEST RESULTS</th>
+          <th>MEASURED</th>
+          <th>SPECS</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>AMBIENT TEMP:</strong></td>
+          <td>{{AMBIENT_TEMP_MEASURED}}° F</td>
+          <td>{{AMBIENT_TEMP_SPECS}}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><strong>CONCRETE TEMP:</strong></td>
+          <td>{{CONCRETE_TEMP_MEASURED}}° F</td>
+          <td>{{CONCRETE_TEMP_SPECS}}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><strong>SLUMP:</strong></td>
+          <td>{{SLUMP_MEASURED}}</td>
+          <td>{{SLUMP_SPECS}}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><strong>AIR CONTENT BY VOL:</strong></td>
+          <td>{{AIR_CONTENT_MEASURED}}</td>
+          <td>{{AIR_CONTENT_SPECS}}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><strong>UNIT WEIGHT (pcf):</strong></td>
+          <td>{{UNIT_WEIGHT}}</td>
+          <td></td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  
+  <!-- Specimen Information -->
+  <div class="section">
+    <div class="section-title">Specimen Information</div>
+    <div class="specimen-info-box">
+      <div><strong>SPECIMEN NO:</strong> {{SPECIMEN_NO}}</div>
+      <div><strong>SPECIMEN TYPE:</strong> {{SPECIMEN_TYPE}}</div>
+      <div style="margin-top: 8px;"><strong>SPECIMEN DIMENSIONS</strong></div>
+      <table class="specimen-dims-table">
+        <thead>
+          <tr>
+            <th>DIAMETER / WIDTH</th>
+            <th>HEIGHT / LENGTH</th>
+            <th>SPAN / HEIGHT</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>{{SPECIMEN_DIAMETER}}</td>
+            <td>{{SPECIMEN_HEIGHT}}</td>
+            <td>{{SPECIMEN_SPAN}}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  
+  <!-- Concrete Cylinders Table -->
+  <div class="section">
+    <div class="section-title" style="text-decoration: underline;">CONCRETE CYLINDERS COMPRESSIVE STRENGTH TESTS</div>
+    <table class="cylinders-table">
+      <thead>
+        <tr>
+          <th>CYLINDER NUMBER</th>
+          <th>AGE (DAYS)</th>
+          <th>DATE TESTED</th>
+          <th>AVG LENGTH (in)</th>
+          <th>AVG WIDTH (in)</th>
+          <th>AVG DIAMETER (in)</th>
+          <th>CROSS-SECTIONAL AREA (sq.in)</th>
+          <th>TOTAL LOAD (lbs)</th>
+          <th>Compressive Strength (psi)</th>
+          <th>Fracture Type</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{CYLINDER_ROWS}}
+      </tbody>
+    </table>
+  </div>
+  
+  <!-- Remarks -->
+  <div class="section">
+    <div class="section-title">REMARKS:</div>
+    <div class="remarks-box">{{REMARKS}}</div>
+  </div>
+  
+  <!-- Disclaimer -->
+  <div class="disclaimer">
+    The results shown on this report are for the exclusive use of the client for whom they were obtained and apply only to the samples tested and/or observed. They are not intended to be indicative of the qualities of apparently identical products. The use of our name must receive prior written approval. Reports must be reproduced in their entirety.
+  </div>
+  
+  <!-- Footer -->
+  <div class="footer">
+    <div>Page 1</div>
+    <div class="footer-info">
+      <div>MAK Lonestar Consulting, LLC</div>
+      <div></div>
+    </div>
+  </div>
+</body>
+</html>
+

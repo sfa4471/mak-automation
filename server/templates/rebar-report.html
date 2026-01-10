@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rebar Inspection Report</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      font-size: 10pt;
+      line-height: 1.4;
+    }
+    
+    body {
+      padding: 20px;
+      position: relative;
+      border: 3px solid #000;
+      min-height: 11in;
+      width: 8.5in;
+      margin: 0 auto;
+    }
+    
+    .header-section {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 15px;
+    }
+    
+    .company-info {
+      font-size: 9pt;
+      line-height: 1.5;
+    }
+    
+    .logo-area {
+      width: 120px;
+      height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    
+    .logo-area img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    
+    .title {
+      text-align: center;
+      font-size: 16pt;
+      font-weight: bold;
+      text-decoration: underline;
+      margin: 15px 0 20px 0;
+      text-transform: uppercase;
+    }
+    
+    /* Top block: 2-column grid */
+    .header-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-bottom: 15px;
+      font-size: 10pt;
+    }
+    
+    .header-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    
+    /* Single-line field (label + value on same row) */
+    .field-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 10pt;
+    }
+    
+    .field-inline-label {
+      font-weight: bold;
+      flex-shrink: 0;
+      min-width: 140px;
+    }
+    
+    .field-inline-value {
+      flex: 1;
+      border-bottom: 1px solid #000;
+      min-height: 18px;
+      padding-bottom: 2px;
+    }
+    
+    /* Centered single-line field (for DATE INSPECTION PERFORMED) */
+    .field-inline-centered {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin: 20px 0;
+      font-size: 11pt;
+    }
+    
+    .field-inline-centered-label {
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    
+    .field-inline-centered-value {
+      border-bottom: 2px solid #000;
+      min-width: 150px;
+      padding-bottom: 3px;
+      text-align: center;
+    }
+    
+    .static-text {
+      font-style: italic;
+      color: #333;
+      border-bottom: none !important;
+    }
+    
+    .results-section {
+      margin: 20px 0;
+    }
+    
+    .results-title {
+      font-weight: bold;
+      font-size: 11pt;
+      margin-bottom: 10px;
+    }
+    
+    .prefilled-paragraph {
+      margin: 10px 0;
+      line-height: 1.6;
+      font-size: 10pt;
+    }
+    
+    .location-detail {
+      margin: 10px 0 10px 20px;
+      line-height: 1.6;
+      font-size: 10pt;
+    }
+    
+    .wire-mesh-paragraph {
+      margin: 10px 0;
+      line-height: 1.6;
+      font-size: 10pt;
+    }
+    
+    .signature-block {
+      position: absolute;
+      right: 20px;
+      bottom: 80px;
+      text-align: right;
+      font-size: 9pt;
+      line-height: 1.5;
+    }
+    
+    .signature-line {
+      border-bottom: 1px solid #000;
+      width: 200px;
+      margin: 30px 0 5px auto;
+      min-height: 20px;
+    }
+    
+    .footer {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      font-size: 8pt;
+      text-align: center;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header Section -->
+  <div class="header-section">
+    <div class="company-info">
+      <div>MAK LONESTAR CONSULTING</div>
+      <div>940 N Beltline Road, Suite 107,</div>
+      <div>Irving, TX 75061</div>
+      <div>P: 214-718-1250</div>
+    </div>
+    <div class="logo-area">{{LOGO_IMAGE}}</div>
+  </div>
+  
+  <!-- Title -->
+  <div class="title">REINFORCING STEEL PLACEMENT OBSERVATION</div>
+  
+  <!-- Top block: 2-column grid -->
+  <div class="header-grid">
+    <div class="header-column">
+      <div class="field-inline">
+        <span class="field-inline-label">CLIENT:</span>
+        <span class="field-inline-value">{{CLIENT_NAME}}</span>
+      </div>
+      <div class="field-inline">
+        <span class="field-inline-label">PROJECT:</span>
+        <span class="field-inline-value">{{PROJECT_NAME}}</span>
+      </div>
+    </div>
+    <div class="header-column">
+      <div class="field-inline">
+        <span class="field-inline-label">REPORT DATE:</span>
+        <span class="field-inline-value">{{REPORT_DATE}}</span>
+      </div>
+      <div class="field-inline">
+        <span class="field-inline-label">PROJECT NO:</span>
+        <span class="field-inline-value">{{PROJECT_NUMBER}}</span>
+      </div>
+    </div>
+  </div>
+  
+  <!-- DATE INSPECTION PERFORMED: single line, centered -->
+  <div class="field-inline-centered">
+    <span class="field-inline-centered-label">DATE INSPECTION PERFORMED:</span>
+    <span class="field-inline-centered-value">{{INSPECTION_DATE}}</span>
+  </div>
+  
+  <!-- General Contractor -->
+  <div class="field-inline">
+    <span class="field-inline-label">GENERAL CONTRACTOR:</span>
+    <span class="field-inline-value">{{GENERAL_CONTRACTOR}}</span>
+  </div>
+  
+  <!-- Method of Test (static) -->
+  <div class="field-inline">
+    <span class="field-inline-label">METHOD OF TEST:</span>
+    <span class="field-inline-value static-text">Applicable ACI Recommendations and ASTM Standards</span>
+  </div>
+  
+  <!-- Results / Remarks Section -->
+  <div class="results-section">
+    <div class="results-title">Results / Remarks:</div>
+    
+    <div class="prefilled-paragraph">
+      On the above-mentioned date, a representative of MAK Lonestar Consulting observed reinforcing steel placed at the following location:
+    </div>
+    
+    <div class="location-detail">
+      • {{LOCATION_DETAIL}}
+    </div>
+    
+    <div class="wire-mesh-paragraph">
+      The wire mesh was checked for <strong>{{WIRE_MESH_SPEC}}</strong> wire mesh spec and was placed as per the drawings and specifications. No discrepancies noted at the time of inspection.
+    </div>
+  </div>
+  
+  <!-- Drawings -->
+  <div class="field-inline">
+    <span class="field-inline-label">DRAWINGS:</span>
+    <span class="field-inline-value">{{DRAWINGS}}</span>
+  </div>
+  
+  <!-- Technician Name -->
+  <div class="field-inline">
+    <span class="field-inline-label">TECHNICIAN NAME:</span>
+    <span class="field-inline-value">{{TECHNICIAN_NAME}}</span>
+  </div>
+  
+  <!-- Signature Block -->
+  <div class="signature-block">
+    <div>MAK LONESTAR CONSULTING, INC.</div>
+    <div>Texas Board of Professional Engineers Firm Reg, F-24443</div>
+    <div class="signature-line"></div>
+    <div>Muhammad Awais Khan, P.E.</div>
+    <div>Geotechnical Engineer</div>
+    <div>T +1 214 718 1250 | E maklonestarservices@gmail.com</div>
+  </div>
+  
+  <!-- Footer -->
+  <div class="footer">
+    <div>MAK LONESTAR CONSULTING, INC.</div>
+  </div>
+</body>
+</html>
+

@@ -1,0 +1,941 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { densityAPI, DensityReport, TestRow, ProctorRow } from '../api/density';
+import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
+import { useAuth } from '../context/AuthContext';
+import { authAPI, User } from '../api/auth';
+import './DensityReportForm.css';
+
+const DensityReportForm: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { user, isAdmin } = useAuth();
+  const [task, setTask] = useState<Task | null>(null);
+  const [formData, setFormData] = useState<DensityReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [error, setError] = useState('');
+  const [technicians, setTechnicians] = useState<User[]>([]);
+  const [moistSpecRange, setMoistSpecRange] = useState<string>('');
+  const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
+  const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
+  const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    loadData();
+  }, [id]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const taskId = parseInt(id!);
+      const [taskData, reportData] = await Promise.all([
+        tasksAPI.get(taskId),
+        densityAPI.getByTask(taskId)
+      ]);
+      setTask(taskData);
+      setFormData(reportData);
+
+      // Initialize moisture spec range from min/max values
+      if (reportData) {
+        const min = reportData.moistSpecMin || '';
+        const max = reportData.moistSpecMax || '';
+        if (min && max) {
+          setMoistSpecRange(`${min} to ${max}`);
+        } else if (min || max) {
+          setMoistSpecRange(min || max);
+        } else {
+          setMoistSpecRange('');
+        }
+      }
+
+      // Auto-save initial data if no record exists yet (ensures PDF can be generated)
+      // Check if this is a new/empty report by checking if it has an id
+      // The backend returns an object without id when no record exists
+      if (reportData && taskData && typeof reportData.id === 'undefined') {
+        // Save the initial empty structure to create the database record
+        try {
+          const saved = await densityAPI.saveByTask(taskId, reportData);
+          // Update formData with the saved version (which now has an id)
+          setFormData(saved);
+        } catch (err) {
+          console.error('Error auto-saving initial data:', err);
+          // Don't show error to user, just log it - form will still work
+        }
+      }
+
+      // Load technicians list (for all users - needed for Tech dropdown)
+      try {
+        const techs = await authAPI.listTechnicians();
+        setTechnicians(techs);
+      } catch (err) {
+        console.error('Error loading technicians:', err);
+      }
+
+      // Load task history
+      try {
+        const historyData = await tasksAPI.getHistory(taskId);
+        setHistory(historyData);
+      } catch (err) {
+        console.error('Error loading task history:', err);
+      }
+    } catch (err: any) {
+      console.error('Error loading data:', err);
+      setError(err.response?.data?.error || 'Failed to load report data.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Calculate dry density: dryDensity = wetDensity / (1 + (fieldMoisture / 100))
+  const calculateDryDensity = (wetDensity: string, fieldMoisture: string): string => {
+    const wet = parseFloat(wetDensity);
+    const moisture = parseFloat(fieldMoisture);
+    if (isNaN(wet) || isNaN(moisture)) return '';
+    const dry = wet / (1 + (moisture / 100));
+    return dry.toFixed(1);
+  };
+
+  // Calculate percent proctor density: (dryDensity / maxDensity) * 100
+  // MaxDensitySelected is pulled from the Proctor Summary table based on the Proctor No selected
+  const calculatePercentProctor = (dryDensity: string, proctorNo: string, proctors: ProctorRow[]): string => {
+    // If any required value is missing, return blank
+    if (!dryDensity || !proctorNo || !proctors || proctors.length === 0) return '';
+    
+    const dry = parseFloat(dryDensity);
+    const proctorNum = parseInt(proctorNo);
+    
+    // Validate inputs
+    if (isNaN(dry) || isNaN(proctorNum) || proctorNum < 1 || proctorNum > 6) return '';
+    
+    // Lookup the proctor by Proctor No (array is 0-indexed, so Proctor No 6 = index 5)
+    const proctor = proctors[proctorNum - 1];
+    if (!proctor || !proctor.maxDensity || proctor.maxDensity.trim() === '') return '';
+    
+    const maxDensity = parseFloat(proctor.maxDensity);
+    if (isNaN(maxDensity) || maxDensity <= 0) return '';
+    
+    // Calculate: PercentProctorDensity = (DryDensity / MaxDensitySelected) * 100
+    const percent = (dry / maxDensity) * 100;
+    return percent.toFixed(1);
+  };
+
+  const updateTestRow = (index: number, field: keyof TestRow, value: any) => {
+    if (!formData) return;
+    const newRows = [...formData.testRows];
+    const row = { ...newRows[index] };
+    
+    if (field === 'wetDensity' || field === 'fieldMoisture') {
+      (row as any)[field] = value;
+      // Recalculate dry density
+      row.dryDensity = calculateDryDensity(row.wetDensity, row.fieldMoisture);
+      // Recalculate percent proctor if proctorNo is set
+      if (row.proctorNo && row.dryDensity) {
+        row.percentProctorDensity = calculatePercentProctor(row.dryDensity, row.proctorNo, formData.proctors);
+      }
+    } else if (field === 'proctorNo') {
+      (row as any)[field] = value;
+      // Recalculate percent proctor if dryDensity exists
+      if (row.dryDensity && value) {
+        row.percentProctorDensity = calculatePercentProctor(row.dryDensity, value, formData.proctors);
+      } else {
+        // Clear percent proctor if proctorNo is cleared or dryDensity is missing
+        row.percentProctorDensity = '';
+      }
+    } else {
+      (row as any)[field] = value;
+    }
+    
+    newRows[index] = row;
+    setFormData({ ...formData, testRows: newRows });
+    debouncedSave({ ...formData, testRows: newRows });
+  };
+
+  const updateProctor = (index: number, field: keyof ProctorRow, value: string) => {
+    if (!formData) return;
+    const newProctors = [...formData.proctors];
+    newProctors[index] = { ...newProctors[index], [field]: value };
+    
+    // Recalculate percent proctor for ALL test rows that use this proctor number
+    // Proctor No = index + 1 (e.g., index 5 = Proctor No 6)
+    const proctorNo = String(index + 1);
+    const newRows = formData.testRows.map(row => {
+      // If this row uses the updated proctor number and has dryDensity, recalculate
+      if (row.proctorNo === proctorNo && row.dryDensity) {
+        return {
+          ...row,
+          percentProctorDensity: calculatePercentProctor(row.dryDensity, row.proctorNo, newProctors)
+        };
+      }
+      return row;
+    });
+    
+    setFormData({ ...formData, proctors: newProctors, testRows: newRows });
+    debouncedSave({ ...formData, proctors: newProctors, testRows: newRows });
+  };
+
+  const updateField = (field: keyof DensityReport, value: any) => {
+    if (!formData) return;
+    setFormData({ ...formData, [field]: value });
+    debouncedSave({ ...formData, [field]: value });
+  };
+
+  // Handle moisture spec range text field - parse it to min/max
+  const updateMoistSpecRange = (rangeValue: string) => {
+    if (!formData) return;
+    setMoistSpecRange(rangeValue);
+    
+    // Parse the range string (e.g., "-2 to +2", "-2 to 2", "-2-+2", etc.)
+    let min = '';
+    let max = '';
+    
+    if (rangeValue.trim()) {
+      // Try to parse formats like: "-2 to +2", "-2 to 2", "-2 - +2", "-2-+2", etc.
+      // Match pattern: number (optional sign) whitespace "to" or "-" whitespace number (optional sign)
+      const toMatch = rangeValue.match(/([-+]?\d*\.?\d+)\s*(?:to|-)\s*([-+]?\d*\.?\d+)/i);
+      if (toMatch) {
+        min = toMatch[1].trim();
+        max = toMatch[2].trim();
+      } else {
+        // If no "to" or "-" separator found, try to split by spaces
+        const parts = rangeValue.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          // Take first and last as min/max
+          min = parts[0];
+          max = parts[parts.length - 1];
+        } else if (parts.length === 1) {
+          // Single value - store as min only (max will be empty)
+          min = parts[0];
+        }
+      }
+    }
+    
+    const updatedData = { ...formData, moistSpecMin: min, moistSpecMax: max };
+    setFormData(updatedData);
+    debouncedSave(updatedData);
+  };
+
+  const debouncedSave = useCallback((data: DensityReport) => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(async () => {
+      await saveData(data, false);
+    }, 1000);
+  }, []);
+
+  const saveData = async (data: DensityReport | null, updateStatus?: boolean, status?: string) => {
+    if (!data || !task) return;
+    
+    try {
+      setSaving(true);
+      setSaveStatus('saving');
+      await densityAPI.saveByTask(
+        task.id,
+        data,
+        updateStatus ? status : undefined,
+        isAdmin() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
+      );
+      setSaveStatus('saved');
+      setLastSaved(new Date());
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    } catch (err: any) {
+      console.error('Error saving:', err);
+      setError(err.response?.data?.error || 'Failed to save report.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleManualSave = async () => {
+    // Admin: Simple save without status change
+    if (!formData || !task) return;
+    setSaving(true);
+    setSaveStatus('saving');
+    try {
+      await densityAPI.saveByTask(task.id, formData);
+      setSaveStatus('saved');
+      setLastSaved(new Date());
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to save');
+      setSaveStatus('idle');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveUpdate = async () => {
+    // Technician: Save and set status to IN_PROGRESS_TECH
+    if (!formData || !task) return;
+    setSaving(true);
+    setSaveStatus('saving');
+    try {
+      await densityAPI.saveByTask(task.id, formData, 'IN_PROGRESS_TECH');
+      await tasksAPI.updateStatus(task.id, 'IN_PROGRESS_TECH');
+      setSaveStatus('saved');
+      setLastSaved(new Date());
+      setTimeout(() => setSaveStatus('idle'), 2000);
+      alert('Update saved! Status set to "In Progress"');
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to save update');
+      setSaveStatus('idle');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSendToAdmin = async () => {
+    if (!formData || !task) return;
+    if (!window.confirm('Send this report to admin for review? You will not be able to edit it until admin responds.')) {
+      return;
+    }
+    await saveData(formData, true, 'READY_FOR_REVIEW');
+    navigate('/technician/dashboard');
+  };
+
+  const handleApprove = async () => {
+    if (!window.confirm('Approve this report?')) return;
+    try {
+      await tasksAPI.approve(task!.id);
+      await loadData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to approve report');
+    }
+  };
+
+  // Helper function to convert MM-DD-YYYY to YYYY-MM-DD
+  const convertToISO = (dateStr: string): string | null => {
+    if (!dateStr) return null;
+    // Try to parse MM-DD-YYYY format
+    const parts = dateStr.split(/[-\/]/);
+    if (parts.length === 3) {
+      const month = parts[0].padStart(2, '0');
+      const day = parts[1].padStart(2, '0');
+      const year = parts[2];
+      // Validate it's a valid date
+      const date = new Date(`${year}-${month}-${day}`);
+      if (!isNaN(date.getTime())) {
+        return `${year}-${month}-${day}`;
+      }
+    }
+    // If already in YYYY-MM-DD format, return as-is
+    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      return dateStr;
+    }
+    return null;
+  };
+
+  const handleReject = async () => {
+    const remarks = prompt('Enter rejection remarks (required):');
+    if (!remarks || remarks.trim() === '') return;
+    const resubmissionDateInput = prompt('Enter resubmission due date (MM-DD-YYYY, required):');
+    if (!resubmissionDateInput || resubmissionDateInput.trim() === '') return;
+    
+    const resubmissionDate = convertToISO(resubmissionDateInput.trim());
+    if (!resubmissionDate) {
+      alert('Invalid date format. Please use MM-DD-YYYY format.');
+      return;
+    }
+    
+    try {
+      await tasksAPI.reject(task!.id, { rejectionRemarks: remarks, resubmissionDueDate: resubmissionDate });
+      await loadData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to reject report');
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!task) return;
+    setLastSavedPath(null); // Clear previous saved path
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Authentication required. Please log in again.');
+        return;
+      }
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.0.20:5000/api';
+      const baseUrl = apiUrl.replace(/\/api\/?$/, '');
+      const pdfUrl = `${baseUrl}/api/pdf/density/${task.id}`;
+      
+      const response = await fetch(pdfUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Failed to generate PDF';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+
+      // Check if response is JSON (new format with save info)
+      if (contentType.includes('application/json')) {
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to generate PDF');
+        }
+
+        if (result.saved && result.savedPath) {
+          setLastSavedPath(result.savedPath);
+          setError('');
+          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
+          alert(message);
+        } else if (result.saveError) {
+          setError(`PDF generated but save failed: ${result.saveError}`);
+          alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
+        }
+
+        if (result.pdfBase64) {
+          const pdfBytes = Uint8Array.from(atob(result.pdfBase64), c => c.charCodeAt(0));
+          const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+          const url = window.URL.createObjectURL(blob);
+          const filename = result.fileName || `density-report-${task.projectNumber}-${task.id}.pdf`;
+
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+        }
+        return;
+      }
+
+      // Legacy support: Handle PDF response (if backend still returns PDF directly)
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `density-report-${task.projectNumber}-${task.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      console.error('PDF download error:', err);
+      const errorMessage = err.message || 'Unknown error';
+      setError(errorMessage);
+      alert('Failed to download PDF: ' + errorMessage);
+    }
+  };
+
+  if (loading) {
+    return <div className="density-form-loading">Loading report...</div>;
+  }
+
+  if (error && !formData) {
+    return (
+      <div className="density-form-error">
+        <p>{error}</p>
+        <button onClick={() => navigate(-1)}>Back</button>
+      </div>
+    );
+  }
+
+  if (!formData || !task) {
+    return <div className="density-form-error">Report not found.</div>;
+  }
+
+  const canEdit = task.status !== 'READY_FOR_REVIEW' && task.status !== 'APPROVED';
+  const isReadyForReview = task.status === 'READY_FOR_REVIEW';
+  const isApproved = task.status === 'APPROVED';
+
+  return (
+    <div className="density-report-form">
+      <header className="density-form-header">
+        <h1>In-Place Moisture Density Test Results</h1>
+        <div className="header-actions">
+          {saveStatus === 'saving' && <span className="save-status">Saving...</span>}
+          {saveStatus === 'saved' && <span className="save-status saved">Saved {lastSaved?.toLocaleTimeString()}</span>}
+          {saveStatus === 'idle' && lastSaved && <span className="save-status">Last saved: {lastSaved.toLocaleTimeString()}</span>}
+          <button onClick={handleDownloadPdf} className="pdf-button">Download PDF</button>
+          {lastSavedPath && (
+            <div className="pdf-saved-confirmation" style={{ marginTop: '10px', padding: '10px', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px', color: '#155724' }}>
+              PDF saved to: <strong>{lastSavedPath}</strong>
+            </div>
+          )}
+          {canEdit && (
+            <>
+              {!isAdmin() ? (
+                <>
+                  <button onClick={handleSaveUpdate} disabled={saving} className="save-button">
+                    {saving ? 'Saving...' : 'Save Update'}
+                  </button>
+                  <button onClick={handleSendToAdmin} className="send-button">Send Update to Admin</button>
+                </>
+              ) : (
+                <button onClick={handleManualSave} disabled={saving} className="save-button">
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+              )}
+            </>
+          )}
+          {isAdmin() && isReadyForReview && (
+            <>
+              <button onClick={handleApprove} className="approve-button">Approve</button>
+              <button onClick={handleReject} className="reject-button">Reject</button>
+            </>
+          )}
+          <button onClick={() => navigate(-1)} className="back-button">Back</button>
+        </div>
+      </header>
+
+      <div className="density-form-content">
+        {/* Header Section */}
+        <div className="form-section header-section">
+          <h2>Report Header</h2>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>Project Name / Address</label>
+              <input type="text" value={formData.projectName || ''} disabled className="readonly" />
+            </div>
+            <div className="form-group">
+              <label>Project Number</label>
+              <input type="text" value={formData.projectNumber || ''} disabled className="readonly" />
+            </div>
+            <div className="form-group">
+              <label>Client Name</label>
+              <input
+                type="text"
+                value={formData.clientName}
+                onChange={(e) => updateField('clientName', e.target.value)}
+                disabled={!canEdit}
+              />
+            </div>
+            <div className="form-group">
+              <label>Date Performed</label>
+              <input
+                type="date"
+                value={formData.datePerformed}
+                onChange={(e) => updateField('datePerformed', e.target.value)}
+                disabled={!canEdit}
+              />
+            </div>
+            <div className="form-group">
+              <label>Structure</label>
+              <input
+                type="text"
+                value={formData.structure}
+                onChange={(e) => updateField('structure', e.target.value)}
+                placeholder="e.g., Pavement"
+                disabled={!canEdit}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Main Test Table - 19 rows */}
+        <div className="form-section">
+          <h2>Test Results</h2>
+          <div className="test-table-container">
+            <table className="test-table">
+              <thead>
+                <tr>
+                  <th>Test No.</th>
+                  <th>Test Location</th>
+                  <th>Dept/Lift</th>
+                  <th>Wet Density (pcf)</th>
+                  <th>Field Moisture (%)</th>
+                  <th>Dry Density (pcf)</th>
+                  <th>Proctor No.</th>
+                  <th>% Proctor Density</th>
+                </tr>
+              </thead>
+              <tbody>
+                {formData.testRows.map((row, index) => (
+                  <tr key={index}>
+                    <td>{row.testNo}</td>
+                    <td>
+                      <input
+                        type="text"
+                        value={row.testLocation}
+                        onChange={(e) => updateTestRow(index, 'testLocation', e.target.value)}
+                        disabled={!canEdit}
+                      />
+                    </td>
+                    <td>
+                      <div className="depth-lift-group">
+                        <select
+                          value={row.depthLiftType}
+                          onChange={(e) => updateTestRow(index, 'depthLiftType', e.target.value as 'DEPTH' | 'LIFT')}
+                          disabled={!canEdit}
+                        >
+                          <option value="DEPTH">Dept</option>
+                          <option value="LIFT">Lift</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={row.depthLiftValue}
+                          onChange={(e) => updateTestRow(index, 'depthLiftValue', e.target.value)}
+                          placeholder="e.g., FG"
+                          disabled={!canEdit}
+                          style={{ width: '60px', marginLeft: '5px' }}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={row.wetDensity}
+                        onChange={(e) => updateTestRow(index, 'wetDensity', e.target.value)}
+                        disabled={!canEdit}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={row.fieldMoisture}
+                        onChange={(e) => updateTestRow(index, 'fieldMoisture', e.target.value)}
+                        disabled={!canEdit}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={row.dryDensity}
+                        readOnly
+                        className="calculated"
+                        title="Auto-calculated: Wet Density / (1 + Field Moisture / 100)"
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={row.proctorNo}
+                        onChange={(e) => updateTestRow(index, 'proctorNo', e.target.value)}
+                        disabled={!canEdit}
+                      >
+                        <option value="">—</option>
+                        {[1, 2, 3, 4, 5, 6].map(n => (
+                          <option key={n} value={String(n)}>{n}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={row.percentProctorDensity}
+                        readOnly
+                        className="calculated"
+                        title="Auto-calculated: (Dry Density / Max Density) * 100"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Proctor Summary Table - 6 rows */}
+        <div className="form-section">
+          <h2>Proctor Summary</h2>
+          <div className="proctor-table-container">
+            <table className="proctor-table">
+              <thead>
+                <tr>
+                  <th>Proctor No.</th>
+                  <th>Description</th>
+                  <th>Opt. Moisture</th>
+                  <th>Max Density</th>
+                </tr>
+              </thead>
+              <tbody>
+                {formData.proctors.map((proctor, index) => (
+                  <tr key={index}>
+                    <td>{proctor.proctorNo}</td>
+                    <td>
+                      <input
+                        type="text"
+                        value={proctor.description}
+                        onChange={(e) => updateProctor(index, 'description', e.target.value)}
+                        disabled={!canEdit}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={proctor.optMoisture}
+                        onChange={(e) => updateProctor(index, 'optMoisture', e.target.value)}
+                        disabled={!canEdit}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={proctor.maxDensity}
+                        onChange={(e) => updateProctor(index, 'maxDensity', e.target.value)}
+                        disabled={!canEdit}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Specs + Instrument + Methods */}
+        <div className="form-section specs-methods-section">
+          <div className="specs-methods-grid">
+            <div className="specs-box">
+              <h3>Specs</h3>
+              <div className="form-group">
+                <label>Dens. (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={formData.densSpecPercent}
+                  onChange={(e) => updateField('densSpecPercent', e.target.value)}
+                  disabled={!canEdit}
+                />
+              </div>
+              <div className="form-group">
+                <label>Moist. (%) Range</label>
+                <input
+                  type="text"
+                  placeholder="e.g., -2 to +2"
+                  value={moistSpecRange}
+                  onChange={(e) => updateMoistSpecRange(e.target.value)}
+                  disabled={!canEdit}
+                />
+                <small>Enter range as text (e.g., "-2 to +2" or "-2 to 2")</small>
+              </div>
+            </div>
+
+            <div className="instrument-box">
+              <h3>Instrument</h3>
+              <div className="form-group">
+                <label>Gauge No.</label>
+                <input
+                  type="text"
+                  value={formData.gaugeNo}
+                  onChange={(e) => updateField('gaugeNo', e.target.value)}
+                  disabled={!canEdit}
+                />
+              </div>
+              <div className="form-group">
+                <label>Std. Density Count</label>
+                <input
+                  type="number"
+                  value={formData.stdDensityCount}
+                  onChange={(e) => updateField('stdDensityCount', e.target.value)}
+                  disabled={!canEdit}
+                />
+              </div>
+              <div className="form-group">
+                <label>Std. Moist Count</label>
+                <input
+                  type="number"
+                  value={formData.stdMoistCount}
+                  onChange={(e) => updateField('stdMoistCount', e.target.value)}
+                  disabled={!canEdit}
+                />
+              </div>
+              <div className="form-group">
+                <label>Trans. Depth (in.)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={formData.transDepthIn}
+                  onChange={(e) => updateField('transDepthIn', e.target.value)}
+                  disabled={!canEdit}
+                />
+              </div>
+            </div>
+
+            <div className="methods-box">
+              <h3>Test Methods</h3>
+              <div className="checkbox-group">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={formData.methodD2922}
+                    onChange={(e) => updateField('methodD2922', e.target.checked)}
+                    disabled={!canEdit}
+                  />
+                  ASTM D 2922
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={formData.methodD3017}
+                    onChange={(e) => updateField('methodD3017', e.target.checked)}
+                    disabled={!canEdit}
+                  />
+                  ASTM D 3017
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={formData.methodD698}
+                    onChange={(e) => updateField('methodD698', e.target.checked)}
+                    disabled={!canEdit}
+                  />
+                  ASTM D 698
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Remarks + Tech + Time + Disclaimer */}
+        <div className="form-section footer-section">
+          <div className="form-group">
+            <label>Remarks</label>
+            <textarea
+              value={formData.remarks}
+              onChange={(e) => updateField('remarks', e.target.value)}
+              rows={4}
+              disabled={!canEdit}
+            />
+          </div>
+          <div className="footer-fields">
+            <div className="form-group">
+              <label>Tech</label>
+              {technicians.length > 0 ? (
+                <select
+                  value={formData.technicianId || (task?.assignedTechnicianId || '')}
+                  onChange={(e) => {
+                    const techId = e.target.value ? parseInt(e.target.value) : undefined;
+                    const selectedTech = technicians.find(t => t.id === techId);
+                    setFormData({
+                      ...formData,
+                      technicianId: techId,
+                      techName: selectedTech ? (selectedTech.name || selectedTech.email) : ''
+                    });
+                    if (formData) {
+                      debouncedSave({
+                        ...formData,
+                        technicianId: techId,
+                        techName: selectedTech ? (selectedTech.name || selectedTech.email) : ''
+                      });
+                    }
+                  }}
+                  disabled={!canEdit}
+                >
+                  <option value="">Select Technician</option>
+                  {technicians.map(t => (
+                    <option key={t.id} value={t.id}>{t.name || t.email}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={formData.techName}
+                  onChange={(e) => updateField('techName', e.target.value)}
+                  disabled={!canEdit}
+                />
+              )}
+            </div>
+            <div className="form-group">
+              <label>Time</label>
+              <input
+                type="time"
+                value={formData.timeStr}
+                onChange={(e) => updateField('timeStr', e.target.value)}
+                disabled={!canEdit}
+              />
+            </div>
+          </div>
+          <div className="disclaimer">
+            <p><em>This report is based on field measurements and laboratory analysis. Results are subject to standard testing procedures and industry standards.</em></p>
+          </div>
+        </div>
+
+        {/* Action Buttons at Bottom */}
+        <div className="form-actions-bottom">
+          {canEdit && (
+            <>
+              {!isAdmin() ? (
+                <>
+                  <button onClick={handleSaveUpdate} disabled={saving} className="save-button">
+                    {saving ? 'Saving...' : 'Save Update'}
+                  </button>
+                  <button onClick={handleSendToAdmin} className="send-button">Send Update to Admin</button>
+                </>
+              ) : (
+                <button onClick={handleManualSave} disabled={saving} className="save-button">
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+              )}
+            </>
+          )}
+          {isAdmin() && isReadyForReview && (
+            <>
+              <button onClick={handleApprove} className="approve-button">Approve</button>
+              <button onClick={handleReject} className="reject-button">Reject</button>
+            </>
+          )}
+          <button onClick={handleDownloadPdf} className="pdf-button">Download PDF</button>
+          <button onClick={() => navigate(-1)} className="back-button">Back</button>
+        </div>
+
+        {/* History / Audit Trail (NOT printable) */}
+        {history.length > 0 && (
+          <div className="history-section no-print">
+            <h2>History / Audit Trail</h2>
+            <div className="history-list">
+              {history.map((entry) => {
+                const date = new Date(entry.timestamp);
+                const actionLabels: { [key: string]: string } = {
+                  'SUBMITTED': 'submitted report for review',
+                  'APPROVED': 'approved report',
+                  'REJECTED': 'rejected report',
+                  'REASSIGNED': 'reassigned task',
+                  'STATUS_CHANGED': 'changed status'
+                };
+                let actionLabel = actionLabels[entry.actionType] || entry.actionType.toLowerCase();
+                // Format the message according to requirements
+                let message = '';
+                if (entry.actionType === 'SUBMITTED') {
+                  message = `${entry.actorName} submitted report for review`;
+                } else if (entry.actionType === 'APPROVED') {
+                  message = `${entry.actorName} approved report`;
+                } else if (entry.actionType === 'REJECTED') {
+                  message = `${entry.actorName} rejected report${entry.note ? `: ${entry.note}` : ''}`;
+                } else if (entry.actionType === 'REASSIGNED') {
+                  message = entry.note || `Task reassigned by ${entry.actorName}`;
+                } else {
+                  message = `${entry.actorName} (${entry.actorRole}) ${actionLabel}`;
+                }
+                
+                return (
+                  <div key={entry.id} className="history-entry">
+                    <div className="history-timestamp">
+                      {date.toLocaleString()}
+                    </div>
+                    <div className="history-content">
+                      {message}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default DensityReportForm;
+

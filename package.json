@@ -1,0 +1,35 @@
+{
+  "name": "mak-automation",
+  "version": "1.0.0",
+  "description": "MAK Lone Star Consulting Field Report Automation",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "nodemon server/index.js",
+    "client": "cd client && npm start",
+    "install-all": "npm install && cd client && npm install",
+    "build": "cd client && npm run build",
+    "reset-password": "node reset-password.js",
+    "migrate-db": "node server/migrate-database.js",
+    "fix-status-constraint": "node server/fix-status-constraint.js",
+    "setup-mobile": "node setup-mobile-env.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "pdfkit": "^0.14.0",
+    "puppeteer": "^24.34.0",
+    "sqlite3": "^5.1.6"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.1"
+  }
+}
