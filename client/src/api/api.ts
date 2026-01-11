@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://192.168.4.30:5000/api';
+/**
+ * API base URL resolution rules:
+ * - Production (Vercel): use REACT_APP_API_BASE_URL
+ * - Local development: use http://localhost:5000
+ * - NO hardcoded LAN IPs
+ */
+const API_URL =
+  process.env.REACT_APP_API_BASE_URL ||
+  (window.location.hostname === 'localhost'
+    ? 'http://localhost:5000/api'
+    : '');
 
 const api = axios.create({
   baseURL: API_URL,
@@ -32,4 +42,3 @@ api.interceptors.response.use(
 );
 
 export default api;
-
