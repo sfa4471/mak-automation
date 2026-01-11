@@ -44,7 +44,7 @@ function getLocalIP() {
     }
   }
   
-  return '192.168.0.20'; // Fallback to current IP
+  return '192.168.4.30'; // Fallback to current IP
 }
 
 const ip = getLocalIP();

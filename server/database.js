@@ -1,9 +1,22 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcryptjs');
+require('dotenv').config();
 
 const dbPath = path.join(__dirname, 'mak_automation.db');
 const db = new sqlite3.Database(dbPath);
+
+// Default credentials (fallback if env vars not set)
+const DEFAULT_ADMIN_EMAIL = 'admin@maklonestar.com';
+const DEFAULT_ADMIN_PASSWORD = 'admin123';
+const DEFAULT_TECH_EMAIL = 'info@thefit925.com';
+const DEFAULT_TECH_PASSWORD = 'yournewpassword123';
+
+// Get credentials from environment variables with fallback to defaults
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
+const TECH_EMAIL = process.env.TECH_EMAIL || DEFAULT_TECH_EMAIL;
+const TECH_PASSWORD = process.env.TECH_PASSWORD || DEFAULT_TECH_PASSWORD;
 
 // Initialize database
 db.serialize(() => {
@@ -178,15 +191,37 @@ db.serialize(() => {
       return;
     }
     if (row.count === 0) {
-      const hashedPassword = bcrypt.hashSync('admin123', 10);
+      const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, 10);
       db.run(
         "INSERT INTO users (email, password, role, name) VALUES (?, ?, ?, ?)",
-        ['admin@maklonestar.com', hashedPassword, 'ADMIN', 'Admin User'],
+        [ADMIN_EMAIL, hashedPassword, 'ADMIN', 'Admin User'],
         (err) => {
           if (err) {
             console.error('Error creating admin:', err);
           } else {
-            console.log('Default admin created: admin@maklonestar.com / admin123');
+            console.log(`Default admin created: ${ADMIN_EMAIL}`);
+          }
+        }
+      );
+    }
+  });
+
+  // Create default technician user if not exists
+  db.get("SELECT COUNT(*) as count FROM users WHERE role = 'TECHNICIAN'", (err, row) => {
+    if (err) {
+      console.error('Error checking technician:', err);
+      return;
+    }
+    if (row.count === 0) {
+      const hashedPassword = bcrypt.hashSync(TECH_PASSWORD, 10);
+      db.run(
+        "INSERT INTO users (email, password, role, name) VALUES (?, ?, ?, ?)",
+        [TECH_EMAIL, hashedPassword, 'TECHNICIAN', 'Technician User'],
+        (err) => {
+          if (err) {
+            console.error('Error creating technician:', err);
+          } else {
+            console.log(`Default technician created: ${TECH_EMAIL}`);
           }
         }
       );

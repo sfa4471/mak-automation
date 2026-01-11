@@ -11,7 +11,27 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Routes
+// Health check endpoint (always available)
+app.get('/health', (req, res) => {
+  res.json({ ok: true });
+});
+
+// Root endpoint (always available)
+app.get('/', (req, res) => {
+  const clientBuildPath = path.join(__dirname, '../client/build');
+  const clientIndexPath = path.join(clientBuildPath, 'index.html');
+  const clientBuildExists = require('fs').existsSync(clientIndexPath);
+  
+  if (process.env.NODE_ENV === 'production' && clientBuildExists) {
+    // If client build exists, serve it
+    res.sendFile(clientIndexPath);
+  } else {
+    // Backend-only deployment (no client build)
+    res.json({ ok: true, service: 'backend' });
+  }
+});
+
+// API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/workpackages', require('./routes/workpackages'));
@@ -23,11 +43,21 @@ app.use('/api/proctor', require('./routes/proctor'));
 app.use('/api/pdf', require('./routes/pdf'));
 app.use('/api/notifications', require('./routes/notifications').router);
 
-// Serve static files from React app in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/build')));
+// Serve static files from React app in production (only if build exists)
+// This catch-all must come AFTER API routes to ensure API routes work
+const clientBuildPath = path.join(__dirname, '../client/build');
+const clientIndexPath = path.join(clientBuildPath, 'index.html');
+const clientBuildExists = require('fs').existsSync(clientIndexPath);
+
+if (process.env.NODE_ENV === 'production' && clientBuildExists) {
+  app.use(express.static(clientBuildPath));
+  // Catch-all route for React app (only matches non-API routes)
   app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+    // Skip if it's an API route (shouldn't happen, but safety check)
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ error: 'API route not found' });
+    }
+    res.sendFile(clientIndexPath);
   });
 }
 
