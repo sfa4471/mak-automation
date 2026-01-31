@@ -169,7 +169,7 @@ const TasksDashboard: React.FC = () => {
   const handleViewTask = (task: Task, e: React.MouseEvent) => {
     e.stopPropagation();
     // Placeholder for field tasks
-    alert(`${taskTypeLabel(task.taskType)} task details coming soon`);
+    alert(`${taskTypeLabel(task)} task details coming soon`);
   };
 
 
@@ -435,7 +435,7 @@ const TasksDashboard: React.FC = () => {
                       </td>
                       <td>
                         <div className="task-name-cell">
-                          <span className="task-name">{taskTypeLabel(task.taskType)}</span>
+                          <span className="task-name">{taskTypeLabel(task)}</span>
                           <span className={`task-type-badge ${isReport ? 'badge-report' : 'badge-field'}`}>
                             {isReport ? 'Report' : 'Field'}
                           </span>

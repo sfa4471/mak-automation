@@ -263,7 +263,7 @@ const TechnicianDashboard: React.FC = () => {
                 <div key={task.id} className="snapshot-item">
                   <div className="snapshot-item-main">
                     <div className="snapshot-item-info">
-                      <strong>{task.projectNumber}</strong> - {task.projectName || taskTypeLabel(task.taskType)}
+                      <strong>{task.projectNumber}</strong> - {task.projectName || taskTypeLabel(task)}
                       <div className="snapshot-item-details">
                         <span>Field Date: {formatFieldDates(task)}</span>
                         {task.dueDate && <span>• Report Due: {formatDate(task.dueDate)}</span>}
@@ -309,7 +309,7 @@ const TechnicianDashboard: React.FC = () => {
                 <div key={task.id} className="open-report-item">
                     <div className="open-report-main">
                       <div className="open-report-info">
-                        <strong>{taskTypeLabel(task.taskType)}</strong> - {task.projectNumber}
+                        <strong>{taskTypeLabel(task)}</strong> - {task.projectNumber}
                         <div className="open-report-details">
                           {task.dueDate && <span>Due: {formatDate(task.dueDate)}</span>}
                           <span className={`status-badge status-${task.status.toLowerCase().replace(/[ _]/g, '-')}`}>
@@ -456,7 +456,7 @@ const TechnicianDashboard: React.FC = () => {
                         <td>{task.projectNumber}</td>
                         <td>
                           <div>
-                            {taskTypeLabel(task.taskType)}
+                            {taskTypeLabel(task)}
                             {badge && (
                               <span className={`task-badge badge-${badge.toLowerCase()}`}>
                                 {badge}

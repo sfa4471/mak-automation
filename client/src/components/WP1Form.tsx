@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { workPackagesAPI, WP1Data, Cylinder } from '../api/workpackages';
 import { wp1API } from '../api/wp1';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
+import { SoilSpecs, projectsAPI } from '../api/projects';
+import ProjectHomeButton from './ProjectHomeButton';
 import './WP1Form.css';
 
 const WP1Form: React.FC = () => {
@@ -27,7 +29,9 @@ const WP1Form: React.FC = () => {
   const [technicians, setTechnicians] = useState<User[]>([]);
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
+  const [soilSpecs, setSoilSpecs] = useState<SoilSpecs>({});
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const lastSavedDataRef = useRef<string>('');
 
   // Helper function to calculate Date Tested from Placement Date + Age Days
   const calculateDateTested = React.useCallback((placementDateStr: string | undefined, ageDaysStr: string | undefined): string => {
@@ -156,17 +160,100 @@ const WP1Form: React.FC = () => {
       
       // Auto-populate specs from project if not already set
       const projectSpecs = (data as any).projectSpecs || {};
+      let soilSpecsData = (data as any).soilSpecs || {};
+      
+      // If soilSpecs not in response, fetch project directly
+      if (!soilSpecsData || Object.keys(soilSpecsData).length === 0) {
+        try {
+          const projectId = wpOrTask?.projectId;
+          if (projectId) {
+            const project = await projectsAPI.get(projectId);
+            soilSpecsData = project.soilSpecs || {};
+            console.log('Fetched project soilSpecs:', soilSpecsData);
+            console.log('Soil Specs structure names:', Object.keys(soilSpecsData));
+          }
+        } catch (err) {
+          console.error('Error fetching project for soilSpecs:', err);
+        }
+      } else {
+        console.log('Soil Specs from API response:', soilSpecsData);
+        console.log('Soil Specs structure names:', Object.keys(soilSpecsData));
+      }
+      
+      setSoilSpecs(soilSpecsData);
       const updatedData = { ...data };
       
-      // Auto-populate specStrength from specStrengthPsi if not set
+      // Log loaded task and project data
+      console.log('Loaded compressive task:', {
+        taskId: updatedData.taskId || updatedData.workPackageId,
+        structure: updatedData.structure,
+        ambientTempSpecs: updatedData.ambientTempSpecs,
+        concreteTempSpecs: updatedData.concreteTempSpecs
+      });
+      console.log('Loaded project soilSpecs:', soilSpecsData);
+      
+      // Auto-populate specs from Soil Specs if structure is already selected
+      if (updatedData.structure) {
+        const selectedSpec = soilSpecsData[updatedData.structure];
+        console.log('Selected structure:', updatedData.structure);
+        console.log('SoilSpecs row found:', selectedSpec);
+        
+        if (selectedSpec) {
+          // Explicitly map Soil Specs to canonical form keys
+          // Use the actual field names from SoilSpecRow interface
+          // Apply default values if missing (35-95 for ambient, 45-95 for concrete)
+          const ambientTempValue = selectedSpec.ambientTempF || '35-95';
+          const concreteTempValue = selectedSpec.concreteTempF || '45-95';
+          const specStrengthValue = selectedSpec.specStrengthPsi || '';
+          const slumpValue = selectedSpec.slump || '';
+          const airContentValue = selectedSpec.airContent || '';
+          
+          console.log('Selected spec on load:', selectedSpec);
+          console.log('Extracted on load:', {
+            ambientTempF: selectedSpec.ambientTempF,
+            concreteTempF: selectedSpec.concreteTempF,
+            ambientTempValue,
+            concreteTempValue
+          });
+          
+          // Set canonical keys explicitly
+          updatedData.ambientTempSpecs = ambientTempValue;
+          updatedData.concreteTempSpecs = concreteTempValue;
+          if (specStrengthValue) {
+            updatedData.specStrength = specStrengthValue;
+          }
+          if (slumpValue) {
+            updatedData.slumpSpecs = slumpValue;
+          }
+          if (airContentValue) {
+            updatedData.airContentSpecs = airContentValue;
+          }
+          
+          console.log('Setting ambientTempSpecs:', ambientTempValue);
+          console.log('Setting concreteTempSpecs:', concreteTempValue);
+          console.log('Auto-populated on load:', {
+            structure: updatedData.structure,
+            ambientTempSpecs: updatedData.ambientTempSpecs,
+            concreteTempSpecs: updatedData.concreteTempSpecs,
+            selectedSpec: selectedSpec
+          });
+        } else {
+          console.log('No SoilSpecs row found for structure:', updatedData.structure);
+          console.log('Available structure keys:', Object.keys(soilSpecsData));
+        }
+      } else {
+        console.log('No structure selected in loaded task');
+      }
+      
+      // Fallback: Auto-populate specStrength from specStrengthPsi if not set (legacy)
       if (!updatedData.specStrength && projectSpecs.specStrengthPsi) {
         updatedData.specStrength = projectSpecs.specStrengthPsi;
       }
-      // Auto-populate ambientTempSpecs from specAmbientTempF if not set
+      // Fallback: Auto-populate ambientTempSpecs from specAmbientTempF if not set (legacy)
       if (!updatedData.ambientTempSpecs && projectSpecs.specAmbientTempF) {
         updatedData.ambientTempSpecs = projectSpecs.specAmbientTempF;
       }
-      // Auto-populate concreteTempSpecs from specConcreteTempF if not set
+      // Fallback: Auto-populate concreteTempSpecs from specConcreteTempF if not set (legacy)
       if (!updatedData.concreteTempSpecs && projectSpecs.specConcreteTempF) {
         updatedData.concreteTempSpecs = projectSpecs.specConcreteTempF;
       }
@@ -218,6 +305,23 @@ const WP1Form: React.FC = () => {
             updatedCyl.dateTested = '';
           }
           
+          // Round totalLoad and compressiveStrength to whole numbers on load
+          if (updatedCyl.totalLoad !== undefined && updatedCyl.totalLoad !== null) {
+            updatedCyl.totalLoad = Math.round(updatedCyl.totalLoad);
+          }
+          if (updatedCyl.compressiveStrength !== undefined && updatedCyl.compressiveStrength !== null) {
+            updatedCyl.compressiveStrength = Math.round(updatedCyl.compressiveStrength);
+          }
+          
+          // Recalculate compressiveStrength from rounded totalLoad if area is available
+          if (updatedCyl.totalLoad !== undefined && updatedCyl.totalLoad !== null && updatedCyl.crossSectionalArea) {
+            const load = updatedCyl.totalLoad;
+            const area = parseFloat(updatedCyl.crossSectionalArea);
+            if (load > 0 && area > 0) {
+              updatedCyl.compressiveStrength = Math.round(load / area);
+            }
+          }
+          
           return updatedCyl;
         });
         // Ensure finalCureMethod has a default value if missing
@@ -225,6 +329,8 @@ const WP1Form: React.FC = () => {
         updatedData.cylinders = updatedCylinders;
         updatedData.finalCureMethod = updatedData.finalCureMethod || 'STANDARD';
         setFormData(updatedData);
+        // Update last saved snapshot after loading
+        lastSavedDataRef.current = JSON.stringify(updatedData);
         // Auto-save if we updated any cylinders with defaults or if finalCureMethod was missing
         const hasUpdates = updatedCylinders.some((cyl, idx) => {
           const original = data.cylinders[idx];
@@ -234,7 +340,11 @@ const WP1Form: React.FC = () => {
         });
         if (hasUpdates || needsFinalCureMethod || projectSpecs.specStrengthPsi || projectSpecs.specAmbientTempF || projectSpecs.specConcreteTempF || projectSpecs.specSlump || projectSpecs.specAirContentByVolume) {
           setTimeout(() => {
-            workPackagesAPI.saveWP1(parseInt(id!), updatedData).catch(console.error);
+            if (isTaskRoute) {
+              wp1API.saveByTask(parseInt(id!), updatedData).catch(console.error);
+            } else {
+              workPackagesAPI.saveWP1(parseInt(id!), updatedData).catch(console.error);
+            }
           }, 500);
         }
       } else {
@@ -250,9 +360,15 @@ const WP1Form: React.FC = () => {
           cylinders: initialCylinders,
         };
         setFormData(initialData);
+        // Update last saved snapshot after loading initial data
+        lastSavedDataRef.current = JSON.stringify(initialData);
         // Save initial data
         setTimeout(() => {
-          workPackagesAPI.saveWP1(parseInt(id!), initialData).catch(console.error);
+          if (isTaskRoute) {
+            wp1API.saveByTask(parseInt(id!), initialData).catch(console.error);
+          } else {
+            workPackagesAPI.saveWP1(parseInt(id!), initialData).catch(console.error);
+          }
         }, 1000);
       }
     } catch (err: any) {
@@ -262,6 +378,38 @@ const WP1Form: React.FC = () => {
     }
   };
 
+  // Check if there are unsaved changes
+  const checkUnsavedChanges = useCallback(() => {
+    if (!formData) return false;
+    if (saveStatus === 'saving') return true;
+    const currentData = JSON.stringify(formData);
+    return currentData !== lastSavedDataRef.current;
+  }, [formData, saveStatus]);
+
+  // Simple save function for Home button (saves current state without changing status)
+  const handleSimpleSave = useCallback(async () => {
+    if (!formData) return;
+    try {
+      if (isTaskRoute) {
+        // If technician changed, find the technician ID
+        let saveData = formData;
+        if (formData.technician && isAdmin()) {
+          const selectedTech = technicians.find(t => (t.name || t.email) === formData.technician);
+          if (selectedTech) {
+            saveData = { ...formData, assignedTechnicianId: selectedTech.id };
+          }
+        }
+        await wp1API.saveByTask(parseInt(id!), saveData);
+      } else {
+        await workPackagesAPI.saveWP1(parseInt(id!), formData);
+      }
+      // Update last saved snapshot
+      lastSavedDataRef.current = JSON.stringify(formData);
+    } catch (err: any) {
+      throw new Error(err.response?.data?.error || 'Failed to save');
+    }
+  }, [formData, isTaskRoute, isAdmin, technicians, id]);
+
   const debouncedSave = useCallback((data: WP1Data) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -270,19 +418,44 @@ const WP1Form: React.FC = () => {
     setSaveStatus('saving');
     saveTimeoutRef.current = setTimeout(async () => {
       try {
+        // Round totalLoad and compressiveStrength to whole numbers before saving
+        const roundedData = { ...data };
+        if (roundedData.cylinders && roundedData.cylinders.length > 0) {
+          roundedData.cylinders = roundedData.cylinders.map(cyl => {
+            const roundedCyl = { ...cyl };
+            // Round totalLoad to whole number
+            if (roundedCyl.totalLoad !== undefined && roundedCyl.totalLoad !== null) {
+              roundedCyl.totalLoad = Math.round(roundedCyl.totalLoad);
+            }
+            // Round compressiveStrength to whole number (or recalculate from rounded load)
+            if (roundedCyl.totalLoad !== undefined && roundedCyl.totalLoad !== null && roundedCyl.crossSectionalArea) {
+              const load = roundedCyl.totalLoad;
+              const area = parseFloat(roundedCyl.crossSectionalArea);
+              if (load > 0 && area > 0) {
+                roundedCyl.compressiveStrength = Math.round(load / area);
+              }
+            } else if (roundedCyl.compressiveStrength !== undefined && roundedCyl.compressiveStrength !== null) {
+              roundedCyl.compressiveStrength = Math.round(roundedCyl.compressiveStrength);
+            }
+            return roundedCyl;
+          });
+        }
+        
         if (isTaskRoute) {
           // If technician changed, find the technician ID
-          let saveData = data;
-          if (data.technician && isAdmin()) {
-            const selectedTech = technicians.find(t => (t.name || t.email) === data.technician);
+          let saveData = roundedData;
+          if (roundedData.technician && isAdmin()) {
+            const selectedTech = technicians.find(t => (t.name || t.email) === roundedData.technician);
             if (selectedTech) {
-              saveData = { ...data, assignedTechnicianId: selectedTech.id };
+              saveData = { ...roundedData, assignedTechnicianId: selectedTech.id };
             }
           }
           await wp1API.saveByTask(parseInt(id!), saveData);
         } else {
-          await workPackagesAPI.saveWP1(parseInt(id!), data);
+          await workPackagesAPI.saveWP1(parseInt(id!), roundedData);
         }
+        // Update last saved snapshot
+        lastSavedDataRef.current = JSON.stringify(roundedData);
         setSaveStatus('saved');
         setLastSaved(new Date());
         setTimeout(() => setSaveStatus('idle'), 2000);
@@ -292,6 +465,81 @@ const WP1Form: React.FC = () => {
       }
     }, 800);
   }, [id, isTaskRoute, isAdmin, technicians]);
+
+  // Handle structure selection - auto-populate specs from Soil Specs
+  const handleStructureChange = (structureType: string) => {
+    const selectedSpec = soilSpecs[structureType];
+    let updatedData = { ...formData, structure: structureType };
+    
+    if (selectedSpec) {
+      // Debug: Log the exact structure of selectedSpec
+      console.log('Selected spec keys:', Object.keys(selectedSpec));
+      console.log('Selected spec full object:', JSON.stringify(selectedSpec, null, 2));
+      console.log('selectedSpec.ambientTempF:', selectedSpec.ambientTempF);
+      console.log('selectedSpec.concreteTempF:', selectedSpec.concreteTempF);
+      
+      // Explicitly map Soil Specs to canonical form keys
+      // Use the actual field names from SoilSpecRow interface
+      // Apply default values if missing (35-95 for ambient, 45-95 for concrete)
+      const ambientTempValue = selectedSpec.ambientTempF || '35-95';
+      const concreteTempValue = selectedSpec.concreteTempF || '45-95';
+      const specStrengthValue = selectedSpec.specStrengthPsi || '';
+      const slumpValue = selectedSpec.slump || '';
+      const airContentValue = selectedSpec.airContent || '';
+      
+      console.log('Extracted values:', {
+        'ambientTempF': selectedSpec.ambientTempF,
+        'concreteTempF': selectedSpec.concreteTempF,
+        'specStrengthPsi': selectedSpec.specStrengthPsi,
+        'slump': selectedSpec.slump,
+        'airContent': selectedSpec.airContent,
+        'final ambientTempValue': ambientTempValue,
+        'final concreteTempValue': concreteTempValue
+      });
+      
+      // Auto-populate specs from selected Soil Spec structure
+      if (specStrengthValue) {
+        updatedData.specStrength = specStrengthValue;
+      }
+      // Always set ambientTempSpecs from Soil Specs (explicitly set the canonical key with default)
+      updatedData.ambientTempSpecs = ambientTempValue;
+      // Always set concreteTempSpecs from Soil Specs (explicitly set the canonical key with default)
+      updatedData.concreteTempSpecs = concreteTempValue;
+      if (slumpValue) {
+        updatedData.slumpSpecs = slumpValue;
+      }
+      if (airContentValue) {
+        updatedData.airContentSpecs = airContentValue;
+      }
+      
+      // Debug logging
+      console.log('Structure selected:', structureType);
+      console.log('Selected spec:', selectedSpec);
+      console.log('Setting ambientTempSpecs:', ambientTempValue);
+      console.log('Setting concreteTempSpecs:', concreteTempValue);
+      console.log('Updated ambientTempSpecs:', updatedData.ambientTempSpecs);
+      console.log('Updated concreteTempSpecs:', updatedData.concreteTempSpecs);
+    } else {
+      // Clear specs if structure has no specs
+      updatedData.specStrength = updatedData.specStrength || '';
+      updatedData.ambientTempSpecs = '';
+      updatedData.concreteTempSpecs = '';
+      updatedData.slumpSpecs = updatedData.slumpSpecs || '';
+      updatedData.airContentSpecs = updatedData.airContentSpecs || '';
+    }
+    
+    // Update form data immediately to ensure Test Results section sees the changes
+    setFormData(updatedData);
+    
+    // Debug: log final form data state
+    console.log('Final formData after structure change:', {
+      structure: updatedData.structure,
+      ambientTempSpecs: updatedData.ambientTempSpecs,
+      concreteTempSpecs: updatedData.concreteTempSpecs
+    });
+    
+    debouncedSave(updatedData);
+  };
 
   const handleFieldChange = (field: keyof WP1Data, value: any) => {
     const newData = { ...formData, [field]: value };
@@ -351,12 +599,36 @@ const WP1Form: React.FC = () => {
       }
     }
 
-    // Auto-calculate compressive strength if total load and area are available
+    // Round totalLoad to whole number on blur (handled separately)
+    // Round compressiveStrength calculation - always round to whole number
     if (field === 'totalLoad' || field === 'crossSectionalArea') {
       const load = parseFloat(newCylinders[cylinderIndex].totalLoad?.toString() || '0');
       const area = parseFloat(newCylinders[cylinderIndex].crossSectionalArea || '0');
       if (load > 0 && area > 0) {
+        // Round compressive strength to whole number
         newCylinders[cylinderIndex].compressiveStrength = Math.round(load / area);
+      }
+    }
+    
+    // Round totalLoad to whole number when changed (for immediate display)
+    if (field === 'totalLoad' && value !== undefined && value !== null && value !== '') {
+      const loadNum = typeof value === 'number' ? value : parseFloat(value.toString());
+      if (!isNaN(loadNum)) {
+        // Round to whole number for immediate display, but keep as number
+        newCylinders[cylinderIndex].totalLoad = Math.round(loadNum);
+        // Recalculate compressive strength if area is available
+        const area = parseFloat(newCylinders[cylinderIndex].crossSectionalArea || '0');
+        if (area > 0) {
+          newCylinders[cylinderIndex].compressiveStrength = Math.round(Math.round(loadNum) / area);
+        }
+      }
+    }
+    
+    // Round compressiveStrength to whole number if directly edited
+    if (field === 'compressiveStrength' && value !== undefined && value !== null && value !== '') {
+      const strengthNum = typeof value === 'number' ? value : parseFloat(value.toString());
+      if (!isNaN(strengthNum)) {
+        newCylinders[cylinderIndex].compressiveStrength = Math.round(strengthNum);
       }
     }
 
@@ -445,7 +717,21 @@ const WP1Form: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
-      await workPackagesAPI.saveWP1(parseInt(id!), formData);
+      if (isTaskRoute) {
+        // If technician changed, find the technician ID
+        let saveData = formData;
+        if (formData.technician && isAdmin()) {
+          const selectedTech = technicians.find(t => (t.name || t.email) === formData.technician);
+          if (selectedTech) {
+            saveData = { ...formData, assignedTechnicianId: selectedTech.id };
+          }
+        }
+        await wp1API.saveByTask(parseInt(id!), saveData);
+      } else {
+        await workPackagesAPI.saveWP1(parseInt(id!), formData);
+      }
+      // Update last saved snapshot
+      lastSavedDataRef.current = JSON.stringify(formData);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -529,7 +815,7 @@ const WP1Form: React.FC = () => {
     setLastSavedPath(null); // Clear previous saved path
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.30:5000/api';
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
       const baseUrl = apiUrl.replace(/\/api\/?$/, '');
       
       // Use task or workpackage route for PDF
@@ -614,6 +900,16 @@ const WP1Form: React.FC = () => {
     return '';
   };
 
+  // Log current form state before render (for debugging)
+  useEffect(() => {
+    console.log('Current form temps (before render):', {
+      ambientTempSpecs: formData.ambientTempSpecs,
+      concreteTempSpecs: formData.concreteTempSpecs,
+      structure: formData.structure,
+      'soilSpecs available': Object.keys(soilSpecs).length > 0
+    });
+  }, [formData.ambientTempSpecs, formData.concreteTempSpecs, formData.structure, soilSpecs]);
+
   if (loading) {
     return <div className="wp1-loading">Loading...</div>;
   }
@@ -635,6 +931,13 @@ const WP1Form: React.FC = () => {
       <div className="wp1-header">
         <h1>Compressive Strength Field Report</h1>
         <div className="wp1-header-actions">
+          {task?.projectId && (
+            <ProjectHomeButton
+              projectId={task.projectId}
+              onSave={handleSimpleSave}
+              saving={saving}
+            />
+          )}
           <button onClick={() => navigate('/dashboard')} className="back-button">
             Back
           </button>
@@ -772,24 +1075,27 @@ const WP1Form: React.FC = () => {
           </div>
           <div className="form-row">
             <div className="form-field">
-              <label>SPEC. STRENGTH:</label>
-              <input
-                type="text"
-                value={formData.specStrength || ''}
-                onChange={(e) => handleFieldChange('specStrength', e.target.value)}
-                readOnly={isTechnician}
-                placeholder="Auto-populated from project specs"
-              />
-            </div>
-            <div className="form-field">
-              <label>at</label>
-              <input
-                type="number"
-                value={formData.specStrengthDays || 28}
-                onChange={(e) => handleFieldChange('specStrengthDays', parseInt(e.target.value) || 28)}
-                style={{ width: '80px' }}
-              />
-              <label style={{ marginLeft: '10px' }}>days</label>
+              <label>Spec Strength (PSI):</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'nowrap', justifyContent: 'flex-start' }}>
+                <input
+                  type="text"
+                  value={formData.specStrength || ''}
+                  onChange={(e) => handleFieldChange('specStrength', e.target.value)}
+                  readOnly={(isTechnician || (!!formData.structure && !!soilSpecs[formData.structure]))}
+                  className={(isTechnician || (!!formData.structure && !!soilSpecs[formData.structure])) ? 'readonly' : ''}
+                  placeholder="Auto-populated from project specs"
+                  title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
+                  style={{ width: '180px' }}
+                />
+                <span>at</span>
+                <input
+                  type="number"
+                  value={formData.specStrengthDays || 28}
+                  onChange={(e) => handleFieldChange('specStrengthDays', parseInt(e.target.value) || 28)}
+                  style={{ width: '70px' }}
+                />
+                <span>days</span>
+              </div>
             </div>
           </div>
         </section>
@@ -800,11 +1106,22 @@ const WP1Form: React.FC = () => {
           <div className="form-row">
             <div className="form-field">
               <label>STRUCTURE:</label>
-              <input
-                type="text"
+              <select
                 value={formData.structure || ''}
-                onChange={(e) => handleFieldChange('structure', e.target.value)}
-              />
+                onChange={(e) => handleStructureChange(e.target.value)}
+                style={{ width: '100%', padding: '8px' }}
+              >
+                <option value="">Select Structure...</option>
+                {Object.keys(soilSpecs).length > 0 ? (
+                  Object.keys(soilSpecs).map((structureType) => (
+                    <option key={structureType} value={structureType}>
+                      {structureType}
+                    </option>
+                  ))
+                ) : (
+                  <option value="" disabled>No structures available (check Project Details → Concrete Specs)</option>
+                )}
+              </select>
             </div>
             <div className="form-field">
               <label>SAMPLE LOCATION:</label>
@@ -921,7 +1238,7 @@ const WP1Form: React.FC = () => {
               </thead>
               <tbody>
                 <tr>
-                  <td>AMBIENT TEMP:</td>
+                  <td>AMBIENT TEMP (°F):</td>
                   <td>
                     <input
                       type="text"
@@ -934,11 +1251,14 @@ const WP1Form: React.FC = () => {
                       type="text"
                       value={formData.ambientTempSpecs || ''}
                       onChange={(e) => handleFieldChange('ambientTempSpecs', e.target.value)}
+                      readOnly={!!formData.structure && !!soilSpecs[formData.structure]}
+                      className={!!formData.structure && !!soilSpecs[formData.structure] ? 'readonly' : ''}
+                      title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                     />
                   </td>
                 </tr>
                 <tr>
-                  <td>CONCRETE TEMP:</td>
+                  <td>CONCRETE TEMP (°F):</td>
                   <td>
                     <input
                       type="text"
@@ -951,6 +1271,9 @@ const WP1Form: React.FC = () => {
                       type="text"
                       value={formData.concreteTempSpecs || ''}
                       onChange={(e) => handleFieldChange('concreteTempSpecs', e.target.value)}
+                      readOnly={!!formData.structure && !!soilSpecs[formData.structure]}
+                      className={!!formData.structure && !!soilSpecs[formData.structure] ? 'readonly' : ''}
+                      title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                     />
                   </td>
                 </tr>
@@ -968,6 +1291,9 @@ const WP1Form: React.FC = () => {
                       type="text"
                       value={formData.slumpSpecs || ''}
                       onChange={(e) => handleFieldChange('slumpSpecs', e.target.value)}
+                      readOnly={!!formData.structure && !!soilSpecs[formData.structure]}
+                      className={!!formData.structure && !!soilSpecs[formData.structure] ? 'readonly' : ''}
+                      title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                     />
                   </td>
                 </tr>
@@ -985,6 +1311,9 @@ const WP1Form: React.FC = () => {
                       type="text"
                       value={formData.airContentSpecs || ''}
                       onChange={(e) => handleFieldChange('airContentSpecs', e.target.value)}
+                      readOnly={!!formData.structure && !!soilSpecs[formData.structure]}
+                      className={!!formData.structure && !!soilSpecs[formData.structure] ? 'readonly' : ''}
+                      title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                     />
                   </td>
                 </tr>
@@ -1156,17 +1485,66 @@ const WP1Form: React.FC = () => {
                         <td>
                           <input
                             type="number"
-                            value={cylinder.totalLoad || ''}
-                            onChange={(e) => handleCylinderChange(globalIndex, 'totalLoad', parseFloat(e.target.value) || undefined)}
+                            value={cylinder.totalLoad !== undefined ? Math.round(cylinder.totalLoad) : ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '') {
+                                handleCylinderChange(globalIndex, 'totalLoad', undefined);
+                              } else {
+                                const num = parseFloat(val);
+                                if (!isNaN(num)) {
+                                  handleCylinderChange(globalIndex, 'totalLoad', num);
+                                }
+                              }
+                            }}
+                            onBlur={(e) => {
+                              // Round to whole number on blur
+                              const val = e.target.value;
+                              if (val === '') {
+                                handleCylinderChange(globalIndex, 'totalLoad', undefined);
+                              } else {
+                                const num = parseFloat(val);
+                                if (!isNaN(num)) {
+                                  const rounded = Math.round(num);
+                                  handleCylinderChange(globalIndex, 'totalLoad', rounded);
+                                }
+                              }
+                            }}
                             style={{ width: '100%' }}
                           />
                         </td>
                         <td>
                           <input
                             type="number"
-                            value={cylinder.compressiveStrength || ''}
-                            onChange={(e) => handleCylinderChange(globalIndex, 'compressiveStrength', parseFloat(e.target.value) || undefined)}
+                            value={cylinder.compressiveStrength !== undefined ? Math.round(cylinder.compressiveStrength) : ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '') {
+                                handleCylinderChange(globalIndex, 'compressiveStrength', undefined);
+                              } else {
+                                const num = parseFloat(val);
+                                if (!isNaN(num)) {
+                                  handleCylinderChange(globalIndex, 'compressiveStrength', num);
+                                }
+                              }
+                            }}
+                            onBlur={(e) => {
+                              // Round to whole number on blur
+                              const val = e.target.value;
+                              if (val === '') {
+                                handleCylinderChange(globalIndex, 'compressiveStrength', undefined);
+                              } else {
+                                const num = parseFloat(val);
+                                if (!isNaN(num)) {
+                                  const rounded = Math.round(num);
+                                  handleCylinderChange(globalIndex, 'compressiveStrength', rounded);
+                                }
+                              }
+                            }}
                             style={{ width: '100%' }}
+                            readOnly
+                            className="calculated"
+                            title="Auto-calculated from Total Load / Cross-Sectional Area (rounded to whole number)"
                           />
                         </td>
                         <td>

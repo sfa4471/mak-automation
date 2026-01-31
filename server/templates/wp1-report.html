@@ -320,6 +320,16 @@
       break-inside: avoid;
       margin-bottom: 0.5in; /* Reserve space for footer */
     }
+    
+    /* Remarks section on Page 2 (when only 1 specimen set) */
+    .remarks-section-page2 {
+      page-break-before: always;
+      break-before: page;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      margin-top: 30px; /* Top spacing from page top (30px ≈ 0.31in at 96dpi) */
+      margin-bottom: 0.5in; /* Reserve space for footer */
+    }
   </style>
 </head>
 <body>
@@ -431,11 +441,8 @@
   <!-- Specimen Sets -->
   {{SPECIMEN_SETS}}
   
-  <!-- Remarks -->
-  <div class="remarks-section section-box">
-    <div class="section-title">REMARKS:</div>
-    <div class="remarks-box">{{REMARKS}}</div>
-  </div>
+  <!-- Remarks Section (generated conditionally in pdf.js) -->
+  {{REMARKS_SECTION}}
   
   <!-- Footer -->
   <div class="footer-disclaimer">

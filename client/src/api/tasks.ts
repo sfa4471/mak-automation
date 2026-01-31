@@ -42,6 +42,13 @@ export interface Task {
   updatedAt: string;
   projectNumber?: string;
   projectName?: string;
+  proctorNo?: number;
+}
+
+export interface ProctorTask {
+  id: number;
+  proctorNo: number;
+  status: TaskStatus;
 }
 
 export interface CreateTaskRequest {
@@ -91,8 +98,22 @@ const taskTypeLabels: { [key in TaskType]: string } = {
   CYLINDER_PICKUP: 'Cylinder Pickup',
 };
 
-export const taskTypeLabel = (taskType: TaskType): string => {
-  return taskTypeLabels[taskType] || taskType;
+export const taskTypeLabel = (taskTypeOrTask: TaskType | Task): string => {
+  // Support both old signature (taskType) and new signature (Task object)
+  if (typeof taskTypeOrTask === 'string') {
+    return taskTypeLabels[taskTypeOrTask] || taskTypeOrTask;
+  }
+  
+  // New signature: Task object
+  const task = taskTypeOrTask;
+  const baseLabel = taskTypeLabels[task.taskType] || task.taskType;
+  
+  // For Proctor tasks, append the proctor number if available
+  if (task.taskType === 'PROCTOR' && task.proctorNo) {
+    return `${baseLabel} ${task.proctorNo}`;
+  }
+  
+  return baseLabel;
 };
 
 export const tasksAPI = {
@@ -191,6 +212,12 @@ export const tasksAPI = {
 
   markFieldComplete: async (taskId: number): Promise<Task> => {
     const response = await api.post<Task>(`/tasks/${taskId}/mark-field-complete`);
+    return response.data;
+  },
+
+  // Get Proctor tasks for a project (for Density form dropdown)
+  getProctorsForProject: async (projectId: number): Promise<ProctorTask[]> => {
+    const response = await api.get<ProctorTask[]>(`/tasks/project/${projectId}/proctors`);
     return response.data;
   },
 };

@@ -3,11 +3,13 @@ import axios from 'axios';
 /**
  * API base URL resolution rules:
  * - Production (Vercel): use REACT_APP_API_BASE_URL
+ * - Network/local: use REACT_APP_API_URL (set by setup-network-env.js)
  * - Local development: use http://localhost:5000
  * - NO hardcoded LAN IPs
  */
 const API_URL =
   process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_API_URL ||
   (window.location.hostname === 'localhost'
     ? 'http://localhost:5000/api'
     : '');

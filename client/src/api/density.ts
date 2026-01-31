@@ -1,4 +1,5 @@
 import api from './api';
+import { ConcreteSpecs } from './projects';
 
 export interface TestRow {
   testNo: number;
@@ -24,9 +25,11 @@ export interface DensityReport {
   taskId: number;
   projectName?: string;
   projectNumber?: string;
+  projectConcreteSpecs?: ConcreteSpecs;
   clientName: string;
   datePerformed: string;
   structure: string;
+  structureType?: string;
   testRows: TestRow[];
   proctors: ProctorRow[];
   densSpecPercent: string;
@@ -47,6 +50,13 @@ export interface DensityReport {
   lastEditedByName?: string;
   lastEditedByUserId?: number;
   updatedAt?: string;
+  specDensityPct?: string;
+  proctorTaskId?: number;
+  proctorOptMoisture?: string;
+  proctorMaxDensity?: string;
+  proctorSoilClassification?: string;
+  proctorSoilClassificationText?: string;
+  proctorDescriptionLabel?: string;
 }
 
 export const densityAPI = {
@@ -62,7 +72,25 @@ export const densityAPI = {
     assignedTechnicianId?: number
   ): Promise<DensityReport> => {
     const payload = { ...data, updateStatus, assignedTechnicianId };
+    
+    // Debug: Log what's being sent
+    console.log('API saveByTask - Header fields in payload:', {
+      clientName: payload.clientName,
+      datePerformed: payload.datePerformed,
+      structure: payload.structure,
+      structureType: payload.structureType
+    });
+    
     const response = await api.post<DensityReport>(`/density/task/${taskId}`, payload);
+    
+    // Debug: Log what's returned
+    console.log('API saveByTask - Header fields in response:', {
+      clientName: response.data.clientName,
+      datePerformed: response.data.datePerformed,
+      structure: response.data.structure,
+      structureType: response.data.structureType
+    });
+    
     return response.data;
   },
 };

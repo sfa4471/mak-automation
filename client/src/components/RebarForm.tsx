@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { rebarAPI, RebarReport } from '../api/rebar';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
+import ProjectHomeButton from './ProjectHomeButton';
 import './RebarForm.css';
 
 const RebarForm: React.FC = () => {
@@ -21,6 +22,7 @@ const RebarForm: React.FC = () => {
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const lastSavedDataRef = useRef<string>('');
 
   useEffect(() => {
     loadData();
@@ -36,6 +38,11 @@ const RebarForm: React.FC = () => {
       ]);
       setTask(taskData);
       setFormData(reportData);
+      
+      // Update last saved snapshot after loading
+      if (reportData) {
+        lastSavedDataRef.current = JSON.stringify(reportData);
+      }
 
       // Auto-save initial data if no record exists yet
       if (reportData && taskData && typeof reportData.id === 'undefined') {
@@ -69,6 +76,22 @@ const RebarForm: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // Check if there are unsaved changes
+  const checkUnsavedChanges = useCallback(() => {
+    if (!formData || !task) return false;
+    if (saveStatus === 'saving') return true;
+    const currentData = JSON.stringify(formData);
+    return currentData !== lastSavedDataRef.current;
+  }, [formData, task, saveStatus]);
+
+  // Simple save function for Home button (saves current state without changing status)
+  const handleSimpleSave = useCallback(async () => {
+    if (!formData || !task) return;
+    await rebarAPI.saveByTask(task.id, formData);
+    // Update last saved snapshot
+    lastSavedDataRef.current = JSON.stringify(formData);
+  }, [formData, task]);
 
   const debouncedSave = useCallback((data: RebarReport) => {
     if (saveTimeoutRef.current) {
@@ -128,6 +151,8 @@ const RebarForm: React.FC = () => {
     setSaveStatus('saving');
     try {
       await rebarAPI.saveByTask(task.id, formData);
+      // Update last saved snapshot
+      lastSavedDataRef.current = JSON.stringify(formData);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -146,6 +171,8 @@ const RebarForm: React.FC = () => {
     try {
       await rebarAPI.saveByTask(task.id, formData, 'IN_PROGRESS_TECH');
       await tasksAPI.updateStatus(task.id, 'IN_PROGRESS_TECH');
+      // Update last saved snapshot
+      lastSavedDataRef.current = JSON.stringify(formData);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -228,7 +255,7 @@ const RebarForm: React.FC = () => {
         alert('Authentication required. Please log in again.');
         return;
       }
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.30:5000/api';
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
       const baseUrl = apiUrl.replace(/\/api\/?$/, '');
       const pdfUrl = `${baseUrl}/api/pdf/rebar/${task.id}`;
       
@@ -320,6 +347,11 @@ const RebarForm: React.FC = () => {
       <div className="rebar-form-header">
         <h1>Reinforcing Steel Placement Observation</h1>
         <div className="form-actions">
+          <ProjectHomeButton
+            projectId={task.projectId}
+            onSave={handleSimpleSave}
+            saving={saving}
+          />
           <button type="button" onClick={() => navigate(isAdmin() ? '/dashboard' : '/technician/dashboard')} className="btn-secondary">
             Back
           </button>

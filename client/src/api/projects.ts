@@ -1,9 +1,37 @@
 import api from './api';
 
+export interface SoilSpecRow {
+  specStrengthPsi?: string;
+  ambientTempF?: string;
+  concreteTempF?: string;
+  slump?: string;
+  airContent?: string;
+}
+
+export interface ConcreteSpecRow {
+  densityPct?: string;
+  moistureRange?: {
+    min?: string;
+    max?: string;
+  };
+}
+
+export interface SoilSpecs {
+  [structureType: string]: SoilSpecRow;
+}
+
+export interface ConcreteSpecs {
+  [structureType: string]: ConcreteSpecRow;
+}
+
 export interface Project {
   id: number;
   projectNumber: string;
   projectName: string;
+  customerEmails?: string[];
+  soilSpecs?: SoilSpecs;
+  concreteSpecs?: ConcreteSpecs;
+  // Legacy fields (kept for backward compatibility, but deprecated)
   projectSpec?: string;
   customerEmail?: string;
   specStrengthPsi?: string;
@@ -15,25 +43,16 @@ export interface Project {
   updatedAt?: string;
 }
 
-export interface ProjectSpecs {
-  specStrengthPsi?: string;
-  specAmbientTempF?: string;
-  specConcreteTempF?: string;
-  specSlump?: string;
-  specAirContentByVolume?: string;
+export interface CreateProjectRequest {
+  projectName: string;
+  customerEmails?: string[];
+  soilSpecs?: SoilSpecs;
+  concreteSpecs?: ConcreteSpecs;
 }
 
 export const projectsAPI = {
-  create: async (
-    projectName: string, 
-    specs?: ProjectSpecs,
-    customerEmail?: string
-  ): Promise<Project> => {
-    const response = await api.post<Project>('/projects', { 
-      projectName, 
-      customerEmail,
-      ...specs
-    });
+  create: async (data: CreateProjectRequest): Promise<Project> => {
+    const response = await api.post<Project>('/projects', data);
     return response.data;
   },
 

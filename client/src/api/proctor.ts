@@ -7,26 +7,54 @@ export interface ProctorReportData {
   testMethod: string;
   client: string;
   soilClassification: string;
-  maximumDryDensityPcf: string;
-  optimumMoisturePercent: string;
+  // Canonical fields (preferred)
+  optMoisturePct?: number | null;
+  maxDryDensityPcf?: number | null;
+  // Legacy fields (for backward compatibility)
+  maximumDryDensityPcf?: string;
+  optimumMoisturePercent?: string;
   liquidLimitLL: string;
+  plasticLimit?: string; // Plastic Limit for PI calculation
   plasticityIndex: string;
   sampleDate: string;
   calculatedBy: string;
   reviewedBy: string;
   checkedBy: string;
   percentPassing200: string;
+  passing200?: Array<{
+    dishNo: number;
+    dryWtBeforeWash: string;
+    dryWtAfterWash: string;
+    tareWeight: string;
+    passing200Pct: string;
+  }>;
+  passing200SummaryPct?: string; // Summary from Page 1 (average of valid rows)
   specificGravityG: string;
   proctorPoints: Array<{ x: number; y: number }>;
   zavPoints: Array<{ x: number; y: number }>;
 }
 
 export const proctorAPI = {
+  getByTask: async (taskId: number): Promise<ProctorReportData> => {
+    const response = await api.get<ProctorReportData>(`/proctor/task/${taskId}`);
+    return response.data;
+  },
+
+  saveByTask: async (taskId: number, reportData: ProctorReportData): Promise<ProctorReportData> => {
+    const response = await api.post<ProctorReportData>(`/proctor/task/${taskId}`, reportData);
+    return response.data;
+  },
+
+  getByProjectAndProctorNo: async (projectId: number, proctorNo: number): Promise<{ proctorNo: number; optMoisturePct: number; maxDryDensityPcf: number; soilClassification?: string | null; soilClassificationText?: string | null }> => {
+    const response = await api.get<{ proctorNo: number; optMoisturePct: number; maxDryDensityPcf: number; soilClassification?: string | null; soilClassificationText?: string | null }>(`/proctor/project/${projectId}/proctor/${proctorNo}`);
+    return response.data;
+  },
+
   generatePDF: async (taskId: number, reportData: ProctorReportData): Promise<Blob> => {
     try {
       const token = localStorage.getItem('token');
       // Get base URL - REACT_APP_API_URL already includes /api, so we need to extract base
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.30:5000/api';
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
       // Extract base URL (remove /api suffix if present)
       const baseUrl = apiUrl.replace(/\/api\/?$/, '');
       

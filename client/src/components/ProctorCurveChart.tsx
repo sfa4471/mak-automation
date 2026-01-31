@@ -100,12 +100,160 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     return zavPointsClamped;
   }, [cleanedZAVPoints]);
 
-  // Filter ZAV points to exclude those below Y-axis minimum and above Y-axis maximum (render clipping)
-  const yAxisMin = 100; // Fixed Y-axis minimum
-  const yAxisMax = 112; // Fixed Y-axis maximum
+  // Calculate dynamic Y-axis domain from Proctor curve data ONLY (ignore ZAV)
+  const yAxisDomain = useMemo(() => {
+    // Collect Y values ONLY from proctor points and maxDryDensity (peak point)
+    const yValues: number[] = [];
+    
+    // Add proctor curve densities
+    cleanedProctorPoints.forEach(p => {
+      if (Number.isFinite(p.y)) yValues.push(p.y);
+    });
+    
+    // Add peak point dry density if provided
+    if (maxDryDensity !== undefined && maxDryDensity !== null && Number.isFinite(maxDryDensity)) {
+      yValues.push(maxDryDensity);
+    }
+    
+    // Filter out any remaining invalid values
+    const validYs = yValues.filter(Number.isFinite);
+    
+    console.log('Y-axis domain calculation (Proctor only):', {
+      proctorYs: cleanedProctorPoints.map(p => p.y),
+      maxDryDensity,
+      allValidYs: validYs
+    });
+    
+    // If no valid values, use default range
+    if (validYs.length === 0) {
+      console.warn('No valid Y values found, using default domain [0, 10]');
+      return [0, 10] as [number, number];
+    }
+    
+    // Calculate min and max from Proctor curve only
+    const minY = Math.min(...validYs);
+    const dataMaxY = Math.max(...validYs);
+    
+    // Round maxY to next even number (with headroom)
+    // Formula: Math.ceil((dataMaxY + 1) / 2) * 2
+    // Examples: 68 → 70, 70 → 72, 69 → 70
+    const roundedMaxY = Math.ceil((dataMaxY + 1) / 2) * 2;
+    
+    // Round minY down to nearest even number (with padding)
+    const padding = Math.max(1, (roundedMaxY - minY) * 0.05); // 5% padding at bottom
+    const roundedMinY = Math.floor((minY - padding) / 2) * 2;
+    
+    // Ensure minY doesn't go below 0
+    const domainMin = Math.max(0, roundedMinY);
+    const domainMax = roundedMaxY;
+    
+    const domain: [number, number] = [domainMin, domainMax];
+    
+    console.log('Calculated Y-axis domain:', {
+      minY,
+      dataMaxY,
+      roundedMaxY,
+      roundedMinY,
+      domainMin,
+      domainMax,
+      finalDomain: domain
+    });
+    
+    return domain;
+  }, [cleanedProctorPoints, maxDryDensity]);
+
+  const yAxisMin = yAxisDomain[0];
+  const yAxisMax = yAxisDomain[1];
+
+  // Calculate dynamic X-axis domain and ticks from Proctor curve data ONLY
+  const xAxisConfig = useMemo(() => {
+    // Get moisture values ONLY from Proctor curve points
+    const moistureValues: number[] = [];
+    
+    // Add proctor curve moisture values
+    cleanedProctorPoints.forEach(p => {
+      if (Number.isFinite(p.x)) moistureValues.push(p.x);
+    });
+    
+    // Filter out any remaining invalid values
+    const validMoistures = moistureValues.filter(Number.isFinite);
+    
+    console.log('X-axis domain calculation (Proctor only):', {
+      proctorMoistures: cleanedProctorPoints.map(p => p.x),
+      allValidMoistures: validMoistures
+    });
+    
+    // If no valid values, use default range
+    if (validMoistures.length === 0) {
+      console.warn('No valid moisture values found, using default domain [0, 25]');
+      return {
+        domain: [0, 25] as [number, number],
+        ticks: [0, 5, 10, 15, 20, 25],
+        xAxisMaxForClipping: 25,
+        xAxisMinForClipping: 0
+      };
+    }
+    
+    // Calculate min and max from Proctor curve only
+    const minX = Math.min(...validMoistures);
+    const maxX = Math.max(...validMoistures);
+    
+    // X-axis minimum: minX - 7, clamped to 0 (keep existing left margin rule)
+    const xAxisMin = Math.max(0, minX - 7);
+    
+    // X-axis maximum: maxX + 6 (right-side margin must be <= 6)
+    const xAxisMax = maxX + 6;
+    
+    // Calculate range to determine tick step
+    const range = xAxisMax - xAxisMin;
+    const tickStep = range <= 14 ? 1 : 2;
+    
+    // Align xMin down and xMax up to tick step boundaries (after computing xAxisMin/xAxisMax)
+    const xMinAligned = Math.floor(xAxisMin / tickStep) * tickStep;
+    const xMaxAligned = Math.ceil(xAxisMax / tickStep) * tickStep;
+    
+    // Generate ticks from xMinAligned to xMaxAligned with step tickStep
+    const ticks: number[] = [];
+    for (let x = xMinAligned; x <= xMaxAligned; x += tickStep) {
+      ticks.push(x);
+    }
+    
+    const domain: [number, number] = [xMinAligned, xMaxAligned];
+    
+    // Store xAxisMax for ZAV clipping (use aligned values to match domain)
+    const xAxisMaxForClipping = xMaxAligned;
+    const xAxisMinForClipping = xMinAligned;
+    
+    console.log('Calculated X-axis domain and ticks:', {
+      minX,
+      maxX,
+      xAxisMin,
+      xAxisMax,
+      range,
+      tickStep,
+      xMinAligned,
+      xMaxAligned,
+      finalDomain: domain,
+      ticks
+    });
+    
+    return { domain, ticks, xAxisMaxForClipping, xAxisMinForClipping };
+  }, [cleanedProctorPoints]);
+
+  // Extract X-axis clipping boundaries (MUST be before zavFilteredForRender)
+  const xAxisMax = xAxisConfig.xAxisMaxForClipping;
+  const xAxisMin = xAxisConfig.xAxisMinForClipping;
+
+  // Filter ZAV points to exclude those outside Y-axis and X-axis bounds (render clipping)
+  // Clip on both Y (density) and X (moisture) axes
   const zavFilteredForRender = useMemo(() => {
-    return filteredZAVPoints.filter(p => p.y >= yAxisMin && p.y <= yAxisMax);
-  }, [filteredZAVPoints]);
+    return filteredZAVPoints.filter(p => 
+      p.y >= yAxisMin && 
+      p.y <= yAxisMax && 
+      p.x >= xAxisMin && 
+      p.x <= xAxisMax
+    );
+  }, [filteredZAVPoints, yAxisMin, yAxisMax, xAxisMin, xAxisMax]);
 
   // Prepare chart data - combine proctor and ZAV into single dataset
   const chartData = useMemo(() => {
@@ -165,7 +313,42 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     return targetPoint || zavFilteredForRender[Math.floor(zavFilteredForRender.length * 0.7)];
   }, [zavFilteredForRender]);
 
-  // Edge cases
+  // Use dynamically calculated X-axis domain and ticks (from xAxisConfig calculated above)
+  const xDomain = xAxisConfig.domain;
+  const xTicks = xAxisConfig.ticks;
+  
+  // Use dynamically calculated Y-axis domain
+  const yDomain = yAxisDomain;
+  
+  // Generate Y-axis ticks with step size of 2 (MUST be before early return)
+  const yTicks = useMemo(() => {
+    const [min, max] = yDomain;
+    // Round min up to nearest even number, round max down to nearest even number
+    const roundedMin = Math.ceil(min / 2) * 2;
+    const roundedMax = Math.floor(max / 2) * 2;
+    
+    // Generate ticks with step size of 2
+    const ticks: number[] = [];
+    for (let y = roundedMin; y <= roundedMax; y += 2) {
+      ticks.push(y);
+    }
+    
+    // If no ticks generated (shouldn't happen), add at least min and max
+    if (ticks.length === 0) {
+      ticks.push(roundedMin, roundedMax);
+    }
+    
+    console.log('Generated Y-axis ticks (step=2):', {
+      domain: yDomain,
+      roundedMin,
+      roundedMax,
+      ticks
+    });
+    
+    return ticks;
+  }, [yDomain]);
+
+  // Edge cases - check AFTER all hooks are called
   if (sortedProctorPoints.length < 2) {
     return (
       <div className="proctor-chart-container">
@@ -176,20 +359,12 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     );
   }
 
-  // Fixed axis domains
-  const xDomain: [number, number] = [0, 25];
-  const yDomain: [number, number] = [100, 112];
-
-  // Custom tick formatters
-  const xTicks = [0, 5, 10, 15, 20, 25];
-  const yTicks = [100, 102, 104, 106, 108, 110, 112];
-
   return (
     <div className="proctor-chart-container">
       <ResponsiveContainer width="100%" height={500}>
         <LineChart
           data={chartData}
-          margin={{ top: 20, right: 20, left: 75, bottom: 40 }}
+          margin={{ top: 20, right: 20, left: 75, bottom: 80 }}
         >
           {/* Gridlines */}
           <CartesianGrid 
@@ -207,11 +382,12 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
             ticks={xTicks}
             tick={{ fill: '#000', fontSize: 11, fontWeight: 'bold' }}
             tickLine={{ stroke: '#000', strokeWidth: 1 }}
+            tickMargin={10}
             axisLine={{ stroke: '#000', strokeWidth: 1.5 }}
-            label={{ 
-              value: '% Moisture', 
-              position: 'outside', 
-              offset: 10,
+            label={{
+              value: '% Moisture',
+              position: 'insideBottom',
+              offset: -15,
               style: { textAnchor: 'middle', fill: '#000', fontSize: 12, fontWeight: 'bold' }
             }}
           />
@@ -334,7 +510,7 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
           )}
 
           {/* Peak Point Marker - small triangle at intersection */}
-          {omc !== undefined && maxDryDensity !== undefined && !isNaN(omc) && !isNaN(maxDryDensity) && 
+          {omc !== undefined && maxDryDensity !== undefined && !isNaN(omc) && !isNaN(maxDryDensity) && Number.isFinite(maxDryDensity) && 
            omc >= 0 && omc <= 25 && maxDryDensity >= yDomain[0] && maxDryDensity <= yDomain[1] && (
             <Line
               type="monotone"

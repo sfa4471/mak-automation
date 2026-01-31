@@ -247,10 +247,10 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     // Generate Specimen Sets HTML (group cylinders into sets of 5)
     let specimenSetsHtml = '';
     const placementDate = wp1Data.placementDate;
+    let cylinderSets = []; // Track number of sets for REMARKS placement
     
     if (wp1Data.cylinders && wp1Data.cylinders.length > 0) {
       // Group cylinders into sets of 5
-      const cylinderSets = [];
       for (let i = 0; i < wp1Data.cylinders.length; i += 5) {
         cylinderSets.push(wp1Data.cylinders.slice(i, i + 5));
       }
@@ -389,8 +389,17 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
 
     html = html.replace('{{SPECIMEN_SETS}}', specimenSetsHtml);
 
-    // Remarks
-    html = html.replace('{{REMARKS}}', escapeHtml(wp1Data.remarks || ''));
+    // Generate REMARKS section conditionally
+    // If only 1 specimen set, move REMARKS to Page 2 with top spacing
+    const hasOnlyOneSet = cylinderSets.length === 1;
+    const remarksSectionClass = hasOnlyOneSet ? 'remarks-section-page2' : 'remarks-section';
+    const remarksHtml = `
+      <div class="${remarksSectionClass} section-box">
+        <div class="section-title">REMARKS:</div>
+        <div class="remarks-box">${escapeHtml(wp1Data.remarks || '')}</div>
+      </div>
+    `;
+    html = html.replace('{{REMARKS_SECTION}}', remarksHtml);
 
     // Generate PDF using Puppeteer
     console.log('Launching Puppeteer for WP1 PDF generation...');

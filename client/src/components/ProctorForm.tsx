@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
+import { proctorAPI } from '../api/proctor';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
+import ProjectHomeButton from './ProjectHomeButton';
 import './ProctorForm.css';
 
 interface ProctorRow {
@@ -30,12 +32,21 @@ interface AtterbergDish {
   plasticLimit: string; // calculated
 }
 
+interface Passing200Dish {
+  dishNo: number;
+  dryWtBeforeWash: string;
+  dryWtAfterWash: string;
+  tareWeight: string;
+  passing200Pct: string; // Auto-calculated
+}
+
 interface ProctorData {
   moldWeight: number;
   moldVolume: number;
   specificGravity: number;
   columns: ProctorRow[];
   atterbergLimits: AtterbergDish[];
+  passing200: Passing200Dish[];
 }
 
 const ProctorForm: React.FC = () => {
@@ -80,17 +91,27 @@ const ProctorForm: React.FC = () => {
     ];
   };
 
+  const getInitialPassing200 = (): Passing200Dish[] => {
+    return [
+      { dishNo: 1, dryWtBeforeWash: '', dryWtAfterWash: '', tareWeight: '', passing200Pct: '' }
+    ];
+  };
+
+  const [soilClassification, setSoilClassification] = useState<string>('');
   const [formData, setFormData] = useState<ProctorData>({
     moldWeight: 4.74,
     moldVolume: 0.0333,
     specificGravity: 2.60,
     columns: getInitialColumns(),
-    atterbergLimits: getInitialAtterbergLimits()
+    atterbergLimits: getInitialAtterbergLimits(),
+    passing200: getInitialPassing200()
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [error, setError] = useState('');
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const lastSavedDataRef = useRef<string>('');
 
   // Calculation functions (defined before use in useEffect)
   const calculateWetWtSample = (wetWtMold: string, wtOfMold: string): string => {
@@ -173,6 +194,19 @@ const ProctorForm: React.FC = () => {
   // Fixed moisture content values for ZAV table
   const zavMoistureValues = [2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43];
 
+  // Round a value to nearest whole number
+  const roundToWholeNumber = (value: string): string => {
+    if (!value || value.trim() === '') {
+      return '';
+    }
+    const trimmed = value.trim();
+    const num = parseFloat(trimmed);
+    if (isNaN(num)) {
+      return trimmed; // Return original if invalid
+    }
+    return String(Math.round(num));
+  };
+
   // Calculate Liquid Limit for a dish
   const calculateLiquidLimit = (wet: string, dry: string, tare: string, blows: string): string => {
     const wetVal = parseFloat(wet);
@@ -193,7 +227,8 @@ const ProctorForm: React.FC = () => {
     const blowsCorrection = Math.pow(blowsVal / 25, 0.121);
     const liquidLimit = moistureRatio * blowsCorrection;
     
-    return liquidLimit.toFixed(1);
+    // Round to nearest whole number
+    return String(Math.round(liquidLimit));
   };
 
   // Calculate Plastic Limit for Dish 3
@@ -213,7 +248,59 @@ const ProctorForm: React.FC = () => {
     // Formula: PL = (Wet - Dry) / (Dry - Tare) * 100
     const plasticLimit = (wetVal - dryVal) / denominator * 100;
     
-    return plasticLimit.toFixed(1);
+    // Round to nearest whole number
+    return String(Math.round(plasticLimit));
+  };
+
+  // Calculate Passing #200 Sieve %: ((DryWtBefore - DryWtAfter) / (DryWtBefore - TareWeight)) * 100
+  const calculatePassing200 = (dryWtBeforeWash: string, dryWtAfterWash: string, tareWeight: string): string => {
+    if (!dryWtBeforeWash || !dryWtAfterWash || !tareWeight ||
+        dryWtBeforeWash.trim() === '' || dryWtAfterWash.trim() === '' || tareWeight.trim() === '') {
+      return '';
+    }
+
+    const before = parseFloat(dryWtBeforeWash);
+    const after = parseFloat(dryWtAfterWash);
+    const tare = parseFloat(tareWeight);
+
+    if (isNaN(before) || isNaN(after) || isNaN(tare)) {
+      return '';
+    }
+
+    // Validation: (B - T) must be > 0
+    const drySampleMass = before - tare;
+    if (drySampleMass <= 0) {
+      return ''; // Invalid: tare >= before weight
+    }
+
+    // Validation: B must be >= A
+    if (before < after) {
+      return ''; // Invalid: after weight > before weight
+    }
+
+    // Formula: ((B - A) / (B - T)) * 100
+    const loss = before - after;
+    const passing200Pct = (loss / drySampleMass) * 100;
+
+    // Round to nearest whole percent
+    return String(Math.round(passing200Pct));
+  };
+
+  // Calculate summary Passing #200 % (average of valid rows)
+  const calculatePassing200Summary = (passing200: Passing200Dish[]): string => {
+    const validPcts = passing200
+      .map(d => {
+        const pct = parseFloat(d.passing200Pct);
+        return isNaN(pct) ? null : pct;
+      })
+      .filter((pct): pct is number => pct !== null);
+
+    if (validPcts.length === 0) {
+      return '';
+    }
+
+    const average = validPcts.reduce((sum, pct) => sum + pct, 0) / validPcts.length;
+    return String(Math.round(average));
   };
 
   // Calculate Maximum Density and Optimum Moisture Content
@@ -341,6 +428,18 @@ const ProctorForm: React.FC = () => {
       const taskData = await tasksAPI.get(taskId);
       setTask(taskData);
       
+      // Try to load saved Proctor data from backend first
+      try {
+        const savedProctorData = await proctorAPI.getByTask(taskId);
+        if (savedProctorData) {
+          setSoilClassification(savedProctorData.soilClassification || '');
+          // Initialize last saved snapshot with backend data if available
+          // We'll update this after form data is fully loaded
+        }
+      } catch (err) {
+        console.log('No Proctor data in database yet, will check localStorage');
+      }
+      
       // Load saved Proctor draft data from localStorage
       const draftData = localStorage.getItem(`proctor_draft_${taskId}`);
       if (draftData) {
@@ -348,14 +447,35 @@ const ProctorForm: React.FC = () => {
           const saved = JSON.parse(draftData);
           console.log('Loading Proctor draft data:', saved);
           
+          // Restore soilClassification from localStorage if not in DB
+          if (!soilClassification && saved.soilClassification) {
+            setSoilClassification(saved.soilClassification);
+          }
+          
           // Restore form data including Atterberg values
           const restoredData: ProctorData = {
             moldWeight: saved.moldWeight ?? 4.74,
             moldVolume: saved.moldVolume ?? 0.0333,
             specificGravity: saved.specificGravity ?? 2.60,
             columns: saved.columns ?? getInitialColumns(),
-            atterbergLimits: saved.atterbergLimits ?? getInitialAtterbergLimits()
+            atterbergLimits: saved.atterbergLimits ?? getInitialAtterbergLimits(),
+            passing200: saved.passing200 && Array.isArray(saved.passing200) && saved.passing200.length > 0
+              ? saved.passing200.map((d: any) => ({
+                  dishNo: d.dishNo || 1,
+                  dryWtBeforeWash: d.dryWtBeforeWash || '',
+                  dryWtAfterWash: d.dryWtAfterWash || '',
+                  tareWeight: d.tareWeight || '',
+                  passing200Pct: calculatePassing200(d.dryWtBeforeWash || '', d.dryWtAfterWash || '', d.tareWeight || '') // Recalculate on load
+                }))
+              : getInitialPassing200()
           };
+
+          // Recalculate passing200 percentages on load
+          const recalculatedPassing200 = restoredData.passing200.map(dish => ({
+            ...dish,
+            passing200Pct: calculatePassing200(dish.dryWtBeforeWash, dish.dryWtAfterWash, dish.tareWeight)
+          }));
+          restoredData.passing200 = recalculatedPassing200;
           
           // Recalculate all columns after restoring
           const recalculatedColumns = restoredData.columns.map(col => 
@@ -368,32 +488,51 @@ const ProctorForm: React.FC = () => {
             
             // Recalculate Liquid Limit for Dish 1 and Dish 2
             if (idx === 0 || idx === 1) {
-              const ll = calculateLiquidLimit(
-                dish.massWetSampleTare,
-                dish.massDrySampleTare,
-                dish.tareMass,
-                dish.numberOfBlows
-              );
-              updatedDish.liquidLimit = ll;
+              // If we have all required values, recalculate (this will round to whole number)
+              if (dish.massWetSampleTare && dish.massDrySampleTare && dish.tareMass && dish.numberOfBlows) {
+                const ll = calculateLiquidLimit(
+                  dish.massWetSampleTare,
+                  dish.massDrySampleTare,
+                  dish.tareMass,
+                  dish.numberOfBlows
+                );
+                updatedDish.liquidLimit = ll;
+              } else if (dish.liquidLimit) {
+                // If manually entered LL exists but can't recalculate, round it
+                updatedDish.liquidLimit = roundToWholeNumber(dish.liquidLimit);
+              }
             }
             
             // Recalculate Plastic Limit for Dish 3
             if (idx === 2) {
-              const pl = calculatePlasticLimit(
-                dish.massWetSampleTare,
-                dish.massDrySampleTare,
-                dish.tareMass
-              );
-              updatedDish.plasticLimit = pl;
+              // If we have all required values, recalculate (this will round to whole number)
+              if (dish.massWetSampleTare && dish.massDrySampleTare && dish.tareMass) {
+                const pl = calculatePlasticLimit(
+                  dish.massWetSampleTare,
+                  dish.massDrySampleTare,
+                  dish.tareMass
+                );
+                updatedDish.plasticLimit = pl;
+              } else if (dish.plasticLimit) {
+                // If manually entered PL exists but can't recalculate, round it
+                updatedDish.plasticLimit = roundToWholeNumber(dish.plasticLimit);
+              }
             }
             
             return updatedDish;
           });
           
-          setFormData({
+          const finalRestoredData = {
             ...restoredData,
             columns: recalculatedColumns,
             atterbergLimits: recalculatedAtterberg
+          };
+          setFormData(finalRestoredData);
+          
+          // Update last saved snapshot after loading
+          lastSavedDataRef.current = JSON.stringify({
+            formData: finalRestoredData,
+            soilClassification: saved.soilClassification || ''
           });
           
           console.log('Restored Atterberg limits:', recalculatedAtterberg);
@@ -403,6 +542,15 @@ const ProctorForm: React.FC = () => {
       }
       
       // TODO: Load saved Proctor data from backend when API is ready
+      
+      // Initialize last saved snapshot after data is loaded (even if empty)
+      // This ensures we can detect changes from the initial state
+      if (!lastSavedDataRef.current) {
+        lastSavedDataRef.current = JSON.stringify({
+          formData,
+          soilClassification
+        });
+      }
     } catch (err: any) {
       console.error('Error loading data:', err);
       setError(err.response?.data?.error || 'Failed to load task data.');
@@ -464,8 +612,12 @@ const ProctorForm: React.FC = () => {
         [field]: value
       };
       
-      // Recalculate Liquid Limit for Dish 1 and Dish 2
-      if (dishIndex === 0 || dishIndex === 1) {
+      // Only recalculate LL/PL if the field being changed is NOT liquidLimit or plasticLimit
+      // (i.e., if user is editing mass/dry/tare/blows, recalculate; if editing LL/PL directly, don't recalculate)
+      const isEditingLimit = field === 'liquidLimit' || field === 'plasticLimit';
+      
+      // Recalculate Liquid Limit for Dish 1 and Dish 2 (only if not manually editing liquidLimit)
+      if (!isEditingLimit && (dishIndex === 0 || dishIndex === 1)) {
         const dish = updatedAtterberg[dishIndex];
         const ll = calculateLiquidLimit(
           dish.massWetSampleTare,
@@ -476,8 +628,8 @@ const ProctorForm: React.FC = () => {
         updatedAtterberg[dishIndex].liquidLimit = ll;
       }
       
-      // Recalculate Plastic Limit for Dish 3
-      if (dishIndex === 2) {
+      // Recalculate Plastic Limit for Dish 3 (only if not manually editing plasticLimit)
+      if (!isEditingLimit && dishIndex === 2) {
         const dish = updatedAtterberg[dishIndex];
         const pl = calculatePlasticLimit(
           dish.massWetSampleTare,
@@ -491,6 +643,79 @@ const ProctorForm: React.FC = () => {
     });
   };
 
+  // Handle blur event to round LL or PL in Atterberg table to whole number
+  const handleAtterbergLimitBlur = (dishIndex: number, field: 'liquidLimit' | 'plasticLimit', value: string) => {
+    if (!isEditable) return;
+    const rounded = roundToWholeNumber(value);
+    if (rounded !== value && rounded !== '') {
+      handleAtterbergFieldChange(dishIndex, field, rounded);
+    }
+  };
+
+  // Handle Enter key to round LL or PL in Atterberg table
+  const handleAtterbergLimitKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, dishIndex: number, field: 'liquidLimit' | 'plasticLimit') => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const currentValue = formData.atterbergLimits[dishIndex]?.[field] || '';
+      const rounded = roundToWholeNumber(currentValue);
+      if (rounded !== currentValue && rounded !== '') {
+        handleAtterbergFieldChange(dishIndex, field, rounded);
+      }
+      e.currentTarget.blur();
+    }
+  };
+
+  // Handle passing200 table field changes
+  const handlePassing200Change = (dishIndex: number, field: keyof Passing200Dish, value: string) => {
+    setFormData(prev => {
+      const updatedPassing200 = [...prev.passing200];
+      updatedPassing200[dishIndex] = {
+        ...updatedPassing200[dishIndex],
+        [field]: value
+      };
+
+      // Auto-calculate Passing #200 % when weights change
+      const dish = updatedPassing200[dishIndex];
+      const passing200Pct = calculatePassing200(
+        dish.dryWtBeforeWash,
+        dish.dryWtAfterWash,
+        dish.tareWeight
+      );
+      updatedPassing200[dishIndex].passing200Pct = passing200Pct;
+
+      return { ...prev, passing200: updatedPassing200 };
+    });
+  };
+
+  // Add new passing200 dish row
+  const handleAddPassing200Dish = () => {
+    setFormData(prev => {
+      const newDishNo = prev.passing200.length > 0 
+        ? Math.max(...prev.passing200.map(d => d.dishNo)) + 1 
+        : 1;
+      const newDish: Passing200Dish = {
+        dishNo: newDishNo,
+        dryWtBeforeWash: '',
+        dryWtAfterWash: '',
+        tareWeight: '',
+        passing200Pct: ''
+      };
+      return { ...prev, passing200: [...prev.passing200, newDish] };
+    });
+  };
+
+  // Remove passing200 dish row
+  const handleRemovePassing200Dish = (dishIndex: number) => {
+    setFormData(prev => {
+      const updatedPassing200 = prev.passing200.filter((_, idx) => idx !== dishIndex);
+      // Ensure at least one row remains
+      if (updatedPassing200.length === 0) {
+        updatedPassing200.push({ dishNo: 1, dryWtBeforeWash: '', dryWtAfterWash: '', tareWeight: '', passing200Pct: '' });
+      }
+      return { ...prev, passing200: updatedPassing200 };
+    });
+  };
+
   // Calculate Final Liquid Limit (average of Dish 1 and Dish 2)
   const calculateFinalLiquidLimit = (): string => {
     const dish1LL = formData.atterbergLimits[0]?.liquidLimit || '';
@@ -500,14 +725,34 @@ const ProctorForm: React.FC = () => {
     const ll2 = parseFloat(dish2LL);
     
     if (!isNaN(ll1) && !isNaN(ll2)) {
-      return ((ll1 + ll2) / 2).toFixed(1);
+      // Round average to nearest whole number
+      const average = (ll1 + ll2) / 2;
+      return String(Math.round(average));
     } else if (!isNaN(ll1)) {
-      return dish1LL;
+      return roundToWholeNumber(dish1LL);
     } else if (!isNaN(ll2)) {
-      return dish2LL;
+      return roundToWholeNumber(dish2LL);
     }
     return '';
   };
+
+  // Check if there are unsaved changes by comparing current state to last saved
+  const checkUnsavedChanges = useCallback(() => {
+    if (!task) return false;
+    // Compare current form data to last saved snapshot
+    const currentData = JSON.stringify({
+      formData,
+      soilClassification
+    });
+    return currentData !== lastSavedDataRef.current;
+  }, [formData, soilClassification, task]);
+
+  // Track changes whenever form data or soil classification changes
+  useEffect(() => {
+    if (task && lastSavedDataRef.current !== '') {
+      setHasUnsavedChanges(checkUnsavedChanges());
+    }
+  }, [formData, soilClassification, checkUnsavedChanges, task]);
 
   const handleSave = async () => {
     if (!task) return;
@@ -517,6 +762,10 @@ const ProctorForm: React.FC = () => {
       // Calculate computed values for saving
       const { maxDensity, optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
       const finalLiquidLimit = calculateFinalLiquidLimit();
+      // Extract Plastic Limit from Dish 3 (atterbergLimits[2])
+      const plasticLimit = formData.atterbergLimits[2]?.plasticLimit || '';
+      // Calculate Passing #200 summary (average of valid rows)
+      const passing200SummaryPct = calculatePassing200Summary(formData.passing200);
       
       // Prepare complete Proctor draft data to save
       const proctorDraftData = {
@@ -524,14 +773,18 @@ const ProctorForm: React.FC = () => {
         moldWeight: formData.moldWeight,
         moldVolume: formData.moldVolume,
         specificGravity: formData.specificGravity,
+        soilClassification: soilClassification || '',
         columns: formData.columns,
         atterbergLimits: formData.atterbergLimits,
+        passing200: formData.passing200, // Add Passing #200 table
         
         // Computed values (normalized keys for Page 2)
         maximumDryDensityPcf: maxDensity,
         optimumMoisturePercent: optimumMoisture,
         specificGravityG: formData.specificGravity.toString(),
         liquidLimitLL: finalLiquidLimit,
+        plasticLimit: plasticLimit,
+        passing200SummaryPct: passing200SummaryPct, // Add summary percentage
         
         // Chart data
         proctorPoints: proctorPoints,
@@ -541,12 +794,48 @@ const ProctorForm: React.FC = () => {
         savedAt: new Date().toISOString()
       };
       
-      // Save to localStorage (temporary until backend API is ready)
-      localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(proctorDraftData));
-      console.log('Saved Proctor draft data:', proctorDraftData);
+      // Prepare data for database (using API format with canonical keys)
+      const proctorAPIData = {
+        projectName: task.projectName || '',
+        projectNumber: task.projectNumber || '',
+        sampledBy: 'MAK Lonestar Consulting, LLC', // Default value
+        testMethod: 'ASTM D698', // Default value
+        client: '',
+        soilClassification: soilClassification || '',
+        // Canonical fields (preferred)
+        optMoisturePct: optimumMoisture ? parseFloat(optimumMoisture) : null,
+        maxDryDensityPcf: maxDensity ? parseFloat(maxDensity) : null,
+        // Legacy fields (for backward compatibility)
+        maximumDryDensityPcf: maxDensity || '',
+        optimumMoisturePercent: optimumMoisture || '',
+        liquidLimitLL: finalLiquidLimit || '',
+        plasticLimit: plasticLimit || '',
+        plasticityIndex: '',
+        sampleDate: '',
+        calculatedBy: '',
+        reviewedBy: '',
+        checkedBy: '',
+        percentPassing200: passing200SummaryPct || '', // Use summary as legacy field
+        passing200: formData.passing200 || [], // Add Passing #200 table
+        passing200SummaryPct: passing200SummaryPct || '', // Add summary percentage
+        specificGravityG: formData.specificGravity.toString() || '',
+        proctorPoints: proctorPoints || [],
+        zavPoints: zavPoints || []
+      };
       
-      // TODO: Implement save API call when backend is ready
-      // await proctorAPI.saveByTask(task.id, proctorDraftData);
+      // Save to database
+      await proctorAPI.saveByTask(task.id, proctorAPIData);
+      
+      // Also save to localStorage for backward compatibility
+      localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(proctorDraftData));
+      console.log('Saved Proctor draft data to database and localStorage:', proctorDraftData);
+      
+      // Update last saved snapshot
+      lastSavedDataRef.current = JSON.stringify({
+        formData,
+        soilClassification
+      });
+      setHasUnsavedChanges(false);
       
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -558,46 +847,98 @@ const ProctorForm: React.FC = () => {
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (!task) return;
     
-    // Calculate values to pass to Step 2
-    const { maxDensity, optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
-    const finalLiquidLimit = calculateFinalLiquidLimit();
-    
-    // Save computed values to localStorage for Step 2 using normalized keys
-    // Also include full form data so Page 2 can access everything
-    const proctorStep1Data = {
-      // Page 1 inputs (for potential restoration)
-      moldWeight: formData.moldWeight,
-      moldVolume: formData.moldVolume,
-      specificGravity: formData.specificGravity,
-      columns: formData.columns,
-      atterbergLimits: formData.atterbergLimits,
+    setSaving(true);
+    try {
+      // Calculate values to pass to Step 2
+      const { maxDensity, optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
+      const finalLiquidLimit = calculateFinalLiquidLimit();
+      // Extract Plastic Limit from Dish 3 (atterbergLimits[2])
+      const plasticLimit = formData.atterbergLimits[2]?.plasticLimit || '';
+      // Calculate Passing #200 summary (average of valid rows)
+      const passing200SummaryPct = calculatePassing200Summary(formData.passing200);
+
+      // Prepare data for database (using API format with canonical keys)
+      const proctorAPIData = {
+        projectName: task.projectName || '',
+        projectNumber: task.projectNumber || '',
+        sampledBy: 'MAK Lonestar Consulting, LLC', // Default value
+        testMethod: 'ASTM D698', // Default value
+        client: '',
+        soilClassification: soilClassification || '',
+        // Canonical fields (preferred)
+        optMoisturePct: optimumMoisture ? parseFloat(optimumMoisture) : null,
+        maxDryDensityPcf: maxDensity ? parseFloat(maxDensity) : null,
+        // Legacy fields (for backward compatibility)
+        maximumDryDensityPcf: maxDensity || '',
+        optimumMoisturePercent: optimumMoisture || '',
+        liquidLimitLL: finalLiquidLimit || '',
+        plasticLimit: plasticLimit || '', // Add Plastic Limit
+        plasticityIndex: '',
+        sampleDate: '',
+        calculatedBy: '',
+        reviewedBy: '',
+        checkedBy: '',
+        percentPassing200: passing200SummaryPct || '', // Use summary as legacy field
+        passing200: formData.passing200 || [], // Add Passing #200 table
+        passing200SummaryPct: passing200SummaryPct || '', // Add summary percentage
+        specificGravityG: formData.specificGravity.toString() || '',
+        proctorPoints: proctorPoints || [],
+        zavPoints: zavPoints || []
+      };
       
-      // Computed values (normalized keys for Page 2)
-      maximumDryDensityPcf: maxDensity,
-      optimumMoisturePercent: optimumMoisture,
-      specificGravityG: formData.specificGravity.toString(),
-      liquidLimitLL: finalLiquidLimit,
+      // Save to database BEFORE navigating
+      await proctorAPI.saveByTask(task.id, proctorAPIData);
       
-      // Chart data
-      proctorPoints: proctorPoints,
-      zavPoints: zavPoints
-    };
-    
-    console.log('Saving Proctor step1 data with normalized keys:', proctorStep1Data);
-    localStorage.setItem(`proctor_step1_${task.id}`, JSON.stringify(proctorStep1Data));
-    
-    // Also update the draft data to keep it in sync
-    const proctorDraftData = {
-      ...proctorStep1Data,
-      savedAt: new Date().toISOString()
-    };
-    localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(proctorDraftData));
-    
-    // Navigate to Step 2
-    navigate(`/task/${id}/proctor/summary`);
+      // Also save to localStorage for backward compatibility
+      const proctorStep1Data = {
+        // Page 1 inputs (for potential restoration)
+        moldWeight: formData.moldWeight,
+        moldVolume: formData.moldVolume,
+        specificGravity: formData.specificGravity,
+        soilClassification: soilClassification || '',
+        columns: formData.columns,
+        atterbergLimits: formData.atterbergLimits,
+        passing200: formData.passing200, // Add Passing #200 table
+        
+        // Computed values (normalized keys for Page 2)
+        maximumDryDensityPcf: maxDensity,
+        optimumMoisturePercent: optimumMoisture,
+        specificGravityG: formData.specificGravity.toString(),
+        liquidLimitLL: finalLiquidLimit,
+        passing200SummaryPct: passing200SummaryPct, // Add summary percentage
+        
+        // Chart data
+        proctorPoints: proctorPoints,
+        zavPoints: zavPoints
+      };
+      
+      console.log('Saving Proctor step1 data to database and localStorage:', proctorStep1Data);
+      localStorage.setItem(`proctor_step1_${task.id}`, JSON.stringify(proctorStep1Data));
+      
+      // Also update the draft data to keep it in sync
+      const proctorDraftData = {
+        ...proctorStep1Data,
+        savedAt: new Date().toISOString()
+      };
+      localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(proctorDraftData));
+      
+      // Update last saved snapshot
+      lastSavedDataRef.current = JSON.stringify({
+        formData,
+        soilClassification
+      });
+      setHasUnsavedChanges(false);
+      
+      // Navigate to Step 2
+      navigate(`/task/${id}/proctor/summary`);
+    } catch (err: any) {
+      console.error('Error saving Proctor data before navigation:', err);
+      setError(err.response?.data?.error || 'Failed to save. Please try again.');
+      setSaving(false);
+    }
   };
 
   if (loading) {
@@ -615,6 +956,11 @@ const ProctorForm: React.FC = () => {
       <div className="proctor-form-header">
         <h1>Proctor Test</h1>
         <div className="form-actions">
+          <ProjectHomeButton
+            projectId={task.projectId}
+            onSave={handleSave}
+            saving={saving}
+          />
           <button type="button" onClick={() => navigate(isAdmin() ? '/dashboard' : '/technician/dashboard')} className="btn-secondary">
             Back
           </button>
@@ -625,10 +971,11 @@ const ProctorForm: React.FC = () => {
               </button>
               <button 
                 type="button" 
-                onClick={() => navigate(`/task/${id}/proctor/summary`)} 
+                onClick={handleNext}
                 className="btn-primary"
+                disabled={saving}
               >
-                Next
+                {saving ? 'Saving...' : 'Next'}
               </button>
             </>
           )}
@@ -704,49 +1051,20 @@ const ProctorForm: React.FC = () => {
           </div>
         </div>
 
-        {/* Zero Air Voids (ZAV) Curve Data Table */}
-        <div className="zav-section">
-          <h3>Zero Air Voids (ZAV) Curve Data</h3>
-          <div className="zav-table-wrapper">
-            <table className="zav-table">
-              <thead>
-                <tr>
-                  <th>Moisture Content (%)</th>
-                  <th>Zero Air Voids Dry Density (pcf)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  const { optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
-                  const optimumMoistureNum = optimumMoisture ? parseFloat(optimumMoisture) : null;
-                  
-                  // Find the index of the moisture value closest to OMC
-                  let closestIndex = -1;
-                  if (optimumMoistureNum !== null) {
-                    let minDiff = Infinity;
-                    zavMoistureValues.forEach((moisture, index) => {
-                      const diff = Math.abs(moisture - optimumMoistureNum);
-                      if (diff < minDiff) {
-                        minDiff = diff;
-                        closestIndex = index;
-                      }
-                    });
-                  }
-                  
-                  return zavMoistureValues.map((moisture, index) => {
-                    const zavDensity = calculateZAVDryDensity(formData.specificGravity, moisture);
-                    const shouldHighlight = index === closestIndex;
-                    
-                    return (
-                      <tr key={moisture} className={shouldHighlight ? 'zav-highlight' : ''}>
-                        <td>{moisture}</td>
-                        <td>{zavDensity || '—'}</td>
-                      </tr>
-                    );
-                  });
-                })()}
-              </tbody>
-            </table>
+        {/* Soil Classification Input */}
+        <div className="soil-classification-input">
+          <div className="mold-input-group">
+            <label htmlFor="soilClassification">Soil Classification:</label>
+            <input
+              type="text"
+              id="soilClassification"
+              value={soilClassification}
+              onChange={(e) => setSoilClassification(e.target.value)}
+              readOnly={!isEditable}
+              className={!isEditable ? 'readonly' : ''}
+              placeholder="Type soil classification / material description..."
+              maxLength={120}
+            />
           </div>
         </div>
 
@@ -1070,8 +1388,11 @@ const ProctorForm: React.FC = () => {
                     <input
                       type="text"
                       value={formData.atterbergLimits[0]?.liquidLimit || ''}
-                      readOnly
-                      className="calculated"
+                      onChange={(e) => handleAtterbergFieldChange(0, 'liquidLimit', e.target.value)}
+                      onBlur={(e) => handleAtterbergLimitBlur(0, 'liquidLimit', e.target.value)}
+                      onKeyDown={(e) => handleAtterbergLimitKeyDown(e, 0, 'liquidLimit')}
+                      readOnly={!isEditable}
+                      className={!isEditable ? 'readonly' : ''}
                     />
                   </td>
                   <td>
@@ -1131,8 +1452,11 @@ const ProctorForm: React.FC = () => {
                     <input
                       type="text"
                       value={formData.atterbergLimits[1]?.liquidLimit || ''}
-                      readOnly
-                      className="calculated"
+                      onChange={(e) => handleAtterbergFieldChange(1, 'liquidLimit', e.target.value)}
+                      onBlur={(e) => handleAtterbergLimitBlur(1, 'liquidLimit', e.target.value)}
+                      onKeyDown={(e) => handleAtterbergLimitKeyDown(e, 1, 'liquidLimit')}
+                      readOnly={!isEditable}
+                      className={!isEditable ? 'readonly' : ''}
                     />
                   </td>
                   <td>
@@ -1220,13 +1544,159 @@ const ProctorForm: React.FC = () => {
                     <input
                       type="text"
                       value={formData.atterbergLimits[2]?.plasticLimit || ''}
-                      readOnly
-                      className="calculated"
+                      onChange={(e) => handleAtterbergFieldChange(2, 'plasticLimit', e.target.value)}
+                      onBlur={(e) => handleAtterbergLimitBlur(2, 'plasticLimit', e.target.value)}
+                      onKeyDown={(e) => handleAtterbergLimitKeyDown(e, 2, 'plasticLimit')}
+                      readOnly={!isEditable}
+                      className={!isEditable ? 'readonly' : ''}
                     />
                   </td>
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          {/* Passing #200 Sieve Section */}
+          <div className="proctor-section">
+            <h3>Passing #200 Sieve (-200)</h3>
+            <table className="atterberg-table" style={{ marginTop: '10px' }}>
+              <thead>
+                <tr>
+                  <th>Dish No.</th>
+                  <th>Dry Wt Before Wash</th>
+                  <th>Dry Wt After Wash</th>
+                  <th>Tare Weight</th>
+                  <th>Passing #200 Sieve %</th>
+                  {isEditable && <th>Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {formData.passing200.map((dish, index) => (
+                  <tr key={index}>
+                    <td>
+                      <input
+                        type="text"
+                        value={dish.dishNo}
+                        onChange={(e) => {
+                          const newDishNo = parseInt(e.target.value) || dish.dishNo;
+                          handlePassing200Change(index, 'dishNo', String(newDishNo));
+                        }}
+                        readOnly={!isEditable}
+                        className={!isEditable ? 'readonly' : ''}
+                        style={{ width: '60px' }}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={dish.dryWtBeforeWash}
+                        onChange={(e) => handlePassing200Change(index, 'dryWtBeforeWash', e.target.value)}
+                        readOnly={!isEditable}
+                        className={!isEditable ? 'readonly' : ''}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={dish.dryWtAfterWash}
+                        onChange={(e) => handlePassing200Change(index, 'dryWtAfterWash', e.target.value)}
+                        readOnly={!isEditable}
+                        className={!isEditable ? 'readonly' : ''}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={dish.tareWeight}
+                        onChange={(e) => handlePassing200Change(index, 'tareWeight', e.target.value)}
+                        readOnly={!isEditable}
+                        className={!isEditable ? 'readonly' : ''}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={dish.passing200Pct ? `${dish.passing200Pct}%` : ''}
+                        readOnly
+                        className="calculated"
+                        title="Auto-calculated: ((DryWtBefore - DryWtAfter) / (DryWtBefore - TareWeight)) * 100"
+                      />
+                    </td>
+                    {isEditable && (
+                      <td>
+                        {formData.passing200.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePassing200Dish(index)}
+                            style={{ padding: '5px 10px', fontSize: '12px' }}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {isEditable && (
+              <button
+                type="button"
+                onClick={handleAddPassing200Dish}
+                style={{ marginTop: '10px', padding: '8px 15px' }}
+              >
+                + Add Dish
+              </button>
+            )}
+          </div>
+
+          {/* Zero Air Voids (ZAV) Curve Data Table */}
+          <div className="zav-section">
+            <h3>Zero Air Voids (ZAV) Curve Data</h3>
+            <div className="zav-table-wrapper">
+              <table className="zav-table">
+                <thead>
+                  <tr>
+                    <th>Moisture Content (%)</th>
+                    <th>Zero Air Voids Dry Density (pcf)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const { optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
+                    const optimumMoistureNum = optimumMoisture ? parseFloat(optimumMoisture) : null;
+                    
+                    // Find the index of the moisture value closest to OMC
+                    let closestIndex = -1;
+                    if (optimumMoistureNum !== null) {
+                      let minDiff = Infinity;
+                      zavMoistureValues.forEach((moisture, index) => {
+                        const diff = Math.abs(moisture - optimumMoistureNum);
+                        if (diff < minDiff) {
+                          minDiff = diff;
+                          closestIndex = index;
+                        }
+                      });
+                    }
+                    
+                    return zavMoistureValues.map((moisture, index) => {
+                      const zavDensity = calculateZAVDryDensity(formData.specificGravity, moisture);
+                      const shouldHighlight = index === closestIndex;
+                      
+                      return (
+                        <tr key={moisture} className={shouldHighlight ? 'zav-highlight' : ''}>
+                          <td>{moisture}</td>
+                          <td>{zavDensity || '—'}</td>
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 

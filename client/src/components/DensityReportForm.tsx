@@ -1,10 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { densityAPI, DensityReport, TestRow, ProctorRow } from '../api/density';
-import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
+import { tasksAPI, Task, TaskHistoryEntry, ProctorTask } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
+import { ConcreteSpecs } from '../api/projects';
+import { proctorAPI } from '../api/proctor';
+import ProjectHomeButton from './ProjectHomeButton';
 import './DensityReportForm.css';
+
+const CONCRETE_STRUCTURE_TYPES = [
+  'Slab',
+  'Grade Beams',
+  'Piers',
+  'Side Walk',
+  'Paving',
+  'Curb',
+  'Other'
+];
 
 const DensityReportForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -21,11 +34,119 @@ const DensityReportForm: React.FC = () => {
   const [moistSpecRange, setMoistSpecRange] = useState<string>('');
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
+  const [proctorTasks, setProctorTasks] = useState<ProctorTask[]>([]);
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const lastSavedDataRef = useRef<string>('');
+  const proctorCacheRef = useRef<{ [key: string]: any }>({}); // Cache proctor fetches by "projectId:proctorNo"
+  const hasAutoPopulatedRef = useRef<boolean>(false); // Track if we've already auto-populated on load
+  const latestFormDataRef = useRef<DensityReport | null>(null); // Track latest formData for immediate saves
 
   useEffect(() => {
     loadData();
   }, [id]);
+
+  // Auto-populate proctor rows on initial load
+  useEffect(() => {
+    // Only run once after data is loaded and not already populated
+    if (!formData || !task || hasAutoPopulatedRef.current || loading) return;
+    
+    // Mark as populated immediately to prevent re-runs
+    hasAutoPopulatedRef.current = true;
+    
+    // Check if any proctor rows need to be populated
+    const needsPopulation = formData.proctors.some((proctor) => {
+      // Skip if proctorNo is not set or is invalid
+      if (!proctor.proctorNo || proctor.proctorNo <= 0) return false;
+      
+      // If fields are already populated, skip
+      if (proctor.description && proctor.optMoisture && proctor.maxDensity) return false;
+      
+      return true;
+    });
+
+    if (!needsPopulation) {
+      return;
+    }
+
+    // Auto-populate all proctor rows that need it
+    const populateAll = async () => {
+      if (!formData || !task) return;
+      
+      const newProctors = [...formData.proctors];
+      let hasChanges = false;
+      const updatedFormData = { ...formData };
+
+      for (let index = 0; index < newProctors.length; index++) {
+        const proctor = newProctors[index];
+        
+        // Skip if proctorNo is not set or is invalid
+        if (!proctor.proctorNo || proctor.proctorNo <= 0) continue;
+        
+        // If fields are already populated, skip
+        if (proctor.description && proctor.optMoisture && proctor.maxDensity) continue;
+
+        // Check if we have snapshot values first (for this specific proctor)
+        const proctorNoStr = String(proctor.proctorNo);
+        const hasSnapshot = formData.proctorDescriptionLabel && 
+                           formData.proctorDescriptionLabel.includes(`Soil ${proctor.proctorNo}:`);
+        
+        if (hasSnapshot && formData.proctorOptMoisture && formData.proctorMaxDensity) {
+          // Use snapshot values if they exist and match this proctor
+          newProctors[index] = {
+            ...proctor,
+            description: formData.proctorDescriptionLabel || '',
+            optMoisture: formData.proctorOptMoisture || '',
+            maxDensity: formData.proctorMaxDensity || ''
+          };
+          hasChanges = true;
+        } else {
+          // Fetch proctor data
+          const populated = await populateProctorRow(index, proctor.proctorNo, true);
+          
+          if (populated) {
+            newProctors[index] = {
+              ...proctor,
+              description: populated.description,
+              optMoisture: populated.optMoisture,
+              maxDensity: populated.maxDensity
+            };
+            
+            // Update snapshot fields (use the first populated proctor's data)
+            if (!updatedFormData.proctorSoilClassificationText) {
+              updatedFormData.proctorSoilClassificationText = populated.soilClassificationText;
+              updatedFormData.proctorSoilClassification = populated.soilClassificationText;
+              updatedFormData.proctorDescriptionLabel = populated.description;
+              updatedFormData.proctorOptMoisture = populated.optMoisture;
+              updatedFormData.proctorMaxDensity = populated.maxDensity;
+            }
+            
+            hasChanges = true;
+          }
+        }
+      }
+
+      if (hasChanges) {
+        // Recalculate percent proctor for all test rows
+        const newRows = updatedFormData.testRows.map(row => {
+          if (row.proctorNo && row.dryDensity) {
+            return {
+              ...row,
+              percentProctorDensity: calculatePercentProctor(row.dryDensity, row.proctorNo, newProctors)
+            };
+          }
+          return row;
+        });
+
+        updatedFormData.proctors = newProctors;
+        setFormData({ ...updatedFormData, testRows: newRows });
+        // Save the populated data
+        debouncedSave({ ...updatedFormData, testRows: newRows });
+      }
+    };
+
+    populateAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData?.id, task?.id, loading]);
 
   const loadData = async () => {
     try {
@@ -36,7 +157,40 @@ const DensityReportForm: React.FC = () => {
         densityAPI.getByTask(taskId)
       ]);
       setTask(taskData);
-      setFormData(reportData);
+      
+      // Debug: Log loaded data to verify header fields are present
+      if (reportData) {
+        console.log('Loaded density report data:', {
+          clientName: reportData.clientName,
+          datePerformed: reportData.datePerformed,
+          structure: reportData.structure,
+          structureType: reportData.structureType
+        });
+      }
+      
+      // Ensure header fields are properly initialized from loaded data
+      if (reportData) {
+        // Ensure clientName, datePerformed, structure, and structureType are set (even if empty strings)
+        const initializedData = {
+          ...reportData,
+          clientName: reportData.clientName || '',
+          datePerformed: reportData.datePerformed || new Date().toISOString().split('T')[0],
+          structure: reportData.structure || '',
+          structureType: reportData.structureType || reportData.structure || ''
+        };
+        setFormData(initializedData);
+        lastSavedDataRef.current = JSON.stringify(initializedData);
+      } else {
+        setFormData(reportData);
+        if (reportData) {
+          lastSavedDataRef.current = JSON.stringify(reportData);
+        }
+      }
+      
+      // Reset auto-population flag when loading new data
+      hasAutoPopulatedRef.current = false;
+      // Clear proctor cache when loading new project
+      proctorCacheRef.current = {};
 
       // Initialize moisture spec range from min/max values
       if (reportData) {
@@ -80,6 +234,16 @@ const DensityReportForm: React.FC = () => {
         setHistory(historyData);
       } catch (err) {
         console.error('Error loading task history:', err);
+      }
+
+      // Load Proctor tasks for this project (for dropdown)
+      if (taskData?.projectId) {
+        try {
+          const proctors = await tasksAPI.getProctorsForProject(taskData.projectId);
+          setProctorTasks(proctors);
+        } catch (err) {
+          console.error('Error loading proctor tasks:', err);
+        }
       }
     } catch (err: any) {
       console.error('Error loading data:', err);
@@ -137,7 +301,9 @@ const DensityReportForm: React.FC = () => {
       }
     } else if (field === 'proctorNo') {
       (row as any)[field] = value;
-      // Recalculate percent proctor if dryDensity exists
+      
+      // Recalculate percent proctor based on the Proctor Summary table values
+      // This does NOT auto-populate the Proctor Summary table - that's done independently
       if (row.dryDensity && value) {
         row.percentProctorDensity = calculatePercentProctor(row.dryDensity, value, formData.proctors);
       } else {
@@ -153,17 +319,156 @@ const DensityReportForm: React.FC = () => {
     debouncedSave({ ...formData, testRows: newRows });
   };
 
-  const updateProctor = (index: number, field: keyof ProctorRow, value: string) => {
-    if (!formData) return;
+  // Helper function to fetch and populate a proctor row
+  const populateProctorRow = async (
+    index: number,
+    proctorNo: number,
+    useCache: boolean = true
+  ): Promise<{ description: string; optMoisture: string; maxDensity: string; soilClassificationText: string } | null> => {
+    if (!task?.projectId) return null;
+
+    const cacheKey = `${task.projectId}:${proctorNo}`;
+    
+    // Check cache first if useCache is true
+    if (useCache && proctorCacheRef.current[cacheKey]) {
+      const cached = proctorCacheRef.current[cacheKey];
+      return {
+        description: cached.description,
+        optMoisture: cached.optMoisture,
+        maxDensity: cached.maxDensity,
+        soilClassificationText: cached.soilClassificationText
+      };
+    }
+
+    try {
+      // Fetch Proctor data by projectId + proctorNo
+      const proctorData = await proctorAPI.getByProjectAndProctorNo(task.projectId, proctorNo);
+      
+      // Use soilClassificationText if available, otherwise fallback to soilClassification
+      const soilClassificationText = proctorData?.soilClassificationText || proctorData?.soilClassification || '';
+      const descriptionLabel = soilClassificationText 
+        ? `Soil ${proctorNo}: ${soilClassificationText}`
+        : `Soil ${proctorNo}`;
+      
+      // Auto-populate the row
+      const optMoisture = proctorData?.optMoisturePct !== null && proctorData?.optMoisturePct !== undefined
+        ? String(proctorData.optMoisturePct)
+        : '';
+      
+      const maxDensity = proctorData?.maxDryDensityPcf !== null && proctorData?.maxDryDensityPcf !== undefined
+        ? String(proctorData.maxDryDensityPcf)
+        : '';
+      
+      const result = {
+        description: descriptionLabel,
+        optMoisture: optMoisture,
+        maxDensity: maxDensity,
+        soilClassificationText: soilClassificationText
+      };
+
+      // Cache the result
+      proctorCacheRef.current[cacheKey] = result;
+      
+      return result;
+    } catch (err: any) {
+      console.error(`Error fetching Proctor ${proctorNo} data:`, err);
+      // Return null if proctor not found or error
+      return null;
+    }
+  };
+
+  const updateProctor = async (index: number, field: keyof ProctorRow, value: string) => {
+    if (!formData || !task) return;
     const newProctors = [...formData.proctors];
-    newProctors[index] = { ...newProctors[index], [field]: value };
+    
+    // If Proctor No is being changed, fetch and auto-populate the row
+    if (field === 'proctorNo') {
+      // For now, just update the proctorNo - we'll handle population below
+      const proctorNoValue = value ? parseInt(value) : null;
+      const finalProctorNo = (proctorNoValue && !isNaN(proctorNoValue)) ? proctorNoValue : (index + 1);
+      newProctors[index] = { ...newProctors[index], proctorNo: finalProctorNo };
+      
+      // If a Proctor No is selected (and it's different from default), fetch data and populate
+      if (value && task.projectId) {
+        const selectedProctorNo = parseInt(value);
+        if (!isNaN(selectedProctorNo) && selectedProctorNo > 0) {
+          const populated = await populateProctorRow(index, selectedProctorNo, true);
+          
+          if (populated) {
+            newProctors[index] = {
+              ...newProctors[index],
+              proctorNo: selectedProctorNo,
+              description: populated.description,
+              optMoisture: populated.optMoisture,
+              maxDensity: populated.maxDensity
+            };
+            
+            // Store snapshot fields on the density report
+            const updatedFormData = {
+              ...formData,
+              proctors: newProctors,
+              proctorSoilClassification: populated.soilClassificationText,
+              proctorSoilClassificationText: populated.soilClassificationText,
+              proctorDescriptionLabel: populated.description,
+              proctorOptMoisture: populated.optMoisture,
+              proctorMaxDensity: populated.maxDensity
+            };
+            
+            // Recalculate percent proctor for ALL test rows that use this proctor number
+            const proctorNoStr = String(selectedProctorNo);
+            const newRows = updatedFormData.testRows.map(row => {
+              if (row.proctorNo === proctorNoStr && row.dryDensity) {
+                return {
+                  ...row,
+                  percentProctorDensity: calculatePercentProctor(row.dryDensity, row.proctorNo, newProctors)
+                };
+              }
+              return row;
+            });
+            
+            setFormData({ ...updatedFormData, testRows: newRows });
+            debouncedSave({ ...updatedFormData, testRows: newRows });
+            return;
+          } else {
+            // If Proctor not found or error, clear the row fields but keep the proctorNo
+            newProctors[index] = {
+              ...newProctors[index],
+              description: '',
+              optMoisture: '',
+              maxDensity: ''
+            };
+          }
+        } else {
+          // If Proctor No is cleared, reset to default and clear the row fields
+          newProctors[index] = {
+            ...newProctors[index],
+            proctorNo: index + 1,
+            description: '',
+            optMoisture: '',
+            maxDensity: ''
+          };
+        }
+      } else {
+        // If Proctor No is cleared, reset to default and clear the row fields
+        newProctors[index] = {
+          ...newProctors[index],
+          proctorNo: index + 1,
+          description: '',
+          optMoisture: '',
+          maxDensity: ''
+        };
+      }
+    } else {
+      // For other fields, just update normally
+      newProctors[index] = { ...newProctors[index], [field]: value };
+    }
     
     // Recalculate percent proctor for ALL test rows that use this proctor number
-    // Proctor No = index + 1 (e.g., index 5 = Proctor No 6)
-    const proctorNo = String(index + 1);
+    const updatedProctorNo = newProctors[index].proctorNo;
+    const proctorNoStr = String(updatedProctorNo);
     const newRows = formData.testRows.map(row => {
       // If this row uses the updated proctor number and has dryDensity, recalculate
-      if (row.proctorNo === proctorNo && row.dryDensity) {
+      if (row.proctorNo === proctorNoStr && row.dryDensity) {
         return {
           ...row,
           percentProctorDensity: calculatePercentProctor(row.dryDensity, row.proctorNo, newProctors)
@@ -178,8 +483,51 @@ const DensityReportForm: React.FC = () => {
 
   const updateField = (field: keyof DensityReport, value: any) => {
     if (!formData) return;
-    setFormData({ ...formData, [field]: value });
-    debouncedSave({ ...formData, [field]: value });
+    const updatedData = { ...formData, [field]: value };
+    setFormData(updatedData);
+    latestFormDataRef.current = updatedData; // Update ref immediately
+    debouncedSave(updatedData);
+  };
+
+  // Handle structure selection - auto-fill specs from project concrete specs
+  const handleStructureChange = (structureType: string) => {
+    if (!formData || !formData.projectConcreteSpecs) return;
+    
+    const concreteSpecs = formData.projectConcreteSpecs;
+    const selectedSpec = concreteSpecs[structureType];
+    
+    let updatedData = { ...formData, structureType, structure: structureType };
+    
+    // Auto-fill specs if available
+    if (selectedSpec) {
+      // Set density percent
+      if (selectedSpec.densityPct) {
+        updatedData = { ...updatedData, densSpecPercent: selectedSpec.densityPct, specDensityPct: selectedSpec.densityPct };
+      }
+      
+      // Set moisture range
+      if (selectedSpec.moistureRange) {
+        const min = selectedSpec.moistureRange.min || '';
+        const max = selectedSpec.moistureRange.max || '';
+        updatedData = { ...updatedData, moistSpecMin: min, moistSpecMax: max };
+        
+        // Update moisture range display
+        if (min && max) {
+          setMoistSpecRange(`${min} to ${max}`);
+        } else if (min || max) {
+          setMoistSpecRange(min || max);
+        } else {
+          setMoistSpecRange('');
+        }
+      }
+    } else {
+      // Clear specs if structure has no specs
+      updatedData = { ...updatedData, densSpecPercent: '', specDensityPct: '', moistSpecMin: '', moistSpecMax: '' };
+      setMoistSpecRange('');
+    }
+    
+    setFormData(updatedData);
+    debouncedSave(updatedData);
   };
 
   // Handle moisture spec range text field - parse it to min/max
@@ -217,6 +565,16 @@ const DensityReportForm: React.FC = () => {
     debouncedSave(updatedData);
   };
 
+  // Check if there are unsaved changes by comparing current state to last saved
+  const checkUnsavedChanges = useCallback(() => {
+    if (!formData || !task) return false;
+    const currentData = JSON.stringify(formData);
+    // Check if we have a pending save (saveStatus is 'saving')
+    if (saveStatus === 'saving') return true;
+    // Compare current data to last saved
+    return currentData !== lastSavedDataRef.current;
+  }, [formData, task, saveStatus]);
+
   const debouncedSave = useCallback((data: DensityReport) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -226,18 +584,61 @@ const DensityReportForm: React.FC = () => {
     }, 1000);
   }, []);
 
+  // Flush any pending debounced saves and save immediately
+  const flushAndSave = useCallback(async () => {
+    // Use latestFormDataRef to ensure we have the most up-to-date data
+    const dataToSave = latestFormDataRef.current || formData;
+    if (!dataToSave || !task) return;
+    
+    // Clear any pending debounced save
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    
+    // Save immediately with latest data
+    await saveData(dataToSave, false);
+  }, [formData, task]);
+
   const saveData = async (data: DensityReport | null, updateStatus?: boolean, status?: string) => {
     if (!data || !task) return;
     
     try {
       setSaving(true);
       setSaveStatus('saving');
-      await densityAPI.saveByTask(
+      
+      // Ensure header fields are included in save payload
+      const savePayload = {
+        ...data,
+        clientName: data.clientName || '',
+        datePerformed: data.datePerformed || '',
+        structure: data.structure || data.structureType || '',
+        structureType: data.structureType || data.structure || ''
+      };
+      
+      // Debug: Log save payload to verify header fields are included
+      console.log('Saving density report with header fields:', {
+        clientName: savePayload.clientName,
+        datePerformed: savePayload.datePerformed,
+        structure: savePayload.structure,
+        structureType: savePayload.structureType
+      });
+      
+      const saved = await densityAPI.saveByTask(
         task.id,
-        data,
+        savePayload,
         updateStatus ? status : undefined,
         isAdmin() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
       );
+      
+      // Update formData with saved response to ensure we have the latest data
+      if (saved) {
+        setFormData(saved);
+        latestFormDataRef.current = saved;
+      }
+      
+      // Update last saved snapshot
+      lastSavedDataRef.current = JSON.stringify(savePayload);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -357,7 +758,7 @@ const DensityReportForm: React.FC = () => {
         alert('Authentication required. Please log in again.');
         return;
       }
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.30:5000/api';
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
       const baseUrl = apiUrl.replace(/\/api\/?$/, '');
       const pdfUrl = `${baseUrl}/api/pdf/density/${task.id}`;
       
@@ -460,6 +861,11 @@ const DensityReportForm: React.FC = () => {
       <header className="density-form-header">
         <h1>In-Place Moisture Density Test Results</h1>
         <div className="header-actions">
+          <ProjectHomeButton
+            projectId={task.projectId}
+            onSave={flushAndSave}
+            saving={saving}
+          />
           {saveStatus === 'saving' && <span className="save-status">Saving...</span>}
           {saveStatus === 'saved' && <span className="save-status saved">Saved {lastSaved?.toLocaleTimeString()}</span>}
           {saveStatus === 'idle' && lastSaved && <span className="save-status">Last saved: {lastSaved.toLocaleTimeString()}</span>}
@@ -512,7 +918,7 @@ const DensityReportForm: React.FC = () => {
               <label>Client Name</label>
               <input
                 type="text"
-                value={formData.clientName}
+                value={formData.clientName || ''}
                 onChange={(e) => updateField('clientName', e.target.value)}
                 disabled={!canEdit}
               />
@@ -521,20 +927,33 @@ const DensityReportForm: React.FC = () => {
               <label>Date Performed</label>
               <input
                 type="date"
-                value={formData.datePerformed}
+                value={formData.datePerformed || ''}
                 onChange={(e) => updateField('datePerformed', e.target.value)}
                 disabled={!canEdit}
               />
             </div>
             <div className="form-group">
               <label>Structure</label>
-              <input
-                type="text"
-                value={formData.structure}
-                onChange={(e) => updateField('structure', e.target.value)}
-                placeholder="e.g., Pavement"
+              <select
+                value={formData.structureType || formData.structure || ''}
+                onChange={(e) => handleStructureChange(e.target.value)}
                 disabled={!canEdit}
-              />
+              >
+                <option value="">Select Structure...</option>
+                {CONCRETE_STRUCTURE_TYPES.map((type) => {
+                  // Only show structures that exist in project concrete specs, or show all if no specs defined
+                  const hasSpecs = formData.projectConcreteSpecs && Object.keys(formData.projectConcreteSpecs).length > 0;
+                  const showType = !hasSpecs || formData.projectConcreteSpecs?.[type];
+                  return showType ? (
+                    <option key={type} value={type}>{type}</option>
+                  ) : null;
+                })}
+              </select>
+              {formData.structureType && formData.projectConcreteSpecs && !formData.projectConcreteSpecs[formData.structureType] && (
+                <small style={{ color: '#dc3545', display: 'block', marginTop: '4px' }}>
+                  No specs set for this structure in project setup.
+                </small>
+              )}
             </div>
           </div>
         </div>
@@ -548,7 +967,7 @@ const DensityReportForm: React.FC = () => {
                 <tr>
                   <th>Test No.</th>
                   <th>Test Location</th>
-                  <th>Dept/Lift</th>
+                  <th>Depth/Lift</th>
                   <th>Wet Density (pcf)</th>
                   <th>Field Moisture (%)</th>
                   <th>Dry Density (pcf)</th>
@@ -575,7 +994,7 @@ const DensityReportForm: React.FC = () => {
                           onChange={(e) => updateTestRow(index, 'depthLiftType', e.target.value as 'DEPTH' | 'LIFT')}
                           disabled={!canEdit}
                         >
-                          <option value="DEPTH">Dept</option>
+                          <option value="DEPTH">Depth</option>
                           <option value="LIFT">Lift</option>
                         </select>
                         <input
@@ -622,8 +1041,8 @@ const DensityReportForm: React.FC = () => {
                         disabled={!canEdit}
                       >
                         <option value="">—</option>
-                        {[1, 2, 3, 4, 5, 6].map(n => (
-                          <option key={n} value={String(n)}>{n}</option>
+                        {proctorTasks.map((pt) => (
+                          <option key={pt.id} value={String(pt.proctorNo)}>Proctor #{pt.proctorNo}</option>
                         ))}
                       </select>
                     </td>
@@ -659,13 +1078,27 @@ const DensityReportForm: React.FC = () => {
               <tbody>
                 {formData.proctors.map((proctor, index) => (
                   <tr key={index}>
-                    <td>{proctor.proctorNo}</td>
+                    <td>
+                      <select
+                        value={proctor.proctorNo.toString()}
+                        onChange={(e) => updateProctor(index, 'proctorNo', e.target.value)}
+                        disabled={!canEdit}
+                      >
+                        <option value="">—</option>
+                        {proctorTasks.map((pt) => (
+                          <option key={pt.id} value={String(pt.proctorNo)}>
+                            {pt.proctorNo}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                     <td>
                       <input
                         type="text"
                         value={proctor.description}
-                        onChange={(e) => updateProctor(index, 'description', e.target.value)}
-                        disabled={!canEdit}
+                        readOnly
+                        className="calculated"
+                        title="Auto-generated from Proctor No and Soil Classification"
                       />
                     </td>
                     <td>

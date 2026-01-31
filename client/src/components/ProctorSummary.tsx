@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { tasksAPI, Task } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { proctorAPI } from '../api/proctor';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
+import ProjectHomeButton from './ProjectHomeButton';
 import './ProctorSummary.css';
 
 interface ProctorSummaryData {
@@ -16,12 +17,14 @@ interface ProctorSummaryData {
   maximumDryDensityPcf: string; // Normalized key
   optimumMoisturePercent: string; // Normalized key
   liquidLimitLL: string; // Normalized key
-  plasticityIndex: string;
+  plasticLimit: string; // Plastic Limit for PI calculation
+  plasticityIndex: string; // Auto-calculated: rounded LL - rounded PL
   sampleDate: string;
   calculatedBy: string;
   reviewedBy: string;
   checkedBy: string;
-  percentPassing200: string;
+  percentPassing200: string; // Legacy field - kept for backward compatibility
+  passing200SummaryPct: string; // Summary from Page 1 (average of valid rows)
   specificGravityG: string; // Normalized key
   proctorPoints: ProctorPoint[];
   zavPoints: ZAVPoint[];
@@ -36,6 +39,7 @@ const ProctorSummary: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
+  const lastSavedDataRef = useRef<string>('');
 
   const [summaryData, setSummaryData] = useState<ProctorSummaryData>({
     projectName: '',
@@ -47,20 +51,92 @@ const ProctorSummary: React.FC = () => {
     maximumDryDensityPcf: '',
     optimumMoisturePercent: '',
     liquidLimitLL: '',
+    plasticLimit: '',
     plasticityIndex: '',
     sampleDate: '',
     calculatedBy: '',
     reviewedBy: '',
     checkedBy: '',
     percentPassing200: '',
+    passing200SummaryPct: '',
     specificGravityG: '',
     proctorPoints: [],
     zavPoints: []
   });
 
+  // Round a value to nearest whole number
+  const roundToWholeNumber = useCallback((value: string): string => {
+    if (!value || value.trim() === '') {
+      return '';
+    }
+    const trimmed = value.trim();
+    const num = parseFloat(trimmed);
+    if (isNaN(num)) {
+      return trimmed; // Return original if invalid
+    }
+    const rounded = Math.round(num);
+    console.log('roundToWholeNumber:', { input: trimmed, parsed: num, rounded });
+    return String(rounded);
+  }, []);
+
+
+  // Calculate Plasticity Index (PI) with rounding
+  // PI = rounded(LL) - rounded(PL)
+  const calculatePlasticityIndex = useCallback((liquidLimit: string, plasticLimit: string): string => {
+    // If either field is empty, return blank
+    if (!liquidLimit || !plasticLimit || liquidLimit.trim() === '' || plasticLimit.trim() === '') {
+      return '';
+    }
+
+    const ll = parseFloat(liquidLimit);
+    const pl = parseFloat(plasticLimit);
+
+    // If either value is invalid, return blank
+    if (isNaN(ll) || isNaN(pl)) {
+      return '';
+    }
+
+    // Round to nearest whole number using standard rounding rules
+    const roundedLL = Math.round(ll);
+    const roundedPL = Math.round(pl);
+
+    // Calculate PI
+    const pi = roundedLL - roundedPL;
+
+    // Debug log
+    console.log('PI Calculation:', {
+      liquidLimit,
+      plasticLimit,
+      ll,
+      pl,
+      roundedLL,
+      roundedPL,
+      pi
+    });
+
+    return String(pi);
+  }, []);
+
   useEffect(() => {
     loadData();
   }, [id]);
+
+  // Recalculate PI whenever LL or PL changes
+  useEffect(() => {
+    const calculatedPI = calculatePlasticityIndex(
+      summaryData.liquidLimitLL,
+      summaryData.plasticLimit
+    );
+    // Always update PI to the calculated value
+    // This ensures PI is always correct and never shows stale values
+    setSummaryData(prev => {
+      // Only update if the calculated value is different from current
+      if (prev.plasticityIndex !== calculatedPI) {
+        return { ...prev, plasticityIndex: calculatedPI };
+      }
+      return prev;
+    });
+  }, [summaryData.liquidLimitLL, summaryData.plasticLimit, calculatePlasticityIndex]);
 
   const loadData = async () => {
     try {
@@ -69,86 +145,154 @@ const ProctorSummary: React.FC = () => {
       const taskData = await tasksAPI.get(taskId);
       setTask(taskData);
       
-      // TODO: Load saved Proctor data from backend
-      // For now, load from localStorage or use default values
-      // The actual data should come from Page 1 saved data
-      
-      // Set project info from task (Task has projectNumber and projectName directly)
-      const initialData: ProctorSummaryData = {
-        projectName: taskData.projectName || '',
-        projectNumber: taskData.projectNumber || '',
-        sampledBy: 'MAK Lonestar Consulting, LLC',
-        testMethod: 'ASTM D698',
-        client: '',
-        soilClassification: '',
-        maximumDryDensityPcf: '',
-        optimumMoisturePercent: '',
-        liquidLimitLL: '',
-        plasticityIndex: '',
-        sampleDate: '',
-        calculatedBy: '',
-        reviewedBy: '',
-        checkedBy: '',
-        percentPassing200: '',
-        specificGravityG: '',
-        proctorPoints: [],
-        zavPoints: []
-      };
+      // Load saved Proctor data from backend
+      try {
+        const savedData = await proctorAPI.getByTask(taskId);
+        
+        // Set project info from task (Task has projectNumber and projectName directly)
+        const initialData: ProctorSummaryData = {
+          projectName: savedData.projectName || taskData.projectName || '',
+          projectNumber: savedData.projectNumber || taskData.projectNumber || '',
+          sampledBy: savedData.sampledBy || 'MAK Lonestar Consulting, LLC',
+          testMethod: savedData.testMethod || 'ASTM D698',
+          client: savedData.client || '',
+          soilClassification: savedData.soilClassification || '',
+          maximumDryDensityPcf: savedData.maximumDryDensityPcf || '',
+          optimumMoisturePercent: savedData.optimumMoisturePercent || '',
+          liquidLimitLL: roundToWholeNumber(savedData.liquidLimitLL || ''), // Round on load
+          plasticLimit: roundToWholeNumber(savedData.plasticLimit || ''), // Round on load
+          plasticityIndex: '', // Always recalculate, don't use saved value
+          sampleDate: savedData.sampleDate || '',
+          calculatedBy: savedData.calculatedBy || '',
+          reviewedBy: savedData.reviewedBy || '',
+          checkedBy: savedData.checkedBy || '',
+          percentPassing200: savedData.percentPassing200 || '',
+          passing200SummaryPct: (savedData as any).passing200SummaryPct || savedData.percentPassing200 || '', // Load summary from Page 1
+          specificGravityG: savedData.specificGravityG || '',
+          proctorPoints: savedData.proctorPoints || [],
+          zavPoints: savedData.zavPoints || []
+        };
+        
+        // Always recalculate PI from LL and PL (never use saved PI value)
+        initialData.plasticityIndex = calculatePlasticityIndex(
+          initialData.liquidLimitLL,
+          initialData.plasticLimit
+        );
+        
+        console.log('Loaded Proctor data from DB - PI calculation:', {
+          liquidLimitLL: initialData.liquidLimitLL,
+          plasticLimit: initialData.plasticLimit,
+          calculatedPI: initialData.plasticityIndex,
+          savedPI: savedData.plasticityIndex, // For comparison
+          rawSavedData: { // Debug: show what came from API
+            liquidLimitLL: savedData.liquidLimitLL,
+            plasticLimit: savedData.plasticLimit
+          }
+        });
+        
+        setSummaryData(initialData);
+      } catch (err: any) {
+        // If no data in DB, try localStorage as fallback (backward compatibility)
+        console.log('No Proctor data in database, checking localStorage...');
+        
+        const initialData: ProctorSummaryData = {
+          projectName: taskData.projectName || '',
+          projectNumber: taskData.projectNumber || '',
+          sampledBy: 'MAK Lonestar Consulting, LLC',
+          testMethod: 'ASTM D698',
+          client: '',
+          soilClassification: '',
+          maximumDryDensityPcf: '',
+          optimumMoisturePercent: '',
+          liquidLimitLL: '',
+          plasticLimit: '',
+          plasticityIndex: '',
+          sampleDate: '',
+          calculatedBy: '',
+          reviewedBy: '',
+          checkedBy: '',
+          percentPassing200: '',
+          passing200SummaryPct: '',
+          specificGravityG: '',
+          proctorPoints: [],
+          zavPoints: []
+        };
 
-      // Load saved Proctor data - try draft first (most complete), then step1 data
-      const draftData = localStorage.getItem(`proctor_draft_${taskId}`);
-      const step1Data = localStorage.getItem(`proctor_step1_${taskId}`);
-      
-      let data: any = null;
-      
-      // Prefer draft data (from Save Draft) as it's more complete
-      if (draftData) {
-        try {
-          data = JSON.parse(draftData);
-          console.log('Proctor report doc (from draft):', data);
-        } catch (err) {
-          console.error('Error parsing draft data:', err);
+        // Load saved Proctor data - try draft first (most complete), then step1 data
+        const draftData = localStorage.getItem(`proctor_draft_${taskId}`);
+        const step1Data = localStorage.getItem(`proctor_step1_${taskId}`);
+        
+        let data: any = null;
+        
+        // Prefer draft data (from Save Draft) as it's more complete
+        if (draftData) {
+          try {
+            data = JSON.parse(draftData);
+            console.log('Proctor report doc (from draft):', data);
+          } catch (err) {
+            console.error('Error parsing draft data:', err);
+          }
         }
-      }
-      
-      // Fallback to step1 data (from Next button)
-      if (!data && step1Data) {
-        try {
-          data = JSON.parse(step1Data);
-          console.log('Proctor report doc (from step1):', data);
-        } catch (err) {
-          console.error('Error parsing step1 data:', err);
+        
+        // Fallback to step1 data (from Next button)
+        if (!data && step1Data) {
+          try {
+            data = JSON.parse(step1Data);
+            console.log('Proctor report doc (from step1):', data);
+          } catch (err) {
+            console.error('Error parsing step1 data:', err);
+          }
         }
-      }
-      
-      if (data) {
-        // Backward compatibility: Try normalized keys first, then fallback to old keys
-        initialData.maximumDryDensityPcf = 
-          data.maximumDryDensityPcf ?? data.maxDryDensity ?? data.maximumDensity ?? data.maxDensity ?? '';
         
-        initialData.optimumMoisturePercent = 
-          data.optimumMoisturePercent ?? data.optimumMoisture ?? data.omc ?? data.optimumMoistureContent ?? '';
-        
-        initialData.specificGravityG = 
-          data.specificGravityG ?? data.specificGravity ?? data.sg ?? data.specificGravityEstimated ?? '';
-        
-        initialData.liquidLimitLL = 
-          data.liquidLimitLL ?? data.liquidLimit ?? data.LL ?? '';
-        
-        initialData.proctorPoints = data.proctorPoints || [];
-        initialData.zavPoints = data.zavPoints || [];
-        
-        console.log('Proctor points loaded:', initialData.proctorPoints.length);
-        console.log('ZAV points loaded:', initialData.zavPoints.length);
-        console.log('maximumDryDensityPcf:', initialData.maximumDryDensityPcf);
-        console.log('optimumMoisturePercent:', initialData.optimumMoisturePercent);
-        console.log('specificGravityG:', initialData.specificGravityG);
-        console.log('liquidLimitLL:', initialData.liquidLimitLL);
-      } else {
-        console.warn('No Proctor data found in localStorage for task:', taskId);
-      }
+        if (data) {
+          // Backward compatibility: Try normalized keys first, then fallback to old keys
+          initialData.maximumDryDensityPcf = 
+            data.maximumDryDensityPcf ?? data.maxDryDensity ?? data.maximumDensity ?? data.maxDensity ?? '';
+          
+          initialData.optimumMoisturePercent = 
+            data.optimumMoisturePercent ?? data.optimumMoisture ?? data.omc ?? data.optimumMoistureContent ?? '';
+          
+          initialData.specificGravityG = 
+            data.specificGravityG ?? data.specificGravity ?? data.sg ?? data.specificGravityEstimated ?? '';
+          
+          initialData.liquidLimitLL = 
+            roundToWholeNumber(data.liquidLimitLL ?? data.liquidLimit ?? data.LL ?? ''); // Round on load
+          
+          initialData.plasticLimit = 
+            roundToWholeNumber(data.plasticLimit ?? data.plasticLimitPL ?? ''); // Round on load
+          
+          // Load soilClassification from localStorage if available
+          initialData.soilClassification = data.soilClassification || initialData.soilClassification;
+          
+          initialData.proctorPoints = data.proctorPoints || [];
+          initialData.zavPoints = data.zavPoints || [];
 
-      setSummaryData(initialData);
+          // Load passing200SummaryPct if exists in localStorage data
+          if (data.passing200SummaryPct) {
+            initialData.passing200SummaryPct = data.passing200SummaryPct;
+          } else if (data.percentPassing200) {
+            initialData.passing200SummaryPct = data.percentPassing200; // Fallback to legacy field
+          }
+        }
+        
+        // Always recalculate PI from LL and PL (never use saved PI value)
+        // This ensures PI is always calculated with correct rounding rules
+        initialData.plasticityIndex = calculatePlasticityIndex(
+          initialData.liquidLimitLL,
+          initialData.plasticLimit
+        );
+        
+        console.log('Loaded Proctor data - PI calculation:', {
+          liquidLimitLL: initialData.liquidLimitLL,
+          plasticLimit: initialData.plasticLimit,
+          calculatedPI: initialData.plasticityIndex,
+          savedPI: data?.plasticityIndex // For comparison
+        });
+
+        setSummaryData(initialData);
+        // Update last saved snapshot after loading
+        lastSavedDataRef.current = JSON.stringify(initialData);
+      }
     } catch (err: any) {
       console.error('Error loading data:', err);
       setError(err.response?.data?.error || 'Failed to load task data.');
@@ -157,18 +301,103 @@ const ProctorSummary: React.FC = () => {
     }
   };
 
+  // Check if there are unsaved changes
+  const checkUnsavedChanges = useCallback(() => {
+    if (!task) return false;
+    if (saving) return true;
+    const currentData = JSON.stringify(summaryData);
+    return currentData !== lastSavedDataRef.current;
+  }, [summaryData, saving, task]);
+
   const handleFieldChange = (field: keyof ProctorSummaryData, value: string) => {
-    setSummaryData(prev => ({ ...prev, [field]: value }));
+    setSummaryData(prev => {
+      const updated = { ...prev, [field]: value };
+      
+      // Auto-calculate PI when LL or PL changes
+      if (field === 'liquidLimitLL' || field === 'plasticLimit') {
+        // Use the new value for the field being changed, and current value for the other
+        const ll = field === 'liquidLimitLL' ? value : prev.liquidLimitLL;
+        const pl = field === 'plasticLimit' ? value : prev.plasticLimit;
+        updated.plasticityIndex = calculatePlasticityIndex(ll, pl);
+      }
+      
+      return updated;
+    });
+  };
+
+  // Handle blur event to round LL or PL to whole number
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>, field: 'liquidLimitLL' | 'plasticLimit') => {
+    const value = e.target.value;
+    console.log('handleBlur called:', { field, value, isEditable, taskStatus: task?.status });
+    if (!isEditable) {
+      console.log('Field is not editable, skipping rounding');
+      return;
+    }
+    // Only round if value is not empty
+    if (!value || value.trim() === '') {
+      return;
+    }
+    const rounded = roundToWholeNumber(value);
+    console.log('handleBlur rounding result:', { field, original: value, rounded, willUpdate: rounded !== value });
+    // Update if rounded value is different from current value
+    if (rounded !== value) {
+      console.log('Updating field with rounded value:', rounded);
+      handleFieldChange(field, rounded);
+    }
+  };
+
+  // Handle Enter key to round and blur
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, field: 'liquidLimitLL' | 'plasticLimit') => {
+    if (e.key === 'Enter') {
+      e.preventDefault(); // Prevent form submission or other default behavior
+      const currentValue = summaryData[field];
+      const rounded = roundToWholeNumber(currentValue);
+      console.log('handleKeyDown (Enter):', { field, currentValue, rounded });
+      if (rounded !== currentValue && rounded !== '') {
+        handleFieldChange(field, rounded);
+      }
+      e.currentTarget.blur();
+    }
   };
 
   const handleSave = async () => {
     if (!task) return;
     setSaving(true);
+    setError('');
     try {
-      // TODO: Implement save API call when backend is ready
-      // await proctorSummaryAPI.save(task.id, summaryData);
-      setTimeout(() => setSaving(false), 1000);
+      // Save to database
+      const reportData = {
+        projectName: summaryData.projectName,
+        projectNumber: summaryData.projectNumber,
+        sampledBy: summaryData.sampledBy,
+        testMethod: summaryData.testMethod,
+        client: summaryData.client,
+        soilClassification: summaryData.soilClassification,
+        maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
+        optimumMoisturePercent: summaryData.optimumMoisturePercent,
+        liquidLimitLL: roundToWholeNumber(summaryData.liquidLimitLL), // Save rounded value
+        plasticLimit: roundToWholeNumber(summaryData.plasticLimit), // Save rounded value
+        plasticityIndex: summaryData.plasticityIndex,
+        sampleDate: summaryData.sampleDate,
+        calculatedBy: summaryData.calculatedBy,
+        reviewedBy: summaryData.reviewedBy,
+        checkedBy: summaryData.checkedBy,
+        percentPassing200: summaryData.passing200SummaryPct || summaryData.percentPassing200 || '',
+        passing200SummaryPct: summaryData.passing200SummaryPct || '',
+        specificGravityG: summaryData.specificGravityG,
+        proctorPoints: summaryData.proctorPoints || [],
+        zavPoints: summaryData.zavPoints || []
+      };
+      
+      await proctorAPI.saveByTask(task.id, reportData);
+      
+      // Also save to localStorage for backward compatibility
+      localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(reportData));
+      
+      setSaving(false);
+      alert('Proctor data saved successfully!');
     } catch (err: any) {
+      console.error('Error saving Proctor data:', err);
       setError(err.response?.data?.error || 'Failed to save');
       setSaving(false);
     }
@@ -192,12 +421,14 @@ const ProctorSummary: React.FC = () => {
         maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
         optimumMoisturePercent: summaryData.optimumMoisturePercent,
         liquidLimitLL: summaryData.liquidLimitLL,
+        plasticLimit: summaryData.plasticLimit,
         plasticityIndex: summaryData.plasticityIndex,
         sampleDate: summaryData.sampleDate,
         calculatedBy: summaryData.calculatedBy,
         reviewedBy: summaryData.reviewedBy,
         checkedBy: summaryData.checkedBy,
-        percentPassing200: summaryData.percentPassing200,
+        percentPassing200: summaryData.passing200SummaryPct || summaryData.percentPassing200 || '',
+        passing200SummaryPct: summaryData.passing200SummaryPct || '',
         specificGravityG: summaryData.specificGravityG,
         proctorPoints: summaryData.proctorPoints || [],
         zavPoints: summaryData.zavPoints || []
@@ -205,7 +436,7 @@ const ProctorSummary: React.FC = () => {
       
       // Use same approach as WP1Form - direct fetch (bypassing API helper)
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.30:5000/api';
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
       const baseUrl = apiUrl.replace(/\/api\/?$/, '');
       const pdfUrl = `${baseUrl}/api/proctor/${task.id}/pdf`;
       
@@ -380,6 +611,11 @@ const ProctorSummary: React.FC = () => {
     <div className="proctor-summary-container">
       <div className="proctor-summary-header">
         <div className="summary-actions">
+          <ProjectHomeButton
+            projectId={task.projectId}
+            onSave={handleSave}
+            saving={saving}
+          />
           <button 
             type="button" 
             onClick={() => navigate(`/task/${id}/proctor`)} 
@@ -495,6 +731,7 @@ const ProctorSummary: React.FC = () => {
                 onChange={(e) => handleFieldChange('soilClassification', e.target.value)}
                 readOnly={!isEditable}
                 className={!isEditable ? 'readonly' : ''}
+                maxLength={120}
               />
             </div>
             <div className="summary-field-row">
@@ -511,8 +748,22 @@ const ProctorSummary: React.FC = () => {
                 type="text"
                 value={summaryData.liquidLimitLL}
                 onChange={(e) => handleFieldChange('liquidLimitLL', e.target.value)}
-                readOnly={summaryData.liquidLimitLL !== '' || !isEditable}
-                className={summaryData.liquidLimitLL !== '' || !isEditable ? 'readonly' : ''}
+                onBlur={(e) => handleBlur(e, 'liquidLimitLL')}
+                onKeyDown={(e) => handleKeyDown(e, 'liquidLimitLL')}
+                readOnly={!isEditable}
+                className={!isEditable ? 'readonly' : ''}
+              />
+            </div>
+            <div className="summary-field-row">
+              <label>Plastic Limit (PL):</label>
+              <input
+                type="text"
+                value={summaryData.plasticLimit}
+                onChange={(e) => handleFieldChange('plasticLimit', e.target.value)}
+                onBlur={(e) => handleBlur(e, 'plasticLimit')}
+                onKeyDown={(e) => handleKeyDown(e, 'plasticLimit')}
+                readOnly={!isEditable}
+                className={!isEditable ? 'readonly' : ''}
               />
             </div>
             <div className="summary-field-row">
@@ -520,9 +771,9 @@ const ProctorSummary: React.FC = () => {
               <input
                 type="text"
                 value={summaryData.plasticityIndex}
-                onChange={(e) => handleFieldChange('plasticityIndex', e.target.value)}
-                readOnly={!isEditable}
-                className={!isEditable ? 'readonly' : ''}
+                readOnly
+                className="calculated"
+                title="Auto-calculated: Rounded(LL) - Rounded(PL)"
               />
             </div>
           </div>

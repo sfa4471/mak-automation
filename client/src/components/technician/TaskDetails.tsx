@@ -38,7 +38,7 @@ const TaskDetails: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       // Get base URL (without /api)
-      const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://192.168.1.200:5000/api';
+      const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
       const baseUrl = apiBaseUrl.replace('/api', '');
       const url = `${baseUrl}/api/pdf/task/${id}`;
       
@@ -148,7 +148,7 @@ const TaskDetails: React.FC = () => {
           <h2>Task Information</h2>
           <div className="detail-row">
             <span className="detail-label">Task Type:</span>
-            <span className="detail-value">{taskTypeLabel(task.taskType)}</span>
+            <span className="detail-value">{taskTypeLabel(task)}</span>
           </div>
           <div className="detail-row">
             <span className="detail-label">Assigned Technician:</span>

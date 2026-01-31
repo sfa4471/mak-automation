@@ -12,7 +12,7 @@ router.get('/task/:taskId', authenticate, (req, res) => {
   // Check task access
   db.get(
     `SELECT t.*, p.projectName, p.projectNumber, p.specStrengthPsi, p.specAmbientTempF, 
-     p.specConcreteTempF, p.specSlump, p.specAirContentByVolume
+     p.specConcreteTempF, p.specSlump, p.specAirContentByVolume, p.soilSpecs
      FROM tasks t
      INNER JOIN projects p ON t.projectId = p.id
      WHERE t.id = ? AND t.taskType = 'COMPRESSIVE_STRENGTH'`,
@@ -30,6 +30,16 @@ router.get('/task/:taskId', authenticate, (req, res) => {
         return res.status(403).json({ error: 'Access denied' });
       }
 
+      // Parse soilSpecs JSON
+      let soilSpecs = {};
+      if (task.soilSpecs) {
+        try {
+          soilSpecs = JSON.parse(task.soilSpecs);
+        } catch (e) {
+          soilSpecs = {};
+        }
+      }
+
       db.get('SELECT * FROM wp1_data WHERE taskId = ?', [taskId], (err, data) => {
         if (err) {
           return res.status(500).json({ error: 'Database error' });
@@ -42,7 +52,7 @@ router.get('/task/:taskId', authenticate, (req, res) => {
           } catch (e) {
             data.cylinders = [];
           }
-          // Add project specs for auto-population
+          // Add project specs for auto-population (legacy flat structure)
           data.projectSpecs = {
             specStrengthPsi: task.specStrengthPsi,
             specAmbientTempF: task.specAmbientTempF,
@@ -50,6 +60,8 @@ router.get('/task/:taskId', authenticate, (req, res) => {
             specSlump: task.specSlump,
             specAirContentByVolume: task.specAirContentByVolume,
           };
+          // Add soilSpecs for structure-based auto-population
+          data.soilSpecs = soilSpecs;
           res.json(data);
         } else {
           // Return empty structure with project specs
@@ -62,7 +74,8 @@ router.get('/task/:taskId', authenticate, (req, res) => {
               specConcreteTempF: task.specConcreteTempF,
               specSlump: task.specSlump,
               specAirContentByVolume: task.specAirContentByVolume,
-            }
+            },
+            soilSpecs: soilSpecs
           });
         }
       });

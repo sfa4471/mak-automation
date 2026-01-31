@@ -84,7 +84,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
             <div className="info-grid">
               <div className="info-row">
                 <div className="info-label">Task Type:</div>
-                <div className="info-value">{taskTypeLabel(task.taskType)}</div>
+                <div className="info-value">{taskTypeLabel(task)}</div>
               </div>
 
               <div className="info-row">

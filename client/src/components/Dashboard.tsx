@@ -410,7 +410,7 @@ const Dashboard: React.FC = () => {
                                 </span>
                               </div>
                               <div className="task-info">
-                                <span className="task-name">{taskTypeLabel(task.taskType)}</span>
+                                <span className="task-name">{taskTypeLabel(task)}</span>
                                 {task.assignedTechnicianName && (
                                   <span className="task-technician">Assigned to: {task.assignedTechnicianName}</span>
                                 )}

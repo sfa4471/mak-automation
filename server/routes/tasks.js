@@ -93,6 +93,82 @@ router.get('/project/:projectId', authenticate, (req, res) => {
   });
 });
 
+// Get Proctor tasks for a project (for Density form dropdown)
+router.get('/project/:projectId/proctors', authenticate, (req, res) => {
+  const projectId = req.params.projectId;
+
+  // Check project access
+  db.get('SELECT * FROM projects WHERE id = ?', [projectId], (err, project) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
+    }
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Get PROCTOR tasks for this project, ordered by proctorNo
+    // Include OMC/MDD from proctor_data table
+    db.all(
+      `SELECT t.id, t.proctorNo, t.status, t.projectId
+       FROM tasks t
+       WHERE t.projectId = ? AND t.taskType = 'PROCTOR' AND t.proctorNo IS NOT NULL
+       ORDER BY t.proctorNo ASC`,
+      [projectId],
+      (err, tasks) => {
+        if (err) {
+          return res.status(500).json({ error: 'Database error' });
+        }
+        
+        // Fetch OMC/MDD for each task
+        const tasksWithData = [];
+        let processed = 0;
+        
+        if (tasks.length === 0) {
+          return res.json([]);
+        }
+        
+        tasks.forEach((task) => {
+          db.get(
+            `SELECT optMoisturePct, maxDryDensityPcf, optimumMoisturePercent, maximumDryDensityPcf
+             FROM proctor_data
+             WHERE taskId = ?
+             ORDER BY id DESC
+             LIMIT 1`,
+            [task.id],
+            (err, proctorData) => {
+              if (err) {
+                console.error('Error fetching proctor data:', err);
+              }
+
+              // Use canonical fields if available, otherwise fallback to old fields
+              const optMoisture = proctorData?.optMoisturePct !== null && proctorData?.optMoisturePct !== undefined
+                ? String(proctorData.optMoisturePct)
+                : (proctorData?.optimumMoisturePercent || '');
+              
+              const maxDensity = proctorData?.maxDryDensityPcf !== null && proctorData?.maxDryDensityPcf !== undefined
+                ? String(proctorData.maxDryDensityPcf)
+                : (proctorData?.maximumDryDensityPcf || '');
+
+              tasksWithData.push({
+                id: task.id,
+                proctorNo: task.proctorNo,
+                status: task.status,
+                optMoisture: optMoisture,
+                maxDensity: maxDensity
+              });
+
+              processed++;
+              if (processed === tasks.length) {
+                res.json(tasksWithData);
+              }
+            }
+          );
+        });
+      }
+    );
+  });
+});
+
 // Get single task
 router.get('/:id', authenticate, (req, res) => {
   const taskId = req.params.id;
@@ -368,22 +444,41 @@ router.post('/', authenticate, requireAdmin, [
         scheduledEndDate: normalizedScheduledEndDate
       });
 
-      db.run(
-        `INSERT INTO tasks (projectId, taskType, status, assignedTechnicianId, dueDate, locationName, locationNotes, engagementNotes, scheduledStartDate, scheduledEndDate)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          projectId,
-          taskType,
-          assignedTechnicianId ? 'ASSIGNED' : 'ASSIGNED',
-          assignedTechnicianId || null,
-          normalizedDueDate,
-          locationName || null,
-          locationNotes || null,
-          engagementNotes || null,
-          normalizedScheduledStartDate,
-          normalizedScheduledEndDate
-        ],
-        function(err) {
+      // For PROCTOR tasks, get next proctorNo for this project
+      if (taskType === 'PROCTOR') {
+        db.get(
+          'SELECT COALESCE(MAX(proctorNo), 0) as maxProctorNo FROM tasks WHERE projectId = ? AND taskType = ? AND proctorNo IS NOT NULL',
+          [projectId, 'PROCTOR'],
+          (err, row) => {
+            if (err) {
+              return res.status(500).json({ error: 'Database error: ' + err.message });
+            }
+            const nextProctorNo = (row?.maxProctorNo || 0) + 1;
+            insertTaskWithProctorNo(nextProctorNo);
+          }
+        );
+      } else {
+        insertTaskWithProctorNo(null);
+      }
+
+      function insertTaskWithProctorNo(proctorNo) {
+        db.run(
+          `INSERT INTO tasks (projectId, taskType, status, assignedTechnicianId, dueDate, locationName, locationNotes, engagementNotes, scheduledStartDate, scheduledEndDate, proctorNo)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            projectId,
+            taskType,
+            assignedTechnicianId ? 'ASSIGNED' : 'ASSIGNED',
+            assignedTechnicianId || null,
+            normalizedDueDate,
+            locationName || null,
+            locationNotes || null,
+            engagementNotes || null,
+            normalizedScheduledStartDate,
+            normalizedScheduledEndDate,
+            proctorNo
+          ],
+          function(err) {
           if (err) {
             console.error('Error creating task:', err);
             console.error('SQL Error details:', err.message);
@@ -458,6 +553,7 @@ router.post('/', authenticate, requireAdmin, [
           );
         }
       );
+    }
     }
   });
 });

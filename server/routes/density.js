@@ -10,7 +10,7 @@ router.get('/task/:taskId', authenticate, (req, res) => {
 
   // Check task access
   db.get(
-    `SELECT t.*, p.projectName, p.projectNumber
+    `SELECT t.*, p.projectName, p.projectNumber, p.concreteSpecs
      FROM tasks t
      INNER JOIN projects p ON t.projectId = p.id
      WHERE t.id = ? AND t.taskType = 'DENSITY_MEASUREMENT'`,
@@ -28,12 +28,29 @@ router.get('/task/:taskId', authenticate, (req, res) => {
         return res.status(403).json({ error: 'Access denied' });
       }
 
+      // Parse project concreteSpecs for structure dropdown
+      let projectConcreteSpecs = {};
+      if (task.concreteSpecs) {
+        try {
+          projectConcreteSpecs = JSON.parse(task.concreteSpecs);
+        } catch (e) {
+          projectConcreteSpecs = {};
+        }
+      }
+
       db.get('SELECT * FROM density_reports WHERE taskId = ?', [taskId], (err, data) => {
         if (err) {
           return res.status(500).json({ error: 'Database error' });
         }
 
         if (data) {
+          // Debug: Log what's being returned
+          console.log('Density report GET - Header fields from DB:', {
+            clientName: data.clientName,
+            datePerformed: data.datePerformed,
+            structure: data.structure,
+            structureType: data.structureType
+          });
           // Parse JSON fields
           try {
             data.testRows = JSON.parse(data.testRows || '[]');
@@ -42,9 +59,10 @@ router.get('/task/:taskId', authenticate, (req, res) => {
             data.testRows = [];
             data.proctors = [];
           }
-          // Add project info
+          // Add project info and concreteSpecs
           data.projectName = task.projectName;
           data.projectNumber = task.projectNumber;
+          data.projectConcreteSpecs = projectConcreteSpecs;
           
           // If technicianId is missing but task has assigned technician, use that
           if (!data.technicianId && task.assignedTechnicianId) {
@@ -71,9 +89,11 @@ router.get('/task/:taskId', authenticate, (req, res) => {
             taskId: parseInt(taskId),
             projectName: task.projectName,
             projectNumber: task.projectNumber,
+            projectConcreteSpecs: projectConcreteSpecs,
             clientName: '',
             datePerformed: new Date().toISOString().split('T')[0],
             structure: '',
+            structureType: '',
             testRows: Array(19).fill(null).map((_, i) => ({
               testNo: i + 1,
               testLocation: '',
@@ -104,7 +124,14 @@ router.get('/task/:taskId', authenticate, (req, res) => {
             remarks: '',
             technicianId: defaultTechId,
             techName: defaultTechName,
-            timeStr: ''
+            timeStr: '',
+            specDensityPct: '',
+            proctorTaskId: null,
+            proctorOptMoisture: '',
+            proctorMaxDensity: '',
+            proctorSoilClassification: '',
+            proctorSoilClassificationText: '',
+            proctorDescriptionLabel: ''
           });
         }
       });
@@ -115,10 +142,20 @@ router.get('/task/:taskId', authenticate, (req, res) => {
 // Save density report by taskId
 router.post('/task/:taskId', authenticate, (req, res) => {
   const taskId = req.params.taskId;
+  
+  // Debug: Log received header fields
+  console.log('Density save request - Header fields:', {
+    clientName: req.body.clientName,
+    datePerformed: req.body.datePerformed,
+    structure: req.body.structure,
+    structureType: req.body.structureType
+  });
+  
   const {
     clientName,
     datePerformed,
     structure,
+    structureType,
     testRows,
     proctors,
     densSpecPercent,
@@ -136,7 +173,14 @@ router.post('/task/:taskId', authenticate, (req, res) => {
     technicianId,
     timeStr,
     updateStatus,
-    assignedTechnicianId
+    assignedTechnicianId,
+    specDensityPct,
+    proctorTaskId,
+    proctorOptMoisture,
+    proctorMaxDensity,
+    proctorSoilClassification,
+    proctorSoilClassificationText,
+    proctorDescriptionLabel
   } = req.body;
 
   // Check task access
@@ -172,12 +216,14 @@ router.post('/task/:taskId', authenticate, (req, res) => {
           // Update
           db.run(
             `UPDATE density_reports SET
-             clientName = ?, datePerformed = ?, structure = ?,
+             clientName = ?, datePerformed = ?, structure = ?, structureType = ?,
              testRows = ?, proctors = ?,
              densSpecPercent = ?, moistSpecMin = ?, moistSpecMax = ?,
              gaugeNo = ?, stdDensityCount = ?, stdMoistCount = ?, transDepthIn = ?,
              methodD2922 = ?, methodD3017 = ?, methodD698 = ?,
              remarks = ?, techName = ?, technicianId = ?, timeStr = ?,
+             specDensityPct = ?, proctorTaskId = ?, proctorOptMoisture = ?, proctorMaxDensity = ?,
+             proctorSoilClassification = ?, proctorSoilClassificationText = ?, proctorDescriptionLabel = ?,
              lastEditedByRole = ?, lastEditedByUserId = ?,
              updatedAt = CURRENT_TIMESTAMP
              WHERE taskId = ?`,
@@ -185,6 +231,7 @@ router.post('/task/:taskId', authenticate, (req, res) => {
               clientName || null,
               datePerformed || null,
               structure || null,
+              structureType || null,
               testRowsJson,
               proctorsJson,
               densSpecPercent || null,
@@ -201,6 +248,13 @@ router.post('/task/:taskId', authenticate, (req, res) => {
               techName || null,
               technicianId || null,
               timeStr || null,
+              specDensityPct || null,
+              proctorTaskId || null,
+              proctorOptMoisture || null,
+              proctorMaxDensity || null,
+              proctorSoilClassification || null,
+              proctorSoilClassificationText || null,
+              proctorDescriptionLabel || null,
               req.user.role,
               req.user.id,
               taskId
@@ -208,8 +262,25 @@ router.post('/task/:taskId', authenticate, (req, res) => {
             function(err) {
               if (err) {
                 console.error('Error updating density report:', err);
+                console.error('Error details:', {
+                  message: err.message,
+                  code: err.code,
+                  taskId: taskId,
+                  clientName: clientName,
+                  datePerformed: datePerformed,
+                  structure: structure,
+                  structureType: structureType
+                });
                 return res.status(500).json({ error: 'Database error: ' + err.message });
               }
+              
+              // Debug: Log what was saved
+              console.log('Density report updated - Header fields saved:', {
+                clientName: clientName || null,
+                datePerformed: datePerformed || null,
+                structure: structure || null,
+                structureType: structureType || null
+              });
 
               // Update task status if provided
               if (updateStatus) {
@@ -238,40 +309,62 @@ router.post('/task/:taskId', authenticate, (req, res) => {
               }
 
               // Return updated data
-              db.get('SELECT * FROM density_reports WHERE taskId = ?', [taskId], (err, updated) => {
-                if (err) {
-                  return res.status(500).json({ error: 'Database error' });
+              db.get(
+                `SELECT d.*, p.concreteSpecs
+                 FROM density_reports d
+                 INNER JOIN tasks t ON d.taskId = t.id
+                 INNER JOIN projects p ON t.projectId = p.id
+                 WHERE d.taskId = ?`,
+                [taskId],
+                (err, updated) => {
+                  if (err) {
+                    return res.status(500).json({ error: 'Database error' });
+                  }
+                  try {
+                    updated.testRows = JSON.parse(updated.testRows || '[]');
+                    updated.proctors = JSON.parse(updated.proctors || '[]');
+                    // Parse project concreteSpecs
+                    let projectConcreteSpecs = {};
+                    if (updated.concreteSpecs) {
+                      try {
+                        projectConcreteSpecs = JSON.parse(updated.concreteSpecs);
+                      } catch (e) {
+                        projectConcreteSpecs = {};
+                      }
+                    }
+                    updated.projectConcreteSpecs = projectConcreteSpecs;
+                    delete updated.concreteSpecs; // Remove from response, we've parsed it
+                  } catch (e) {
+                    updated.testRows = [];
+                    updated.proctors = [];
+                  }
+                  updated.projectName = task.projectName;
+                  updated.projectNumber = task.projectNumber;
+                  res.json(updated);
                 }
-                try {
-                  updated.testRows = JSON.parse(updated.testRows || '[]');
-                  updated.proctors = JSON.parse(updated.proctors || '[]');
-                } catch (e) {
-                  updated.testRows = [];
-                  updated.proctors = [];
-                }
-                updated.projectName = task.projectName;
-                updated.projectNumber = task.projectNumber;
-                res.json(updated);
-              });
+              );
             }
           );
         } else {
           // Insert
           db.run(
             `INSERT INTO density_reports (
-             taskId, clientName, datePerformed, structure,
+             taskId, clientName, datePerformed, structure, structureType,
              testRows, proctors,
              densSpecPercent, moistSpecMin, moistSpecMax,
              gaugeNo, stdDensityCount, stdMoistCount, transDepthIn,
              methodD2922, methodD3017, methodD698,
              remarks, techName, technicianId, timeStr,
+             specDensityPct, proctorTaskId, proctorOptMoisture, proctorMaxDensity,
+             proctorSoilClassification, proctorSoilClassificationText, proctorDescriptionLabel,
              lastEditedByRole, lastEditedByUserId
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               taskId,
               clientName || null,
               datePerformed || null,
               structure || null,
+              structureType || null,
               testRowsJson,
               proctorsJson,
               densSpecPercent || null,
@@ -288,12 +381,28 @@ router.post('/task/:taskId', authenticate, (req, res) => {
               techName || null,
               technicianId || null,
               timeStr || null,
+              specDensityPct || null,
+              proctorTaskId || null,
+              proctorOptMoisture || null,
+              proctorMaxDensity || null,
+              proctorSoilClassification || null,
+              proctorSoilClassificationText || null,
+              proctorDescriptionLabel || null,
               req.user.role,
               req.user.id
             ],
             function(err) {
               if (err) {
                 console.error('Error inserting density report:', err);
+                console.error('Error details:', {
+                  message: err.message,
+                  code: err.code,
+                  taskId: taskId,
+                  clientName: clientName,
+                  datePerformed: datePerformed,
+                  structure: structure,
+                  structureType: structureType
+                });
                 return res.status(500).json({ error: 'Database error: ' + err.message });
               }
 
@@ -324,21 +433,40 @@ router.post('/task/:taskId', authenticate, (req, res) => {
               }
 
               // Return created data
-              db.get('SELECT * FROM density_reports WHERE taskId = ?', [taskId], (err, created) => {
-                if (err) {
-                  return res.status(500).json({ error: 'Database error' });
+              db.get(
+                `SELECT d.*, p.concreteSpecs
+                 FROM density_reports d
+                 INNER JOIN tasks t ON d.taskId = t.id
+                 INNER JOIN projects p ON t.projectId = p.id
+                 WHERE d.taskId = ?`,
+                [taskId],
+                (err, created) => {
+                  if (err) {
+                    return res.status(500).json({ error: 'Database error' });
+                  }
+                  try {
+                    created.testRows = JSON.parse(created.testRows || '[]');
+                    created.proctors = JSON.parse(created.proctors || '[]');
+                    // Parse project concreteSpecs
+                    let projectConcreteSpecs = {};
+                    if (created.concreteSpecs) {
+                      try {
+                        projectConcreteSpecs = JSON.parse(created.concreteSpecs);
+                      } catch (e) {
+                        projectConcreteSpecs = {};
+                      }
+                    }
+                    created.projectConcreteSpecs = projectConcreteSpecs;
+                    delete created.concreteSpecs; // Remove from response, we've parsed it
+                  } catch (e) {
+                    created.testRows = [];
+                    created.proctors = [];
+                  }
+                  created.projectName = task.projectName;
+                  created.projectNumber = task.projectNumber;
+                  res.json(created);
                 }
-                try {
-                  created.testRows = JSON.parse(created.testRows || '[]');
-                  created.proctors = JSON.parse(created.proctors || '[]');
-                } catch (e) {
-                  created.testRows = [];
-                  created.proctors = [];
-                }
-                created.projectName = task.projectName;
-                created.projectNumber = task.projectNumber;
-                res.json(created);
-              });
+              );
             }
           );
         }
