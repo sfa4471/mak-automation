@@ -784,8 +784,12 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
           res.end();
         }
       }
+  } catch (err) {
+    console.error('Error in task PDF route:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error: ' + (err.message || String(err)) });
     }
-  );
+  }
 });
 
 // Generate PDF for Density Report using HTML template + Puppeteer
@@ -1387,7 +1391,6 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
           res.end();
         }
       }
-    });
   } catch (err) {
     console.error('Error generating rebar PDF:', err);
     if (!res.headersSent) {
