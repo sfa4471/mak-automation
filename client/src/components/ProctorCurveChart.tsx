@@ -8,7 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
-  LabelList
+  // LabelList // Unused
 } from 'recharts';
 import './ProctorCurveChart.css';
 
@@ -287,6 +287,7 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     console.log("chartData:", sorted);
     console.log("filteredZAVPoints (min x):", filteredZAVPoints.length > 0 ? Math.min(...filteredZAVPoints.map(p => p.x)) : "none");
     return sorted;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortedProctorPoints, zavFilteredForRender]);
 
   // Custom hollow triangle marker for Proctor points

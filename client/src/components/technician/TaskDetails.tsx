@@ -14,6 +14,7 @@ const TaskDetails: React.FC = () => {
 
   useEffect(() => {
     loadTask();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const loadTask = async () => {
@@ -79,7 +80,7 @@ const TaskDetails: React.FC = () => {
     });
   };
 
-  const formatDateShort = (dateString?: string): string => {
+  const _formatDateShort = (dateString?: string): string => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { 

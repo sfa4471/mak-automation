@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { tasksAPI, Task, taskTypeLabel, TaskHistoryEntry } from '../api/tasks';
+import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
 import TaskDetailModal from './TaskDetailModal';
 import './TechnicianDashboard.css';

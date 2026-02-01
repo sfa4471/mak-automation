@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { projectsAPI, Project } from '../api/projects';
@@ -12,7 +12,8 @@ const Dashboard: React.FC = () => {
   const { user, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [workPackages, setWorkPackages] = useState<{ [projectId: number]: WorkPackage[] }>({});
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_workPackages, setWorkPackages] = useState<{ [projectId: number]: WorkPackage[] }>({});
   const [tasks, setTasks] = useState<{ [projectId: number]: Task[] }>({});
   const [expandedProjects, setExpandedProjects] = useState<Set<number>>(new Set());
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -20,16 +21,7 @@ const Dashboard: React.FC = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Redirect technicians to their dashboard
-    if (user && !isAdmin()) {
-      navigate('/technician/dashboard');
-      return;
-    }
-    loadData();
-  }, [user, isAdmin, navigate]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const projectsData = await projectsAPI.list();
       setProjects(projectsData);
@@ -68,7 +60,16 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    // Redirect technicians to their dashboard
+    if (user && !isAdmin()) {
+      navigate('/technician/dashboard');
+      return;
+    }
+    loadData();
+  }, [user, isAdmin, navigate, loadData]);
 
   const getStatusLabel = useCallback((status: string): string => {
     const statusMap: { [key: string]: string } = {
@@ -126,13 +127,14 @@ const Dashboard: React.FC = () => {
     });
   }, []);
 
-  const handleWorkPackageClick = useCallback((wp: WorkPackage) => {
-    if (wp.type === 'WP1') {
-      navigate(`/workpackage/${wp.id}/wp1`);
-    } else {
-      alert('This work package is not yet implemented');
-    }
-  }, [navigate]);
+  // Keep for potential future use
+  // const handleWorkPackageClick = useCallback((wp: WorkPackage) => {
+  //   if (wp.type === 'WP1') {
+  //     navigate(`/workpackage/${wp.id}/wp1`);
+  //   } else {
+  //     alert('This work package is not yet implemented');
+  //   }
+  // }, [navigate]);
 
   const handleTaskClick = useCallback((task: Task) => {
     if (task.taskType === 'COMPRESSIVE_STRENGTH') {

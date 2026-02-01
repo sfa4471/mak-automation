@@ -110,7 +110,7 @@ const ProctorForm: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [error, setError] = useState('');
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [_hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const lastSavedDataRef = useRef<string>('');
 
   // Calculation functions (defined before use in useEffect)
@@ -347,6 +347,7 @@ const ProctorForm: React.FC = () => {
       };
       loadHistory();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isTaskRoute]);
 
   // Helper to convert values to numbers

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { tasksAPI, Task } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
@@ -119,6 +119,7 @@ const ProctorSummary: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Recalculate PI whenever LL or PL changes
@@ -302,7 +303,7 @@ const ProctorSummary: React.FC = () => {
   };
 
   // Check if there are unsaved changes
-  const checkUnsavedChanges = useCallback(() => {
+  const _checkUnsavedChanges = useCallback(() => {
     if (!task) return false;
     if (saving) return true;
     const currentData = JSON.stringify(summaryData);

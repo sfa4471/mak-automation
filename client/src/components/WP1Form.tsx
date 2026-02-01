@@ -95,6 +95,7 @@ const WP1Form: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isTaskRoute]);
 
   // Recalculate dateTested for all cylinders when placementDate changes
@@ -379,7 +380,7 @@ const WP1Form: React.FC = () => {
   };
 
   // Check if there are unsaved changes
-  const checkUnsavedChanges = useCallback(() => {
+  const _checkUnsavedChanges = useCallback(() => {
     if (!formData) return false;
     if (saveStatus === 'saving') return true;
     const currentData = JSON.stringify(formData);
@@ -642,6 +643,7 @@ const WP1Form: React.FC = () => {
     
     // Create new cylinders with computed dateTested values
     const newCylinders = createInitialCylinders(formData.placementDate);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const setNumber = Math.floor(formData.cylinders.length / 5) + 1;
     newCylinders.forEach((cyl, idx) => {
       cyl.cylinderNumber = currentMaxCylinder + idx + 1;
@@ -796,7 +798,7 @@ const WP1Form: React.FC = () => {
     }
   };
 
-  const handleSubmit = async () => {
+  const _handleSubmit = async () => {
     try {
       await workPackagesAPI.updateStatus(parseInt(id!), 'Submitted');
       alert('Work package submitted successfully!');

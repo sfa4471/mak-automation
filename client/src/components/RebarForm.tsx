@@ -26,6 +26,7 @@ const RebarForm: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const loadData = async () => {
@@ -78,7 +79,7 @@ const RebarForm: React.FC = () => {
   };
 
   // Check if there are unsaved changes
-  const checkUnsavedChanges = useCallback(() => {
+  const _checkUnsavedChanges = useCallback(() => {
     if (!formData || !task) return false;
     if (saveStatus === 'saving') return true;
     const currentData = JSON.stringify(formData);
@@ -100,6 +101,7 @@ const RebarForm: React.FC = () => {
     saveTimeoutRef.current = setTimeout(async () => {
       await saveData(data, false);
     }, 1000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const saveData = async (data: RebarReport | null, updateStatus?: boolean, status?: string) => {
@@ -208,7 +210,7 @@ const RebarForm: React.FC = () => {
   const convertToISO = (dateStr: string): string | null => {
     if (!dateStr) return null;
     // Try to parse MM-DD-YYYY format
-    const parts = dateStr.split(/[-\/]/);
+    const parts = dateStr.split(/[-/]/);
     if (parts.length === 3) {
       const month = parts[0].padStart(2, '0');
       const day = parts[1].padStart(2, '0');

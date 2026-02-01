@@ -19,6 +19,7 @@ const TasksDashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFilter, selectedDate, upcomingDays]);
 
   const loadData = async () => {
@@ -135,7 +136,7 @@ const TasksDashboard: React.FC = () => {
     return badges;
   };
 
-  const getOverdueDays = (task: Task): number | null => {
+  const _getOverdueDays = (task: Task): number | null => {
     if (!task.dueDate) return null;
     // Get today's date as YYYY-MM-DD string (local date, no timezone conversion)
     const now = new Date();
@@ -190,7 +191,7 @@ const TasksDashboard: React.FC = () => {
   const convertToISO = (dateStr: string): string | null => {
     if (!dateStr) return null;
     // Try to parse MM-DD-YYYY format
-    const parts = dateStr.split(/[-\/]/);
+    const parts = dateStr.split(/[-/]/);
     if (parts.length === 3) {
       const month = parts[0].padStart(2, '0');
       const day = parts[1].padStart(2, '0');

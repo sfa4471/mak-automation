@@ -10,7 +10,7 @@ const CreateTask: React.FC = () => {
   const location = useLocation();
   const { projectId, taskId } = useParams<{ projectId?: string; taskId?: string }>();
   const [project, setProject] = useState<Project | null>(null);
-  const [task, setTask] = useState<Task | null>(null);
+  const [_task, setTask] = useState<Task | null>(null);
   const [taskType, setTaskType] = useState<TaskType>('COMPRESSIVE_STRENGTH');
   const [assignedTechnicianId, setAssignedTechnicianId] = useState<number | undefined>();
   const [dueDate, setDueDate] = useState('');

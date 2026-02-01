@@ -4,7 +4,7 @@ import { densityAPI, DensityReport, TestRow, ProctorRow } from '../api/density';
 import { tasksAPI, Task, TaskHistoryEntry, ProctorTask } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
-import { ConcreteSpecs } from '../api/projects';
+// import { ConcreteSpecs } from '../api/projects'; // Unused but kept for potential future use
 import { proctorAPI } from '../api/proctor';
 import ProjectHomeButton from './ProjectHomeButton';
 import './DensityReportForm.css';
@@ -43,6 +43,7 @@ const DensityReportForm: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Auto-populate proctor rows on initial load
@@ -86,7 +87,6 @@ const DensityReportForm: React.FC = () => {
         if (proctor.description && proctor.optMoisture && proctor.maxDensity) continue;
 
         // Check if we have snapshot values first (for this specific proctor)
-        const proctorNoStr = String(proctor.proctorNo);
         const hasSnapshot = formData.proctorDescriptionLabel && 
                            formData.proctorDescriptionLabel.includes(`Soil ${proctor.proctorNo}:`);
         
@@ -566,7 +566,7 @@ const DensityReportForm: React.FC = () => {
   };
 
   // Check if there are unsaved changes by comparing current state to last saved
-  const checkUnsavedChanges = useCallback(() => {
+  const _checkUnsavedChanges = useCallback(() => {
     if (!formData || !task) return false;
     const currentData = JSON.stringify(formData);
     // Check if we have a pending save (saveStatus is 'saving')
@@ -582,6 +582,7 @@ const DensityReportForm: React.FC = () => {
     saveTimeoutRef.current = setTimeout(async () => {
       await saveData(data, false);
     }, 1000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Flush any pending debounced saves and save immediately
@@ -598,6 +599,7 @@ const DensityReportForm: React.FC = () => {
     
     // Save immediately with latest data
     await saveData(dataToSave, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData, task]);
 
   const saveData = async (data: DensityReport | null, updateStatus?: boolean, status?: string) => {
@@ -711,7 +713,7 @@ const DensityReportForm: React.FC = () => {
   const convertToISO = (dateStr: string): string | null => {
     if (!dateStr) return null;
     // Try to parse MM-DD-YYYY format
-    const parts = dateStr.split(/[-\/]/);
+    const parts = dateStr.split(/[-/]/);
     if (parts.length === 3) {
       const month = parts[0].padStart(2, '0');
       const day = parts[1].padStart(2, '0');
@@ -854,7 +856,7 @@ const DensityReportForm: React.FC = () => {
 
   const canEdit = task.status !== 'READY_FOR_REVIEW' && task.status !== 'APPROVED';
   const isReadyForReview = task.status === 'READY_FOR_REVIEW';
-  const isApproved = task.status === 'APPROVED';
+  const _isApproved = task.status === 'APPROVED';
 
   return (
     <div className="density-report-form">

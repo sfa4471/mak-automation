@@ -14,22 +14,81 @@ Mobile-friendly web application to replace paper-based field reports and Excel w
 
 ## Tech Stack
 
-- **Backend**: Node.js, Express, SQLite
-- **Frontend**: React (to be created)
+- **Backend**: Node.js, Express
+- **Database**: Supabase (PostgreSQL) - Primary | SQLite - Fallback
+- **Frontend**: React
 - **Authentication**: JWT tokens
 - **PDF**: PDFKit
 
 ## Setup
 
-1. Install dependencies:
+### 1. Install Dependencies
+
 ```bash
 npm run install-all
 ```
 
-2. **For local development** (same machine):
-   - No configuration needed - defaults to `http://localhost:5000/api`
+### 2. Configure Supabase (Recommended)
 
-3. **For mobile testing** (phone on same WiFi):
+The application uses **Supabase** (PostgreSQL) as the primary database. SQLite is available as a fallback for local development.
+
+#### Option A: Quick Setup (Automated)
+
+1. Get your Supabase credentials:
+   - Go to [Supabase Dashboard](https://supabase.com/dashboard)
+   - Select your project (or create a new one)
+   - Navigate to **Settings → API**
+   - Copy the following:
+     - **Project URL** → `SUPABASE_URL`
+     - **service_role key** → `SUPABASE_SERVICE_ROLE_KEY`
+
+2. Run the setup script:
+   ```bash
+   SUPABASE_URL=https://your-project.supabase.co SUPABASE_SERVICE_ROLE_KEY=your-service-role-key npm run supabase:setup
+   ```
+
+   Or manually add to `.env`:
+   ```env
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   ```
+
+3. Run database migrations:
+   ```bash
+   npm run supabase:execute-and-verify
+   ```
+
+#### Option B: Manual Setup
+
+1. Create a `.env` file in the project root:
+   ```env
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   ```
+
+2. Verify connection:
+   ```bash
+   npm run supabase:verify-connection
+   ```
+
+3. Run migrations:
+   ```bash
+   npm run supabase:execute-and-verify
+   ```
+
+#### Option C: Use SQLite (Fallback)
+
+If Supabase is not configured, the application will automatically fall back to SQLite:
+- SQLite database (`mak_automation.db`) is created automatically in the `server/` directory
+- No additional configuration needed
+- **Note:** SQLite is for local development only. Use Supabase for production.
+
+### 3. Configure Network Access
+
+**For local development** (same machine):
+   - No additional configuration needed - defaults to `http://localhost:5000/api`
+
+**For mobile testing** (phone on same WiFi):
    ```bash
    npm run setup-mobile
    ```
@@ -38,7 +97,8 @@ npm run install-all
    - Create `client/.env` with the correct API URL
    - Allow your phone to connect to the backend
 
-4. Start development server:
+### 4. Start Development Server
+
 ```bash
 npm run dev
 ```
@@ -47,7 +107,8 @@ This will start:
 - Backend API on http://localhost:5000 (or your IP:5000)
 - Frontend React app on http://localhost:3000 (or your IP:3000)
 
-5. Open your browser:
+### 5. Open Your Browser
+
    - **Same machine**: http://localhost:3000
    - **Mobile device**: http://YOUR_IP:3000 (shown after running setup-mobile)
 
@@ -107,7 +168,45 @@ This will start:
 
 ## Database
 
-SQLite database (`mak_automation.db`) is created automatically on first run in the `server/` directory.
+### Supabase (Primary - Recommended)
+
+The application uses **Supabase** (PostgreSQL) as the primary database for production and development.
+
+**Features:**
+- PostgreSQL database with full SQL support
+- JSONB support for flexible data storage
+- Row Level Security (RLS) support
+- Real-time subscriptions
+- Automatic backups
+- Scalable infrastructure
+
+**Setup:**
+See [Setup instructions](#2-configure-supabase-recommended) above.
+
+**Migration:**
+- Run `npm run supabase:execute-and-verify` to create all tables and indexes
+- See `supabase/migrations/` for migration files
+
+**Verification:**
+- `npm run supabase:verify-connection` - Test connection
+- `npm run supabase:verify` - Verify tables
+- `npm run supabase:execute-and-verify` - Full verification
+
+### SQLite (Fallback)
+
+SQLite is available as a fallback for local development when Supabase is not configured.
+
+**Features:**
+- No configuration needed
+- Automatic database creation
+- Local file-based storage
+
+**Usage:**
+- If Supabase credentials are not set, the application automatically uses SQLite
+- Database file: `server/mak_automation.db`
+- Created automatically on first run
+
+**Note:** SQLite is for local development only. Use Supabase for production deployments.
 
 ## API Documentation
 
@@ -141,20 +240,60 @@ Authorization: Bearer <token>
 ### PDF
 - `GET /api/pdf/wp1/:workPackageId` - Generate WP1 PDF
 
-## Database
-
-SQLite database (`mak_automation.db`) is created automatically on first run.
-
 ## Workflow Guide
 
 See [WORKFLOW_GUIDE.md](./WORKFLOW_GUIDE.md) for detailed instructions on testing the admin and technician workflow.
 
 ## Quick Start
 
-1. Install dependencies: `npm run install-all`
-2. Start server: `npm run dev`
-3. Open browser: `http://localhost:3000`
-4. Login as admin: `admin@maklonestar.com` / `admin123`
-5. Create technician, project, and assign work package
-6. Login as technician to complete the workflow
+1. **Install dependencies:**
+   ```bash
+   npm run install-all
+   ```
+
+2. **Set up Supabase** (recommended):
+   ```bash
+   # Add to .env file:
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   
+   # Run migrations:
+   npm run supabase:execute-and-verify
+   ```
+   
+   Or skip this step to use SQLite fallback (local development only).
+
+3. **Start server:**
+   ```bash
+   npm run dev
+   ```
+
+4. **Open browser:** http://localhost:3000
+
+5. **Login as admin:**
+   - Email: `admin@maklonestar.com`
+   - Password: `admin123`
+
+6. **Create technician, project, and assign work package**
+
+7. **Login as technician to complete the workflow**
+
+## Available Scripts
+
+### Database Scripts
+- `npm run supabase:setup` - Set up Supabase environment variables
+- `npm run supabase:verify-connection` - Verify Supabase connection
+- `npm run supabase:verify` - Verify all tables exist
+- `npm run supabase:execute-and-verify` - Execute migrations and verify
+- `npm run supabase:migrate-data` - Migrate data from SQLite to Supabase
+
+### Development Scripts
+- `npm run dev` - Start development server (backend + frontend)
+- `npm run server` - Start backend only
+- `npm run client` - Start frontend only
+- `npm run build` - Build frontend for production
+
+### Utility Scripts
+- `npm run setup-mobile` - Configure for mobile device access
+- `npm run reset-password` - Reset user password
 
