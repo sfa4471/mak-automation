@@ -87,7 +87,8 @@ class DatabaseAdapter {
       let query = supabase.from(table).select('*');
       
       for (const [key, value] of Object.entries(conditions)) {
-        query = query.eq(toSnakeCase(key), value);
+        const snakeKey = toSnakeCase(key);
+        query = query.eq(snakeKey, value);
       }
       
       if (options.orderBy) {
@@ -102,7 +103,9 @@ class DatabaseAdapter {
       const { data, error } = await query;
       
       if (error) {
-        throw new Error(`Database error: ${error.message}`);
+        // Enhanced error message for debugging
+        const conditionKeys = Object.keys(conditions).map(k => `${k} (→ ${toSnakeCase(k)})`).join(', ');
+        throw new Error(`Database error: ${error.message}. Table: ${table}, Conditions: ${conditionKeys}`);
       }
       
       return (data || []).map(keysToCamelCase);
