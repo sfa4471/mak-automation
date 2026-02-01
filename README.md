@@ -112,6 +112,54 @@ This will start:
    - **Same machine**: http://localhost:3000
    - **Mobile device**: http://YOUR_IP:3000 (shown after running setup-mobile)
 
+## Deployment to Render.com
+
+### Pre-Deployment Checklist
+
+Before deploying, run these validation scripts:
+
+```bash
+# Validate Supabase credentials format
+npm run validate-credentials
+
+# Run comprehensive pre-deployment checks
+npm run pre-deploy-check
+```
+
+### Configure Supabase in Render
+
+**⚠️ CRITICAL:** The application requires Supabase environment variables in Render to use the production database.
+
+1. **Get Supabase Credentials:**
+   - Go to [Supabase Dashboard](https://supabase.com/dashboard) → Your Project → Settings → API
+   - Copy **Project URL** and **service_role key**
+
+2. **Add to Render:**
+   - Go to [Render Dashboard](https://dashboard.render.com) → Your Service → Environment tab
+   - Add `SUPABASE_URL` = Your Supabase project URL
+   - Add `SUPABASE_SERVICE_ROLE_KEY` = Your service role key
+   - **Redeploy** the service
+
+3. **Verify Deployment:**
+   ```bash
+   # Verify Render deployment and endpoints
+   npm run verify-render
+   ```
+
+4. **Check Logs:**
+   - In Render Dashboard → Logs tab
+   - Should see: `✅ Supabase configuration found` and `📊 Using Supabase database`
+   - Should NOT see: `⚠️ Supabase environment variables not set`
+
+📚 **Detailed Guide:** See [RENDER_SUPABASE_SETUP_GUIDE.md](./RENDER_SUPABASE_SETUP_GUIDE.md) for step-by-step instructions.
+
+### Available Scripts
+
+- `npm run validate-credentials` - Validate Supabase URL and key format
+- `npm run pre-deploy-check` - Comprehensive pre-deployment validation
+- `npm run verify-render` - Verify Render deployment and API endpoints
+- `npm run supabase:verify-connection` - Test Supabase connection locally
+
 ## Default Admin Credentials
 
 - Email: `admin@maklonestar.com`

@@ -19,7 +19,11 @@
     "supabase:setup": "node setup-supabase-env.js",
     "supabase:verify-connection": "node verify-supabase.js",
     "supabase:execute-and-verify": "node scripts/execute-and-verify-migration.js",
-    "check-project-counters": "node scripts/check-project-counters.js"
+    "check-project-counters": "node scripts/check-project-counters.js",
+    "validate-credentials": "node scripts/validate-supabase-credentials.js",
+    "verify-render": "node scripts/verify-render-supabase-deployment.js",
+    "pre-deploy-check": "node scripts/pre-deployment-check.js",
+    "render-setup": "node scripts/add-to-render-instructions.js"
   },
   "keywords": [],
   "author": "",

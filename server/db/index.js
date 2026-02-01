@@ -12,7 +12,7 @@
  *   const users = await db.get('users', { email: 'test@example.com' });
  */
 
-const { supabase, isAvailable, keysToSnakeCase, keysToCamelCase } = require('./supabase');
+const { supabase, isAvailable, keysToSnakeCase, keysToCamelCase, toSnakeCase } = require('./supabase');
 const sqliteDb = require('../database');
 
 // Determine which database to use
@@ -44,7 +44,7 @@ class DatabaseAdapter {
       let query = supabase.from(table).select('*');
       
       for (const [key, value] of Object.entries(conditions)) {
-        query = query.eq(keysToSnakeCase(key), value);
+        query = query.eq(toSnakeCase(key), value);
       }
       
       const { data, error } = await query.single();
@@ -87,12 +87,12 @@ class DatabaseAdapter {
       let query = supabase.from(table).select('*');
       
       for (const [key, value] of Object.entries(conditions)) {
-        query = query.eq(keysToSnakeCase(key), value);
+        query = query.eq(toSnakeCase(key), value);
       }
       
       if (options.orderBy) {
         const [column, direction = 'asc'] = options.orderBy.split(' ');
-        query = query.order(keysToSnakeCase(column), { ascending: direction.toLowerCase() !== 'desc' });
+        query = query.order(toSnakeCase(column), { ascending: direction.toLowerCase() !== 'desc' });
       }
       
       if (options.limit) {
@@ -185,7 +185,7 @@ class DatabaseAdapter {
       let query = supabase.from(table).update(convertedData);
       
       for (const [key, value] of Object.entries(conditions)) {
-        query = query.eq(keysToSnakeCase(key), value);
+        query = query.eq(toSnakeCase(key), value);
       }
       
       const { data: updated, error } = await query.select();
@@ -222,7 +222,7 @@ class DatabaseAdapter {
       let query = supabase.from(table).delete();
       
       for (const [key, value] of Object.entries(conditions)) {
-        query = query.eq(keysToSnakeCase(key), value);
+        query = query.eq(toSnakeCase(key), value);
       }
       
       const { data: deleted, error } = await query.select();
