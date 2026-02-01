@@ -1,6 +1,5 @@
 {
-  "installCommand": "cd client && npm install",
-  "buildCommand": "cd client && npm run build",
+  "buildCommand": "bash build.sh",
   "outputDirectory": "client/build",
   "framework": null,
   "rewrites": [
