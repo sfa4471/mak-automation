@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { supabase, isAvailable } = require('../db/supabase');
+const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { ensureProjectDirectory } = require('../utils/pdfFileManager');
@@ -8,45 +8,85 @@ const { ensureProjectDirectory } = require('../utils/pdfFileManager');
 const router = express.Router();
 
 // Helper function to parse JSON fields from project
+// Handles both snake_case (from Supabase before conversion) and camelCase (after conversion)
 function parseProjectJSONFields(project) {
   if (!project) return project;
   
-  // Supabase returns JSONB as objects, SQLite returns JSON strings
-  if (project.customerEmails) {
-    if (typeof project.customerEmails === 'string') {
+  // Handle customerEmails (camelCase) or customer_emails (snake_case)
+  const customerEmailsField = project.customerEmails !== undefined ? 'customerEmails' : 
+                              project.customer_emails !== undefined ? 'customer_emails' : null;
+  
+  if (customerEmailsField) {
+    const value = project[customerEmailsField];
+    if (typeof value === 'string') {
       try {
-        project.customerEmails = JSON.parse(project.customerEmails);
+        project.customerEmails = JSON.parse(value);
       } catch (e) {
         project.customerEmails = [];
       }
+    } else if (Array.isArray(value)) {
+      project.customerEmails = value;
+    } else {
+      project.customerEmails = [];
+    }
+    // Remove snake_case version if it exists
+    if (customerEmailsField === 'customer_emails') {
+      delete project.customer_emails;
     }
   } else {
     project.customerEmails = [];
   }
   
-  if (project.soilSpecs) {
-    if (typeof project.soilSpecs === 'string') {
+  // Handle soilSpecs (camelCase) or soil_specs (snake_case)
+  const soilSpecsField = project.soilSpecs !== undefined ? 'soilSpecs' : 
+                          project.soil_specs !== undefined ? 'soil_specs' : null;
+  
+  if (soilSpecsField) {
+    const value = project[soilSpecsField];
+    if (typeof value === 'string') {
       try {
-        project.soilSpecs = JSON.parse(project.soilSpecs);
+        project.soilSpecs = JSON.parse(value);
       } catch (e) {
         project.soilSpecs = {};
       }
+    } else if (typeof value === 'object' && value !== null) {
+      project.soilSpecs = value;
+    } else {
+      project.soilSpecs = {};
+    }
+    // Remove snake_case version if it exists
+    if (soilSpecsField === 'soil_specs') {
+      delete project.soil_specs;
     }
   } else {
     project.soilSpecs = {};
   }
   
-  if (project.concreteSpecs) {
-    if (typeof project.concreteSpecs === 'string') {
+  // Handle concreteSpecs (camelCase) or concrete_specs (snake_case)
+  const concreteSpecsField = project.concreteSpecs !== undefined ? 'concreteSpecs' : 
+                              project.concrete_specs !== undefined ? 'concrete_specs' : null;
+  
+  if (concreteSpecsField) {
+    const value = project[concreteSpecsField];
+    if (typeof value === 'string') {
       try {
-        project.concreteSpecs = JSON.parse(project.concreteSpecs);
+        project.concreteSpecs = JSON.parse(value);
       } catch (e) {
         project.concreteSpecs = {};
       }
+    } else if (typeof value === 'object' && value !== null) {
+      project.concreteSpecs = value;
+    } else {
+      project.concreteSpecs = {};
+    }
+    // Remove snake_case version if it exists
+    if (concreteSpecsField === 'concrete_specs') {
+      delete project.concrete_specs;
     }
   } else {
     project.concreteSpecs = {};
   }
+  
   return project;
 }
 
@@ -331,17 +371,24 @@ router.get('/', authenticate, async (req, res) => {
           .select('*')
           .order('created_at', { ascending: false });
         
-        if (error) throw error;
+        if (error) {
+          console.error('Error fetching projects from Supabase:', error);
+          throw error;
+        }
         
-        // Get work package counts separately
+        // Convert snake_case to camelCase and get work package counts
         projects = await Promise.all((data || []).map(async (project) => {
+          // Convert snake_case keys to camelCase
+          const camelProject = keysToCamelCase(project);
+          
+          // Get work package count
           const { count } = await supabase
             .from('workpackages')
             .select('*', { count: 'exact', head: true })
             .eq('project_id', project.id);
           
           return {
-            ...project,
+            ...camelProject,
             workPackageCount: count || 0
           };
         }));
@@ -370,13 +417,20 @@ router.get('/', authenticate, async (req, res) => {
           .eq('workpackages.assigned_to', req.user.id)
           .order('created_at', { ascending: false });
         
-        if (error) throw error;
+        if (error) {
+          console.error('Error fetching technician projects from Supabase:', error);
+          throw error;
+        }
         
         // Get unique projects (Supabase might return duplicates with joins)
+        // Convert snake_case to camelCase
         const projectMap = new Map();
         (data || []).forEach(item => {
           if (!projectMap.has(item.id)) {
-            projectMap.set(item.id, item);
+            const camelItem = keysToCamelCase(item);
+            // Remove workpackages from the project object
+            delete camelItem.workpackages;
+            projectMap.set(item.id, camelItem);
           }
         });
         projects = Array.from(projectMap.values());
@@ -402,10 +456,27 @@ router.get('/', authenticate, async (req, res) => {
     
     // Parse JSON fields for each project
     const parsedProjects = projects.map(p => parseProjectJSONFields(p));
+    
+    // Log for debugging (remove in production if too verbose)
+    if (parsedProjects.length > 0) {
+      console.log(`✅ Successfully fetched ${parsedProjects.length} project(s) for ${req.user.role}`);
+    } else {
+      console.log(`ℹ️  No projects found for ${req.user.role} (this may be normal if no projects exist)`);
+    }
+    
     res.json(parsedProjects);
   } catch (err) {
-    console.error('Error fetching projects:', err);
-    res.status(500).json({ error: 'Database error' });
+    console.error('❌ Error fetching projects:', err);
+    console.error('Error details:', {
+      message: err.message,
+      stack: err.stack,
+      userRole: req.user?.role,
+      isSupabase: db.isSupabase()
+    });
+    res.status(500).json({ 
+      error: 'Database error',
+      message: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 });
 
