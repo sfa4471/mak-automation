@@ -3,7 +3,8 @@ const PDFDocument = require('pdfkit');
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
-const db = require('../database');
+const db = require('../db');
+const { supabase, isAvailable } = require('../db/supabase');
 const { saveReportPDF } = require('../utils/pdfFileManager');
 const { authenticate } = require('../middleware/auth');
 
@@ -42,22 +43,55 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     // Try task first if isTask flag is set, otherwise try workPackage
     if (isTask) {
       // Get task and project info
-      taskOrWp = await new Promise((resolve, reject) => {
-        db.get(
-          `SELECT t.*, p.projectName, p.projectNumber, p.specStrengthPsi, p.specAmbientTempF,
-           p.specConcreteTempF, p.specSlump, p.specAirContentByVolume,
-           u.name as technicianName
-           FROM tasks t
-           INNER JOIN projects p ON t.projectId = p.id
-           LEFT JOIN users u ON t.assignedTechnicianId = u.id
-           WHERE t.id = ? AND t.taskType = 'COMPRESSIVE_STRENGTH'`,
-          [id],
-          (err, row) => {
-            if (err) reject(err);
-            else resolve(row);
-          }
-        );
-      });
+      if (db.isSupabase()) {
+        const { data, error } = await supabase
+          .from('tasks')
+          .select(`
+            *,
+            projects:project_id(project_name, project_number, spec_strength_psi, spec_ambient_temp_f,
+              spec_concrete_temp_f, spec_slump, spec_air_content_by_volume),
+            users:assigned_technician_id(name)
+          `)
+          .eq('id', id)
+          .eq('task_type', 'COMPRESSIVE_STRENGTH')
+          .single();
+        
+        if (error || !data) {
+          return res.status(404).json({ error: 'Task not found' });
+        }
+        
+        taskOrWp = {
+          ...data,
+          projectName: data.projects?.project_name,
+          projectNumber: data.projects?.project_number,
+          specStrengthPsi: data.projects?.spec_strength_psi,
+          specAmbientTempF: data.projects?.spec_ambient_temp_f,
+          specConcreteTempF: data.projects?.spec_concrete_temp_f,
+          specSlump: data.projects?.spec_slump,
+          specAirContentByVolume: data.projects?.spec_air_content_by_volume,
+          technicianName: data.users?.name,
+          projects: undefined,
+          users: undefined
+        };
+      } else {
+        const sqliteDb = require('../database');
+        taskOrWp = await new Promise((resolve, reject) => {
+          sqliteDb.get(
+            `SELECT t.*, p.projectName, p.projectNumber, p.specStrengthPsi, p.specAmbientTempF,
+             p.specConcreteTempF, p.specSlump, p.specAirContentByVolume,
+             u.name as technicianName
+             FROM tasks t
+             INNER JOIN projects p ON t.projectId = p.id
+             LEFT JOIN users u ON t.assignedTechnicianId = u.id
+             WHERE t.id = ? AND t.taskType = 'COMPRESSIVE_STRENGTH'`,
+            [id],
+            (err, row) => {
+              if (err) reject(err);
+              else resolve(row || null);
+            }
+          );
+        });
+      }
 
       if (!taskOrWp) {
         return res.status(404).json({ error: 'Task not found' });
@@ -69,29 +103,53 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
       }
 
       // Get WP1 data by taskId
-      wp1Data = await new Promise((resolve, reject) => {
-        db.get('SELECT * FROM wp1_data WHERE taskId = ?', [id], (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        });
-      });
+      wp1Data = await db.get('wp1_data', { taskId: parseInt(id) });
     } else {
       // Get work package and project info
-      taskOrWp = await new Promise((resolve, reject) => {
-        db.get(
-          `SELECT wp.*, p.projectName, p.projectNumber, p.projectSpec, p.customerEmail,
-           u.name as technicianName
-           FROM workpackages wp
-           INNER JOIN projects p ON wp.projectId = p.id
-           LEFT JOIN users u ON wp.assignedTo = u.id
-           WHERE wp.id = ? AND wp.type = 'WP1'`,
-          [id],
-          (err, row) => {
-            if (err) reject(err);
-            else resolve(row);
-          }
-        );
-      });
+      if (db.isSupabase()) {
+        const { data, error } = await supabase
+          .from('workpackages')
+          .select(`
+            *,
+            projects:project_id(project_name, project_number, project_spec, customer_email),
+            users:assigned_to(name)
+          `)
+          .eq('id', id)
+          .eq('type', 'WP1')
+          .single();
+        
+        if (error || !data) {
+          return res.status(404).json({ error: 'Work package not found' });
+        }
+        
+        taskOrWp = {
+          ...data,
+          projectName: data.projects?.project_name,
+          projectNumber: data.projects?.project_number,
+          projectSpec: data.projects?.project_spec,
+          customerEmail: data.projects?.customer_email,
+          technicianName: data.users?.name,
+          projects: undefined,
+          users: undefined
+        };
+      } else {
+        const sqliteDb = require('../database');
+        taskOrWp = await new Promise((resolve, reject) => {
+          sqliteDb.get(
+            `SELECT wp.*, p.projectName, p.projectNumber, p.projectSpec, p.customerEmail,
+             u.name as technicianName
+             FROM workpackages wp
+             INNER JOIN projects p ON wp.projectId = p.id
+             LEFT JOIN users u ON wp.assignedTo = u.id
+             WHERE wp.id = ? AND wp.type = 'WP1'`,
+            [id],
+            (err, row) => {
+              if (err) reject(err);
+              else resolve(row || null);
+            }
+          );
+        });
+      }
 
       if (!taskOrWp) {
         return res.status(404).json({ error: 'Work package not found' });
@@ -103,12 +161,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
       }
 
       // Get WP1 data by workPackageId
-      wp1Data = await new Promise((resolve, reject) => {
-        db.get('SELECT * FROM wp1_data WHERE workPackageId = ?', [id], (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        });
-      });
+      wp1Data = await db.get('wp1_data', { workPackageId: parseInt(id) });
     }
 
     if (!wp1Data) {
@@ -116,11 +169,15 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     }
 
     // Parse cylinders
-    try {
-      wp1Data.cylinders = JSON.parse(wp1Data.cylinders || '[]');
-    } catch (e) {
-      console.error('Error parsing cylinders:', e);
-      wp1Data.cylinders = [];
+    if (typeof wp1Data.cylinders === 'string') {
+      try {
+        wp1Data.cylinders = JSON.parse(wp1Data.cylinders || '[]');
+      } catch (e) {
+        console.error('Error parsing cylinders:', e);
+        wp1Data.cylinders = [];
+      }
+    } else {
+      wp1Data.cylinders = wp1Data.cylinders || [];
     }
 
     // Read HTML template
@@ -551,30 +608,64 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
 });
 
 // Generate PDF for Task Details (Job Ticket / Work Order)
-router.get('/task/:taskId', authenticate, (req, res) => {
-  const taskId = req.params.taskId;
+router.get('/task/:taskId', authenticate, async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.taskId);
 
-  // Get task and project info
-  db.get(
-    `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
-     p.projectName, p.projectNumber, p.customerEmail
-     FROM tasks t
-     LEFT JOIN users u ON t.assignedTechnicianId = u.id
-     INNER JOIN projects p ON t.projectId = p.id
-     WHERE t.id = ?`,
-    [taskId],
-    (err, task) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      if (!task) {
+    // Get task and project info
+    let task;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          users:assigned_technician_id(name, email),
+          projects:project_id(project_name, project_number, customer_email)
+        `)
+        .eq('id', taskId)
+        .single();
+      
+      if (error || !data) {
         return res.status(404).json({ error: 'Task not found' });
       }
+      
+      task = {
+        ...data,
+        assignedTechnicianName: data.users?.name,
+        assignedTechnicianEmail: data.users?.email,
+        projectName: data.projects?.project_name,
+        projectNumber: data.projects?.project_number,
+        customerEmail: data.projects?.customer_email,
+        users: undefined,
+        projects: undefined
+      };
+    } else {
+      const sqliteDb = require('../database');
+      task = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
+           p.projectName, p.projectNumber, p.customerEmail
+           FROM tasks t
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.id = ?`,
+          [taskId],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
+          }
+        );
+      });
+    }
 
-      // Check access
-      if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    // Check access
+    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
       try {
         // Set headers
@@ -699,326 +790,364 @@ router.get('/task/:taskId', authenticate, (req, res) => {
 
 // Generate PDF for Density Report using HTML template + Puppeteer
 router.get('/density/:taskId', authenticate, async (req, res) => {
-  const taskId = req.params.taskId;
-
   try {
+    const taskId = parseInt(req.params.taskId);
+
     // Get task and project info
-    db.get(
-      `SELECT t.*, p.projectName, p.projectNumber, u.name as assignedTechnicianName
-       FROM tasks t
-       INNER JOIN projects p ON t.projectId = p.id
-       LEFT JOIN users u ON t.assignedTechnicianId = u.id
-       WHERE t.id = ? AND t.taskType = 'DENSITY_MEASUREMENT'`,
-      [taskId],
-      async (err, task) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        if (!task) {
-          return res.status(404).json({ error: 'Task not found' });
-        }
-
-        // Check access
-        if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
-          return res.status(403).json({ error: 'Access denied' });
-        }
-
-        // Get density report data
-        db.get('SELECT * FROM density_reports WHERE taskId = ?', [taskId], async (err, data) => {
-          if (err) {
-            console.error('Database error fetching density report:', err);
-            return res.status(500).json({ error: 'Database error' });
+    let task;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          projects:project_id(project_name, project_number),
+          users:assigned_technician_id(name)
+        `)
+        .eq('id', taskId)
+        .eq('task_type', 'DENSITY_MEASUREMENT')
+        .single();
+      
+      if (error || !data) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+      
+      task = {
+        ...data,
+        projectName: data.projects?.project_name,
+        projectNumber: data.projects?.project_number,
+        assignedTechnicianName: data.users?.name,
+        projects: undefined,
+        users: undefined
+      };
+    } else {
+      const sqliteDb = require('../database');
+      task = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.*, p.projectName, p.projectNumber, u.name as assignedTechnicianName
+           FROM tasks t
+           INNER JOIN projects p ON t.projectId = p.id
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           WHERE t.id = ? AND t.taskType = 'DENSITY_MEASUREMENT'`,
+          [taskId],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
           }
-          if (!data) {
-            return res.status(404).json({ error: 'No report data found. Please save the form first.' });
+        );
+      });
+    }
+
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    // Check access
+    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get density report data
+    const data = await db.get('density_reports', { taskId });
+    if (!data) {
+      return res.status(404).json({ error: 'No report data found. Please save the form first.' });
+    }
+
+    try {
+      // Parse JSON fields
+      if (typeof data.testRows === 'string') {
+        try {
+          data.testRows = JSON.parse(data.testRows || '[]');
+        } catch (e) {
+          console.error('Error parsing JSON fields:', e);
+          data.testRows = [];
+        }
+      } else {
+        data.testRows = data.testRows || [];
+      }
+      
+      if (typeof data.proctors === 'string') {
+        try {
+          data.proctors = JSON.parse(data.proctors || '[]');
+        } catch (e) {
+          console.error('Error parsing JSON fields:', e);
+          data.proctors = [];
+        }
+      } else {
+        data.proctors = data.proctors || [];
+      }
+
+      // Ensure we have 19 test rows and 6 proctor rows
+      while (data.testRows.length < 19) {
+        data.testRows.push({});
+      }
+      while (data.proctors.length < 6) {
+        data.proctors.push({});
+      }
+
+      // Read HTML template
+      const templatePath = path.join(__dirname, '..', 'templates', 'density-report.html');
+      if (!fs.existsSync(templatePath)) {
+        console.error('Template file not found:', templatePath);
+        return res.status(500).json({ error: 'Template file not found' });
+      }
+      let html = fs.readFileSync(templatePath, 'utf8');
+
+      // Helper function to escape HTML
+      const escapeHtml = (text) => {
+        if (!text) return '&nbsp;';
+        return String(text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      };
+
+      // Format date
+      const datePerformed = data.datePerformed 
+        ? new Date(data.datePerformed).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+        : '';
+
+      // Get logo as base64 data URI and replace placeholder
+      const logoBase64 = getLogoBase64();
+      const logoHtml = logoBase64 
+        ? `<img src="${logoBase64}" alt="MAK Lone Star Consulting Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
+        : '<div class="logo-placeholder">MAK</div>';
+      html = html.replace('{{LOGO_IMAGE}}', logoHtml);
+
+      // Replace header placeholders (escape HTML)
+      html = html.replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''));
+      html = html.replace('{{DATE_PERFORMED}}', escapeHtml(datePerformed));
+      html = html.replace('{{PROJECT_NAME}}', escapeHtml(task.projectName || ''));
+      html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(task.projectNumber || ''));
+      html = html.replace('{{STRUCTURE}}', escapeHtml(data.structure || ''));
+
+      // Generate test rows HTML
+      let testRowsHtml = '';
+      for (let i = 0; i < 19; i++) {
+        const row = data.testRows[i] || {};
+        
+        // Calculate dry density
+        let dryDensity = row.dryDensity || '';
+        if (!dryDensity && row.wetDensity && row.fieldMoisture) {
+          const wet = parseFloat(row.wetDensity);
+          const moisture = parseFloat(row.fieldMoisture);
+          if (!isNaN(wet) && !isNaN(moisture)) {
+            dryDensity = (wet / (1 + (moisture / 100))).toFixed(1);
           }
-
-          try {
-            // Parse JSON fields
-            try {
-              data.testRows = JSON.parse(data.testRows || '[]');
-              data.proctors = JSON.parse(data.proctors || '[]');
-            } catch (e) {
-              console.error('Error parsing JSON fields:', e);
-              data.testRows = [];
-              data.proctors = [];
-            }
-
-            // Ensure we have 19 test rows and 6 proctor rows
-            while (data.testRows.length < 19) {
-              data.testRows.push({});
-            }
-            while (data.proctors.length < 6) {
-              data.proctors.push({});
-            }
-
-            // Read HTML template
-            const templatePath = path.join(__dirname, '..', 'templates', 'density-report.html');
-            if (!fs.existsSync(templatePath)) {
-              console.error('Template file not found:', templatePath);
-              return res.status(500).json({ error: 'Template file not found' });
-            }
-            let html = fs.readFileSync(templatePath, 'utf8');
-
-            // Helper function to escape HTML
-            const escapeHtml = (text) => {
-              if (!text) return '&nbsp;';
-              return String(text)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
-            };
-
-            // Format date
-            const datePerformed = data.datePerformed 
-              ? new Date(data.datePerformed).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
-              : '';
-
-            // Get logo as base64 data URI and replace placeholder
-            const logoBase64 = getLogoBase64();
-            const logoHtml = logoBase64 
-              ? `<img src="${logoBase64}" alt="MAK Lone Star Consulting Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
-              : '<div class="logo-placeholder">MAK</div>';
-            html = html.replace('{{LOGO_IMAGE}}', logoHtml);
-
-            // Replace header placeholders (escape HTML)
-            html = html.replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''));
-            html = html.replace('{{DATE_PERFORMED}}', escapeHtml(datePerformed));
-            html = html.replace('{{PROJECT_NAME}}', escapeHtml(task.projectName || ''));
-            html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(task.projectNumber || ''));
-            html = html.replace('{{STRUCTURE}}', escapeHtml(data.structure || ''));
-
-            // Generate test rows HTML
-            let testRowsHtml = '';
-            for (let i = 0; i < 19; i++) {
-              const row = data.testRows[i] || {};
-              
-              // Calculate dry density
-              let dryDensity = row.dryDensity || '';
-              if (!dryDensity && row.wetDensity && row.fieldMoisture) {
-                const wet = parseFloat(row.wetDensity);
-                const moisture = parseFloat(row.fieldMoisture);
-                if (!isNaN(wet) && !isNaN(moisture)) {
-                  dryDensity = (wet / (1 + (moisture / 100))).toFixed(1);
-                }
+        }
+        
+        // Calculate percent proctor
+        let percentProctor = row.percentProctorDensity || '';
+        if (!percentProctor && dryDensity && row.proctorNo) {
+          const dry = parseFloat(dryDensity);
+          const proctorNum = parseInt(row.proctorNo);
+          if (!isNaN(dry) && !isNaN(proctorNum) && proctorNum >= 1 && proctorNum <= 6) {
+            const proctor = data.proctors[proctorNum - 1];
+            if (proctor && proctor.maxDensity) {
+              const maxDensity = parseFloat(proctor.maxDensity);
+              if (!isNaN(maxDensity) && maxDensity > 0) {
+                percentProctor = ((dry / maxDensity) * 100).toFixed(1);
               }
-              
-              // Calculate percent proctor
-              let percentProctor = row.percentProctorDensity || '';
-              if (!percentProctor && dryDensity && row.proctorNo) {
-                const dry = parseFloat(dryDensity);
-                const proctorNum = parseInt(row.proctorNo);
-                if (!isNaN(dry) && !isNaN(proctorNum) && proctorNum >= 1 && proctorNum <= 6) {
-                  const proctor = data.proctors[proctorNum - 1];
-                  if (proctor && proctor.maxDensity) {
-                    const maxDensity = parseFloat(proctor.maxDensity);
-                    if (!isNaN(maxDensity) && maxDensity > 0) {
-                      percentProctor = ((dry / maxDensity) * 100).toFixed(1);
-                    }
-                  }
-                }
-              }
-
-              // Format Dept/Lift display
-              let depthLiftDisplay = '';
-              if (row.depthLiftValue) {
-                depthLiftDisplay = escapeHtml(row.depthLiftValue);
-              }
-
-              testRowsHtml += `
-                <tr>
-                  <td>${i + 1}</td>
-                  <td>${escapeHtml(row.testLocation || '')}</td>
-                  <td>${depthLiftDisplay || '&nbsp;'}</td>
-                  <td>${escapeHtml(row.wetDensity || '')}</td>
-                  <td>${escapeHtml(row.fieldMoisture || '')}</td>
-                  <td>${dryDensity || '&nbsp;'}</td>
-                  <td>${escapeHtml(row.proctorNo || '')}</td>
-                  <td>${percentProctor ? percentProctor : '&nbsp;'}</td>
-                </tr>
-              `;
             }
-            html = html.replace('{{TEST_ROWS}}', testRowsHtml);
+          }
+        }
 
-            // Generate proctor rows HTML
-            let proctorRowsHtml = '';
-            for (let i = 0; i < 6; i++) {
-              const proctor = data.proctors[i] || {};
-              proctorRowsHtml += `
-                <tr>
-                  <td>${i + 1}</td>
-                  <td>${escapeHtml(proctor.description || '')}</td>
-                  <td>${escapeHtml(proctor.optMoisture || '')}</td>
-                  <td>${escapeHtml(proctor.maxDensity || '')}</td>
-                </tr>
-              `;
-            }
-            html = html.replace('{{PROCTOR_ROWS}}', proctorRowsHtml);
+        // Format Dept/Lift display
+        let depthLiftDisplay = '';
+        if (row.depthLiftValue) {
+          depthLiftDisplay = escapeHtml(row.depthLiftValue);
+        }
 
-            // Replace specs and instrument placeholders
-            html = html.replace('{{DENS_SPEC}}', escapeHtml(data.densSpecPercent || ''));
-            const moistSpec = data.moistSpecMin !== null && data.moistSpecMax !== null
-              ? `${data.moistSpecMin} to ${data.moistSpecMax}`
-              : (data.moistSpecMin || data.moistSpecMax || '');
-            html = html.replace('{{MOIST_SPEC}}', escapeHtml(moistSpec));
-            html = html.replace('{{STD_DENSITY_COUNT}}', escapeHtml(data.stdDensityCount || ''));
-            html = html.replace('{{STD_MOIST_COUNT}}', escapeHtml(data.stdMoistCount || ''));
-            html = html.replace('{{TRANS_DEPTH}}', escapeHtml(data.transDepthIn || ''));
-            html = html.replace('{{GAUGE_NO}}', escapeHtml(data.gaugeNo || ''));
+        testRowsHtml += `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${escapeHtml(row.testLocation || '')}</td>
+            <td>${depthLiftDisplay || '&nbsp;'}</td>
+            <td>${escapeHtml(row.wetDensity || '')}</td>
+            <td>${escapeHtml(row.fieldMoisture || '')}</td>
+            <td>${dryDensity || '&nbsp;'}</td>
+            <td>${escapeHtml(row.proctorNo || '')}</td>
+            <td>${percentProctor ? percentProctor : '&nbsp;'}</td>
+          </tr>
+        `;
+      }
+      html = html.replace('{{TEST_ROWS}}', testRowsHtml);
 
-            // Replace method checkboxes
-            html = html.replace('{{METHOD_D2922}}', data.methodD2922 ? 'checked' : '');
-            html = html.replace('{{METHOD_D3017}}', data.methodD3017 ? 'checked' : '');
-            html = html.replace('{{METHOD_D698}}', data.methodD698 ? 'checked' : '');
+      // Generate proctor rows HTML
+      let proctorRowsHtml = '';
+      for (let i = 0; i < 6; i++) {
+        const proctor = data.proctors[i] || {};
+        proctorRowsHtml += `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${escapeHtml(proctor.description || '')}</td>
+            <td>${escapeHtml(proctor.optMoisture || '')}</td>
+            <td>${escapeHtml(proctor.maxDensity || '')}</td>
+          </tr>
+        `;
+      }
+      html = html.replace('{{PROCTOR_ROWS}}', proctorRowsHtml);
 
-            // Replace footer placeholders
-            html = html.replace('{{REMARKS}}', escapeHtml(data.remarks || ''));
-            html = html.replace('{{TECH_NAME}}', escapeHtml(data.techName || task.assignedTechnicianName || ''));
-            html = html.replace('{{TIME}}', escapeHtml(data.timeStr || ''));
+      // Replace specs and instrument placeholders
+      html = html.replace('{{DENS_SPEC}}', escapeHtml(data.densSpecPercent || ''));
+      const moistSpec = data.moistSpecMin !== null && data.moistSpecMax !== null
+        ? `${data.moistSpecMin} to ${data.moistSpecMax}`
+        : (data.moistSpecMin || data.moistSpecMax || '');
+      html = html.replace('{{MOIST_SPEC}}', escapeHtml(moistSpec));
+      html = html.replace('{{STD_DENSITY_COUNT}}', escapeHtml(data.stdDensityCount || ''));
+      html = html.replace('{{STD_MOIST_COUNT}}', escapeHtml(data.stdMoistCount || ''));
+      html = html.replace('{{TRANS_DEPTH}}', escapeHtml(data.transDepthIn || ''));
+      html = html.replace('{{GAUGE_NO}}', escapeHtml(data.gaugeNo || ''));
 
-            // Generate PDF using Puppeteer
-            console.log('Launching Puppeteer for density PDF generation...');
-            const browser = await puppeteer.launch({
-              headless: true,
-              args: ['--no-sandbox', '--disable-setuid-sandbox']
-            });
-            
-            try {
-              const page = await browser.newPage();
-              
-              // Capture console errors
-              const consoleErrors = [];
-              page.on('console', msg => {
-                if (msg.type() === 'error') {
-                  consoleErrors.push(msg.text());
-                }
-              });
-              
-              // Capture page errors
-              page.on('pageerror', error => {
-                consoleErrors.push(`Page error: ${error.message}`);
-              });
-              
-              // Set viewport to match Letter size (8.5 x 11 inches at 96 DPI)
-              await page.setViewport({
-                width: 816,  // 8.5 inches * 96 DPI
-                height: 1056, // 11 inches * 96 DPI
-                deviceScaleFactor: 1
-              });
-              
-              // Set content and wait for it to load
-              await page.setContent(html, { waitUntil: 'load' });
-              
-              // Log any console errors
-              if (consoleErrors.length > 0) {
-                console.warn('Console errors during PDF generation:', consoleErrors);
-              }
-              
-              // Wait a bit to ensure all rendering is complete
-              await new Promise(resolve => setTimeout(resolve, 1000));
-              
-              // Generate PDF
-              const pdf = await page.pdf({
-                format: 'Letter',
-                printBackground: true,
-                margin: { top: '0', right: '0', bottom: '0', left: '0' },
-                preferCSSPageSize: false
-              });
+      // Replace method checkboxes
+      html = html.replace('{{METHOD_D2922}}', data.methodD2922 ? 'checked' : '');
+      html = html.replace('{{METHOD_D3017}}', data.methodD3017 ? 'checked' : '');
+      html = html.replace('{{METHOD_D698}}', data.methodD698 ? 'checked' : '');
 
-              await browser.close();
+      // Replace footer placeholders
+      html = html.replace('{{REMARKS}}', escapeHtml(data.remarks || ''));
+      html = html.replace('{{TECH_NAME}}', escapeHtml(data.techName || task.assignedTechnicianName || ''));
+      html = html.replace('{{TIME}}', escapeHtml(data.timeStr || ''));
 
-              if (!pdf || pdf.length === 0) {
-                console.error('PDF buffer is empty');
-                return res.status(500).json({ error: 'Failed to generate PDF: Empty buffer' });
-              }
-
-              // Convert to Buffer if it's not already (Puppeteer returns Uint8Array)
-              const pdfBuffer = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf);
-              
-              // Verify PDF starts with PDF header (check raw bytes)
-              const pdfHeader = pdfBuffer.slice(0, 4).toString('ascii');
-              if (pdfHeader !== '%PDF') {
-                console.error('Invalid PDF header:', pdfHeader);
-                console.error('First 50 bytes (hex):', pdfBuffer.slice(0, 50).toString('hex'));
-                console.error('First 50 bytes (ascii):', pdfBuffer.slice(0, 50).toString('ascii').replace(/[^\x20-\x7E]/g, '.'));
-                console.error('PDF buffer type:', typeof pdf, 'isBuffer:', Buffer.isBuffer(pdf));
-                console.error('PDF buffer length:', pdfBuffer.length);
-                // Try to see if it's HTML error page
-                const firstChars = pdfBuffer.slice(0, 100).toString('utf8');
-                if (firstChars.includes('<html') || firstChars.includes('<!DOCTYPE')) {
-                  console.error('Puppeteer returned HTML instead of PDF. HTML preview:', firstChars.substring(0, 200));
-                  return res.status(500).json({ error: 'Failed to generate PDF: Puppeteer returned HTML instead of PDF. Check server logs for details.' });
-                }
-                return res.status(500).json({ error: 'Failed to generate PDF: Invalid PDF format. Check server logs for details.' });
-              }
-
-              console.log(`PDF generated successfully, size: ${pdfBuffer.length} bytes`);
-              console.log(`PDF first bytes (hex): ${pdfBuffer.slice(0, 10).toString('hex')}`);
-              console.log(`PDF header: ${pdfHeader}`);
-              
-              // Determine field date for filename (use scheduledStartDate from task, or test date from report, or today)
-              const fieldDate = task.scheduledStartDate || data.testDate || new Date().toISOString().split('T')[0];
-              const isRegeneration = req.query.regenerate === 'true' || req.query.regen === 'true';
-              
-              // Save PDF to file system
-              let saveInfo = null;
-              let saveError = null;
-              try {
-                saveInfo = await saveReportPDF(
-                  task.projectNumber,
-                  'DENSITY_MEASUREMENT',
-                  fieldDate,
-                  pdfBuffer,
-                  isRegeneration
-                );
-                
-                if (saveInfo.saved) {
-                  console.log(`PDF saved: ${saveInfo.filePath}`);
-                } else if (saveInfo.saveError) {
-                  console.error('Error saving PDF to file:', saveInfo.saveError);
-                  saveError = saveInfo.saveError;
-                }
-              } catch (saveErr) {
-                console.error('Error saving PDF to file:', saveErr);
-                saveError = saveErr.message;
-                // Continue even if save fails - still return PDF to client
-              }
-              
-              // Return JSON response with save info and PDF as base64
-              res.status(200).json({
-                success: true,
-                saved: saveInfo ? saveInfo.saved : false,
-                savedPath: saveInfo ? saveInfo.savedPath : null,
-                fileName: saveInfo ? saveInfo.fileName : null,
-                sequence: saveInfo ? saveInfo.sequence : null,
-                isRevision: saveInfo ? saveInfo.isRevision : false,
-                revisionNumber: saveInfo ? saveInfo.revisionNumber : null,
-                downloadUrl: `/api/pdf/density/${taskId}/download?token=${encodeURIComponent(req.headers.authorization || '')}`,
-                saveError: saveError,
-                pdfBase64: pdfBuffer.toString('base64')
-              });
-            } catch (puppeteerError) {
-              await browser.close();
-              console.error('Puppeteer error:', puppeteerError);
-              throw puppeteerError;
-            }
-          } catch (innerErr) {
-            console.error('Error in PDF generation:', innerErr);
-            if (!res.headersSent) {
-              res.status(500).json({ error: 'Failed to generate PDF: ' + (innerErr.message || String(innerErr)) });
-            } else {
-              res.end();
-            }
+      // Generate PDF using Puppeteer
+      console.log('Launching Puppeteer for density PDF generation...');
+      const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+      });
+      
+      try {
+        const page = await browser.newPage();
+        
+        // Capture console errors
+        const consoleErrors = [];
+        page.on('console', msg => {
+          if (msg.type() === 'error') {
+            consoleErrors.push(msg.text());
           }
         });
+        
+        // Capture page errors
+        page.on('pageerror', error => {
+          consoleErrors.push(`Page error: ${error.message}`);
+        });
+        
+        // Set viewport to match Letter size (8.5 x 11 inches at 96 DPI)
+        await page.setViewport({
+          width: 816,  // 8.5 inches * 96 DPI
+          height: 1056, // 11 inches * 96 DPI
+          deviceScaleFactor: 1
+        });
+        
+        // Set content and wait for it to load
+        await page.setContent(html, { waitUntil: 'load' });
+        
+        // Log any console errors
+        if (consoleErrors.length > 0) {
+          console.warn('Console errors during PDF generation:', consoleErrors);
+        }
+        
+        // Wait a bit to ensure all rendering is complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Generate PDF
+        const pdf = await page.pdf({
+          format: 'Letter',
+          printBackground: true,
+          margin: { top: '0', right: '0', bottom: '0', left: '0' },
+          preferCSSPageSize: false
+        });
+
+        await browser.close();
+
+        if (!pdf || pdf.length === 0) {
+          console.error('PDF buffer is empty');
+          return res.status(500).json({ error: 'Failed to generate PDF: Empty buffer' });
+        }
+
+        // Convert to Buffer if it's not already (Puppeteer returns Uint8Array)
+        const pdfBuffer = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf);
+        
+        // Verify PDF starts with PDF header (check raw bytes)
+        const pdfHeader = pdfBuffer.slice(0, 4).toString('ascii');
+        if (pdfHeader !== '%PDF') {
+          console.error('Invalid PDF header:', pdfHeader);
+          console.error('First 50 bytes (hex):', pdfBuffer.slice(0, 50).toString('hex'));
+          console.error('First 50 bytes (ascii):', pdfBuffer.slice(0, 50).toString('ascii').replace(/[^\x20-\x7E]/g, '.'));
+          console.error('PDF buffer type:', typeof pdf, 'isBuffer:', Buffer.isBuffer(pdf));
+          console.error('PDF buffer length:', pdfBuffer.length);
+          // Try to see if it's HTML error page
+          const firstChars = pdfBuffer.slice(0, 100).toString('utf8');
+          if (firstChars.includes('<html') || firstChars.includes('<!DOCTYPE')) {
+            console.error('Puppeteer returned HTML instead of PDF. HTML preview:', firstChars.substring(0, 200));
+            return res.status(500).json({ error: 'Failed to generate PDF: Puppeteer returned HTML instead of PDF. Check server logs for details.' });
+          }
+          return res.status(500).json({ error: 'Failed to generate PDF: Invalid PDF format. Check server logs for details.' });
+        }
+
+        console.log(`PDF generated successfully, size: ${pdfBuffer.length} bytes`);
+        console.log(`PDF first bytes (hex): ${pdfBuffer.slice(0, 10).toString('hex')}`);
+        console.log(`PDF header: ${pdfHeader}`);
+        
+        // Determine field date for filename (use scheduledStartDate from task, or test date from report, or today)
+        const fieldDate = task.scheduledStartDate || data.datePerformed || new Date().toISOString().split('T')[0];
+        const isRegeneration = req.query.regenerate === 'true' || req.query.regen === 'true';
+        
+        // Save PDF to file system
+        let saveInfo = null;
+        let saveError = null;
+        try {
+          saveInfo = await saveReportPDF(
+            task.projectNumber,
+            'DENSITY_MEASUREMENT',
+            fieldDate,
+            pdfBuffer,
+            isRegeneration
+          );
+          
+          if (saveInfo.saved) {
+            console.log(`PDF saved: ${saveInfo.filePath}`);
+          } else if (saveInfo.saveError) {
+            console.error('Error saving PDF to file:', saveInfo.saveError);
+            saveError = saveInfo.saveError;
+          }
+        } catch (saveErr) {
+          console.error('Error saving PDF to file:', saveErr);
+          saveError = saveErr.message;
+          // Continue even if save fails - still return PDF to client
+        }
+        
+        // Return JSON response with save info and PDF as base64
+        res.status(200).json({
+          success: true,
+          saved: saveInfo ? saveInfo.saved : false,
+          savedPath: saveInfo ? saveInfo.savedPath : null,
+          fileName: saveInfo ? saveInfo.fileName : null,
+          sequence: saveInfo ? saveInfo.sequence : null,
+          isRevision: saveInfo ? saveInfo.isRevision : false,
+          revisionNumber: saveInfo ? saveInfo.revisionNumber : null,
+          downloadUrl: `/api/pdf/density/${taskId}/download?token=${encodeURIComponent(req.headers.authorization || '')}`,
+          saveError: saveError,
+          pdfBase64: pdfBuffer.toString('base64')
+        });
+      } catch (puppeteerError) {
+        await browser.close();
+        console.error('Puppeteer error:', puppeteerError);
+        throw puppeteerError;
       }
-    );
+    } catch (err) {
+      console.error('Error generating density PDF:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to generate PDF: ' + (err.message || String(err)) });
+      } else {
+        res.end();
+      }
+    }
   } catch (err) {
-    console.error('Error generating density PDF:', err);
+    console.error('Error in density PDF route:', err);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to generate PDF: ' + (err.message || String(err)) });
+      res.status(500).json({ error: 'Database error: ' + (err.message || String(err)) });
     } else {
       res.end();
     }
@@ -1027,25 +1156,53 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
 
 // Generate PDF for Rebar Report
 router.get('/rebar/:taskId', authenticate, async (req, res) => {
-  const taskId = req.params.taskId;
-
   try {
+    const taskId = parseInt(req.params.taskId);
+
     // Get task and project info
-    const task = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT t.*, p.projectName, p.projectNumber,
-         u.name as assignedTechnicianName
-         FROM tasks t
-         INNER JOIN projects p ON t.projectId = p.id
-         LEFT JOIN users u ON t.assignedTechnicianId = u.id
-         WHERE t.id = ? AND t.taskType = 'REBAR'`,
-        [taskId],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
+    let task;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          projects:project_id(project_name, project_number),
+          users:assigned_technician_id(name)
+        `)
+        .eq('id', taskId)
+        .eq('task_type', 'REBAR')
+        .single();
+      
+      if (error || !data) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+      
+      task = {
+        ...data,
+        projectName: data.projects?.project_name,
+        projectNumber: data.projects?.project_number,
+        assignedTechnicianName: data.users?.name,
+        projects: undefined,
+        users: undefined
+      };
+    } else {
+      const sqliteDb = require('../database');
+      task = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.*, p.projectName, p.projectNumber,
+           u.name as assignedTechnicianName
+           FROM tasks t
+           INNER JOIN projects p ON t.projectId = p.id
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           WHERE t.id = ? AND t.taskType = 'REBAR'`,
+          [taskId],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
+          }
+        );
+      });
+    }
 
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
@@ -1057,16 +1214,13 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
     }
 
     // Get rebar report data
-    db.get('SELECT * FROM rebar_reports WHERE taskId = ?', [taskId], async (err, data) => {
-      if (err) {
-        console.error('Database error fetching rebar report:', err);
-        return res.status(500).json({ error: 'Database error' });
-      }
-      if (!data) {
-        return res.status(404).json({ error: 'No report data found. Please save the form first.' });
-      }
+    const data = await db.get('rebar_reports', { taskId });
+    
+    if (!data) {
+      return res.status(404).json({ error: 'No report data found. Please save the form first.' });
+    }
 
-      try {
+    try {
         // Read HTML template
         const templatePath = path.join(__dirname, '..', 'templates', 'rebar-report.html');
         if (!fs.existsSync(templatePath)) {

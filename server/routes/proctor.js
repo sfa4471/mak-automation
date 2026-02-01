@@ -3,7 +3,8 @@ const router = express.Router();
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs');
-const db = require('../database');
+const db = require('../db');
+const { supabase, isAvailable } = require('../db/supabase');
 const { authenticate } = require('../middleware/auth');
 const { getPDFSavePath, savePDFToFile } = require('../utils/pdfFileManager');
 const { body, validationResult } = require('express-validator');
@@ -747,81 +748,130 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
 });
 
 // Get Proctor data by taskId
-router.get('/task/:taskId', authenticate, (req, res) => {
-  const taskId = req.params.taskId;
+router.get('/task/:taskId', authenticate, async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.taskId);
 
-  // Check task access
-  db.get(
-    `SELECT t.*, p.projectName, p.projectNumber
-     FROM tasks t
-     INNER JOIN projects p ON t.projectId = p.id
-     WHERE t.id = ? AND t.taskType = 'PROCTOR'`,
-    [taskId],
-    (err, task) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      if (!task) {
+    // Check task access
+    let task;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          projects:project_id(project_name, project_number)
+        `)
+        .eq('id', taskId)
+        .eq('task_type', 'PROCTOR')
+        .single();
+      
+      if (error || !data) {
         return res.status(404).json({ error: 'Task not found' });
       }
-
-      // Check access
-      if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-
-      // Get Proctor data
-      db.get('SELECT * FROM proctor_data WHERE taskId = ?', [taskId], (err, data) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-
-        if (data) {
-          // Parse JSON fields
-          try {
-            data.proctorPoints = data.proctorPoints ? JSON.parse(data.proctorPoints) : [];
-            data.zavPoints = data.zavPoints ? JSON.parse(data.zavPoints) : [];
-            data.passing200 = data.passing200 ? JSON.parse(data.passing200) : [];
-          } catch (e) {
-            data.proctorPoints = [];
-            data.zavPoints = [];
-            data.passing200 = [];
+      
+      task = {
+        ...data,
+        projectName: data.projects?.project_name,
+        projectNumber: data.projects?.project_number,
+        projects: undefined
+      };
+    } else {
+      const sqliteDb = require('../database');
+      task = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.*, p.projectName, p.projectNumber
+           FROM tasks t
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.id = ? AND t.taskType = 'PROCTOR'`,
+          [taskId],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
           }
-          // Ensure passing200SummaryPct is included in response (fallback to percentPassing200 for backward compatibility)
-          if (!data.passing200SummaryPct && data.percentPassing200) {
-            data.passing200SummaryPct = data.percentPassing200;
-          }
-          res.json(data);
-        } else {
-          // Return empty structure with project info
-          res.json({
-            taskId: parseInt(taskId),
-            projectName: task.projectName || '',
-            projectNumber: task.projectNumber || '',
-            sampledBy: 'MAK Lonestar Consulting, LLC',
-            testMethod: 'ASTM D698',
-            client: '',
-            soilClassification: '',
-            maximumDryDensityPcf: '',
-            optimumMoisturePercent: '',
-            liquidLimitLL: '',
-            plasticLimit: '',
-            plasticityIndex: '',
-            sampleDate: '',
-            calculatedBy: '',
-            reviewedBy: '',
-            checkedBy: '',
-            percentPassing200: '',
-            passing200: [],
-            passing200SummaryPct: '',
-            specificGravityG: '',
-            proctorPoints: [],
-            zavPoints: []
-          });
-        }
+        );
       });
     }
-  );
+
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    // Check access
+    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get Proctor data
+    const data = await db.get('proctor_data', { taskId });
+
+    if (data) {
+      // Parse JSON fields
+      if (typeof data.proctorPoints === 'string') {
+        try {
+          data.proctorPoints = JSON.parse(data.proctorPoints || '[]');
+        } catch (e) {
+          data.proctorPoints = [];
+        }
+      } else {
+        data.proctorPoints = data.proctorPoints || [];
+      }
+      
+      if (typeof data.zavPoints === 'string') {
+        try {
+          data.zavPoints = JSON.parse(data.zavPoints || '[]');
+        } catch (e) {
+          data.zavPoints = [];
+        }
+      } else {
+        data.zavPoints = data.zavPoints || [];
+      }
+      
+      if (typeof data.passing200 === 'string') {
+        try {
+          data.passing200 = JSON.parse(data.passing200 || '[]');
+        } catch (e) {
+          data.passing200 = [];
+        }
+      } else {
+        data.passing200 = data.passing200 || [];
+      }
+      
+      // Ensure passing200SummaryPct is included in response (fallback to percentPassing200 for backward compatibility)
+      if (!data.passing200SummaryPct && data.percentPassing200) {
+        data.passing200SummaryPct = data.percentPassing200;
+      }
+      res.json(data);
+    } else {
+      // Return empty structure with project info
+      res.json({
+        taskId: parseInt(taskId),
+        projectName: task.projectName || '',
+        projectNumber: task.projectNumber || '',
+        sampledBy: 'MAK Lonestar Consulting, LLC',
+        testMethod: 'ASTM D698',
+        client: '',
+        soilClassification: '',
+        maximumDryDensityPcf: '',
+        optimumMoisturePercent: '',
+        liquidLimitLL: '',
+        plasticLimit: '',
+        plasticityIndex: '',
+        sampleDate: '',
+        calculatedBy: '',
+        reviewedBy: '',
+        checkedBy: '',
+        percentPassing200: '',
+        passing200: [],
+        passing200SummaryPct: '',
+        specificGravityG: '',
+        proctorPoints: [],
+        zavPoints: []
+      });
+    }
+  } catch (err) {
+    console.error('Error fetching Proctor data:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Save Proctor data

@@ -4,6 +4,37 @@ const path = require('path');
 const os = require('os');
 require('dotenv').config();
 
+// ============================================================================
+// STARTUP CONFIGURATION VALIDATION
+// ============================================================================
+const { validateConfiguration } = require('./db/supabase');
+
+// Check if Supabase is required (default: optional, fallback to SQLite)
+const REQUIRE_SUPABASE = process.env.REQUIRE_SUPABASE === 'true' || 
+                         process.env.REQUIRE_SUPABASE === '1';
+
+if (REQUIRE_SUPABASE) {
+  console.log('🔍 Validating Supabase configuration (required)...\n');
+  try {
+    validateConfiguration(true); // Will throw if invalid
+    console.log('✅ Supabase configuration validated successfully\n');
+  } catch (error) {
+    console.error(error.message);
+    console.error('\n💡 To make Supabase optional, remove REQUIRE_SUPABASE from .env');
+    console.error('   The application will fall back to SQLite if Supabase is not configured.\n');
+    process.exit(1); // Fail fast
+  }
+} else {
+  // Optional validation - just check and warn
+  console.log('🔍 Checking Supabase configuration (optional)...\n');
+  const validation = validateConfiguration(false);
+  if (validation.isValid) {
+    console.log('✅ Supabase configuration found\n');
+  } else {
+    console.log('ℹ️  Supabase not configured - will use SQLite fallback\n');
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
