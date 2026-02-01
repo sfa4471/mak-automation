@@ -1,28 +1,33 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute from './components/ProtectedRoute';
+import LoadingSpinner from './components/LoadingSpinner';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import TechnicianDashboard from './components/TechnicianDashboard';
-import TaskDetails from './components/technician/TaskDetails';
-import CreateProject from './components/admin/CreateProject';
-import ManageTechnicians from './components/admin/ManageTechnicians';
-import AssignWorkPackage from './components/admin/AssignWorkPackage';
-import TasksDashboard from './components/admin/TasksDashboard';
-import CreateTask from './components/admin/CreateTask';
-import ProjectDetails from './components/admin/ProjectDetails';
-import WP1Form from './components/WP1Form';
-import DensityReportForm from './components/DensityReportForm';
-import RebarForm from './components/RebarForm';
-import ProctorForm from './components/ProctorForm';
-import ProctorSummary from './components/ProctorSummary';
 import './App.css';
+
+// Lazy load heavy components for code splitting
+const TaskDetails = lazy(() => import('./components/technician/TaskDetails'));
+const CreateProject = lazy(() => import('./components/admin/CreateProject'));
+const ManageTechnicians = lazy(() => import('./components/admin/ManageTechnicians'));
+const AssignWorkPackage = lazy(() => import('./components/admin/AssignWorkPackage'));
+const TasksDashboard = lazy(() => import('./components/admin/TasksDashboard'));
+const CreateTask = lazy(() => import('./components/admin/CreateTask'));
+const ProjectDetails = lazy(() => import('./components/admin/ProjectDetails'));
+const WP1Form = lazy(() => import('./components/WP1Form'));
+const DensityReportForm = lazy(() => import('./components/DensityReportForm'));
+const RebarForm = lazy(() => import('./components/RebarForm'));
+const ProctorForm = lazy(() => import('./components/ProctorForm'));
+const ProctorSummary = lazy(() => import('./components/ProctorSummary'));
 
 function App() {
   return (
-    <AuthProvider>
-      <Router>
+    <ErrorBoundary>
+      <AuthProvider>
+        <Router>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
@@ -45,7 +50,9 @@ function App() {
             path="/technician/task/:id/details"
             element={
               <ProtectedRoute>
-                <TaskDetails />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading task details..." />}>
+                  <TaskDetails />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -53,7 +60,9 @@ function App() {
             path="/admin/create-project"
             element={
               <ProtectedRoute requireAdmin>
-                <CreateProject />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading..." />}>
+                  <CreateProject />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -61,7 +70,9 @@ function App() {
             path="/admin/technicians"
             element={
               <ProtectedRoute requireAdmin>
-                <ManageTechnicians />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading..." />}>
+                  <ManageTechnicians />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -69,7 +80,9 @@ function App() {
             path="/admin/assign/:id"
             element={
               <ProtectedRoute requireAdmin>
-                <AssignWorkPackage />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading..." />}>
+                  <AssignWorkPackage />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -77,7 +90,9 @@ function App() {
             path="/workpackage/:id/wp1"
             element={
               <ProtectedRoute>
-                <WP1Form />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading form..." />}>
+                  <WP1Form />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -85,7 +100,9 @@ function App() {
             path="/admin/tasks"
             element={
               <ProtectedRoute requireAdmin>
-                <TasksDashboard />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading tasks..." />}>
+                  <TasksDashboard />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -93,7 +110,9 @@ function App() {
             path="/admin/create-task/:projectId"
             element={
               <ProtectedRoute requireAdmin>
-                <CreateTask />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading..." />}>
+                  <CreateTask />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -101,7 +120,9 @@ function App() {
             path="/task/:taskId/edit"
             element={
               <ProtectedRoute requireAdmin>
-                <CreateTask />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading..." />}>
+                  <CreateTask />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -109,7 +130,9 @@ function App() {
             path="/admin/projects/:id/details"
             element={
               <ProtectedRoute requireAdmin>
-                <ProjectDetails />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading project details..." />}>
+                  <ProjectDetails />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -117,7 +140,9 @@ function App() {
             path="/task/:id/wp1"
             element={
               <ProtectedRoute>
-                <WP1Form />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading form..." />}>
+                  <WP1Form />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -125,7 +150,9 @@ function App() {
             path="/task/:id/density"
             element={
               <ProtectedRoute>
-                <DensityReportForm />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading form..." />}>
+                  <DensityReportForm />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -133,7 +160,9 @@ function App() {
             path="/task/:id/rebar"
             element={
               <ProtectedRoute>
-                <RebarForm />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading form..." />}>
+                  <RebarForm />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -141,7 +170,9 @@ function App() {
             path="/task/:id/proctor"
             element={
               <ProtectedRoute>
-                <ProctorForm />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading form..." />}>
+                  <ProctorForm />
+                </Suspense>
               </ProtectedRoute>
             }
           />
@@ -149,14 +180,17 @@ function App() {
             path="/task/:id/proctor/summary"
             element={
               <ProtectedRoute>
-                <ProctorSummary />
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading summary..." />}>
+                  <ProctorSummary />
+                </Suspense>
               </ProtectedRoute>
             }
           />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
-      </Router>
-    </AuthProvider>
+        </Router>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

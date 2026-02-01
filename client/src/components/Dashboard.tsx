@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
+import LoadingSpinner from './LoadingSpinner';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
@@ -69,7 +70,7 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const getStatusLabel = (status: string): string => {
+  const getStatusLabel = useCallback((status: string): string => {
     const statusMap: { [key: string]: string } = {
       'Draft': 'Draft',
       'ASSIGNED': 'Assigned',
@@ -83,9 +84,9 @@ const Dashboard: React.FC = () => {
       'REJECTED_NEEDS_FIX': 'Rejected'
     };
     return statusMap[status] || status;
-  };
+  }, []);
 
-  const getStatusClass = (status: string): string => {
+  const getStatusClass = useCallback((status: string): string => {
     const classMap: { [key: string]: string } = {
       'Draft': 'status-draft',
       'ASSIGNED': 'status-assigned',
@@ -99,9 +100,9 @@ const Dashboard: React.FC = () => {
       'REJECTED_NEEDS_FIX': 'status-rejected'
     };
     return classMap[status] || 'status-default';
-  };
+  }, []);
 
-  const getTaskSummary = (projectId: number): string => {
+  const getTaskSummary = useCallback((projectId: number): string => {
     const projectTasks = tasks[projectId] || [];
     const totalTasks = projectTasks.length;
     const readyForReview = projectTasks.filter(t => t.status === 'READY_FOR_REVIEW').length;
@@ -111,9 +112,9 @@ const Dashboard: React.FC = () => {
       return `${totalTasks} task${totalTasks !== 1 ? 's' : ''} · ${readyForReview} ready for review`;
     }
     return `${totalTasks} task${totalTasks !== 1 ? 's' : ''}`;
-  };
+  }, [tasks]);
 
-  const toggleProject = (projectId: number) => {
+  const toggleProject = useCallback((projectId: number) => {
     setExpandedProjects(prev => {
       const newSet = new Set(prev);
       if (newSet.has(projectId)) {
@@ -123,17 +124,17 @@ const Dashboard: React.FC = () => {
       }
       return newSet;
     });
-  };
+  }, []);
 
-  const handleWorkPackageClick = (wp: WorkPackage) => {
+  const handleWorkPackageClick = useCallback((wp: WorkPackage) => {
     if (wp.type === 'WP1') {
       navigate(`/workpackage/${wp.id}/wp1`);
     } else {
       alert('This work package is not yet implemented');
     }
-  };
+  }, [navigate]);
 
-  const handleTaskClick = (task: Task) => {
+  const handleTaskClick = useCallback((task: Task) => {
     if (task.taskType === 'COMPRESSIVE_STRENGTH') {
       navigate(`/task/${task.id}/wp1`);
     } else if (task.taskType === 'DENSITY_MEASUREMENT') {
@@ -145,9 +146,9 @@ const Dashboard: React.FC = () => {
     } else {
       alert('This task type is not yet implemented');
     }
-  };
+  }, [navigate]);
 
-  const handleClearAllNotifications = async () => {
+  const handleClearAllNotifications = useCallback(async () => {
     if (!window.confirm('Clear all notifications? This will mark them all as read.')) {
       return;
     }
@@ -159,10 +160,10 @@ const Dashboard: React.FC = () => {
       console.error('Error clearing notifications:', error);
       alert('Failed to clear notifications. Please try again.');
     }
-  };
+  }, []);
 
   if (loading) {
-    return <div className="dashboard-loading">Loading...</div>;
+    return <LoadingSpinner fullScreen message="Loading dashboard..." />;
   }
 
   return (
@@ -173,8 +174,9 @@ const Dashboard: React.FC = () => {
             src={encodeURI('/MAK logo_consulting.jpg')}
             alt="MAK Lone Star Consulting" 
             className="company-logo"
+            loading="lazy"
+            decoding="async"
             onError={(e) => {
-              console.error('Logo image failed to load. Path:', e.currentTarget.src);
               const target = e.target as HTMLImageElement;
               target.style.display = 'none';
               const h1 = target.parentElement?.querySelector('h1');
@@ -183,7 +185,6 @@ const Dashboard: React.FC = () => {
               }
             }}
             onLoad={() => {
-              console.log('Logo image loaded successfully');
               const h1 = document.querySelector('.dashboard-header .header-logo h1');
               if (h1) {
                 (h1 as HTMLElement).style.display = 'none';
@@ -358,6 +359,16 @@ const Dashboard: React.FC = () => {
                   <div 
                     className="project-header-collapsed"
                     onClick={() => toggleProject(project.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleProject(project.id);
+                      }
+                    }}
+                    aria-expanded={isExpanded}
+                    aria-controls={`project-content-${project.id}`}
                   >
                     <div className="project-header-content">
                       <div className="project-identifier">
@@ -395,7 +406,7 @@ const Dashboard: React.FC = () => {
                   </div>
                   
                   {isExpanded && (
-                    <div className="project-content">
+                    <div className="project-content" id={`project-content-${project.id}`}>
                       {projectTasks.length > 0 ? (
                         <div className="tasks-list">
                           {projectTasks.map((task) => (
@@ -403,6 +414,15 @@ const Dashboard: React.FC = () => {
                               key={task.id}
                               className="task-item"
                               onClick={() => handleTaskClick(task)}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  handleTaskClick(task);
+                                }
+                              }}
+                              aria-label={`Task: ${taskTypeLabel(task)}`}
                             >
                               <div className="task-status-badge-container">
                                 <span className={`task-status-badge ${getStatusClass(task.status)}`}>

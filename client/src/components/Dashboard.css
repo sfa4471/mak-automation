@@ -373,6 +373,84 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 15px;
+    padding: 15px;
+  }
+
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .user-info,
+  .user-role {
+    font-size: 12px;
+  }
+
+  .dashboard-content {
+    padding: 15px;
+  }
+
+  .dashboard-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .primary-button,
+  .secondary-button {
+    width: 100%;
+    padding: 14px 20px;
+  }
+
+  .project-header-collapsed {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 15px;
+  }
+
+  .project-header-content {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .project-summary {
+    margin-left: 0;
+    font-size: 12px;
+  }
+
+  .project-header-actions {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .project-details-button,
+  .create-task-button-primary {
+    flex: 1;
+    min-width: 120px;
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+
+  .task-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .task-status-badge-container {
+    align-self: flex-start;
+  }
+
+  .edit-task-button-secondary {
+    width: 100%;
+    margin-left: 0;
+    margin-top: 8px;
   }
 
   .work-package-item {
@@ -382,6 +460,39 @@
 
   .wp-info {
     width: 100%;
+  }
+
+  .notifications-container {
+    width: 100%;
+  }
+
+  .notifications-container > div {
+    width: calc(100vw - 30px);
+    max-width: 350px;
+    right: 15px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-header .header-logo img.company-logo {
+    max-height: 40px;
+    max-width: 150px;
+  }
+
+  .dashboard-header h1 {
+    font-size: 18px;
+  }
+
+  .projects-list h2 {
+    font-size: 20px;
+  }
+
+  .project-number-primary {
+    font-size: 14px;
+  }
+
+  .project-name-secondary {
+    font-size: 12px;
   }
 }
 

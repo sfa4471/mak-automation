@@ -83,7 +83,7 @@ const AssignWorkPackage: React.FC = () => {
               required
             >
               <option value="">Select a technician...</option>
-              {technicians.map((tech) => (
+              {technicians.map((tech: User) => (
                 <option key={tech.id} value={tech.id}>
                   {tech.name} ({tech.email})
                 </option>

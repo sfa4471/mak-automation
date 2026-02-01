@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, memo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -8,7 +8,7 @@ interface ProjectHomeButtonProps {
   saving?: boolean;
 }
 
-const ProjectHomeButton: React.FC<ProjectHomeButtonProps> = ({
+const ProjectHomeButton: React.FC<ProjectHomeButtonProps> = memo(({
   projectId,
   onSave,
   saving = false
@@ -94,6 +94,8 @@ const ProjectHomeButton: React.FC<ProjectHomeButtonProps> = ({
       )}
     </>
   );
-};
+});
+
+ProjectHomeButton.displayName = 'ProjectHomeButton';
 
 export default ProjectHomeButton;

@@ -41,6 +41,9 @@ const Login: React.FC = () => {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
+              aria-required="true"
+              aria-invalid={error ? 'true' : 'false'}
+              aria-describedby={error ? 'login-error' : undefined}
             />
           </div>
           <div className="form-group">
@@ -52,10 +55,13 @@ const Login: React.FC = () => {
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete="current-password"
+              aria-required="true"
+              aria-invalid={error ? 'true' : 'false'}
+              aria-describedby={error ? 'login-error' : undefined}
             />
           </div>
-          {error && <div className="error-message">{error}</div>}
-          <button type="submit" disabled={loading} className="login-button">
+          {error && <div className="error-message" id="login-error" role="alert" aria-live="polite">{error}</div>}
+          <button type="submit" disabled={loading} className="login-button" aria-busy={loading}>
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
