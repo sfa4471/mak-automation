@@ -12,12 +12,19 @@
     "reset-password": "node reset-password.js",
     "migrate-db": "node server/migrate-database.js",
     "fix-status-constraint": "node server/fix-status-constraint.js",
-    "setup-mobile": "node setup-mobile-env.js"
+    "setup-mobile": "node setup-mobile-env.js",
+    "supabase:migrate": "node scripts/run-supabase-migration.js",
+    "supabase:verify": "node scripts/verify-supabase-tables.js",
+    "supabase:migrate-data": "node scripts/migrate-data-sqlite-to-supabase.js",
+    "supabase:setup": "node setup-supabase-env.js",
+    "supabase:verify-connection": "node verify-supabase.js",
+    "supabase:execute-and-verify": "node scripts/execute-and-verify-migration.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@supabase/supabase-js": "^2.93.3",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -25,6 +32,7 @@
     "express-validator": "^7.0.1",
     "jsonwebtoken": "^9.0.2",
     "pdfkit": "^0.14.0",
+    "pg": "^8.18.0",
     "puppeteer": "^24.34.0",
     "sqlite3": "^5.1.6"
   },
