@@ -57,30 +57,152 @@ async function generateProjectNumber() {
   const baseStart = (year - 2022) * 1000 + 1;
   
   try {
-    // Get or create counter for this year, then increment atomically
-    let counter = await db.get('project_counters', { year });
-    
-    if (!counter) {
-      // First project for this year - create counter with nextSeq = baseStart
-      const nextSeq = baseStart;
-      counter = await db.insert('project_counters', {
-        year,
-        nextSeq: nextSeq + 1
-      });
-      const projectNumber = `02-${year}-${nextSeq.toString().padStart(4, '0')}`;
+    if (db.isSupabase()) {
+      // Use Supabase with direct PostgreSQL operations
+      const { supabase } = require('../db/supabase');
+      
+      // Try to get existing counter
+      let { data: counter, error: getError } = await supabase
+        .from('project_counters')
+        .select('*')
+        .eq('year', year)
+        .single();
+      
+      let currentSeq;
+      
+      if (getError && getError.code === 'PGRST116') {
+        // Counter doesn't exist - create it
+        currentSeq = baseStart;
+        const { data: inserted, error: insertError } = await supabase
+          .from('project_counters')
+          .insert({
+            year: year,
+            next_seq: baseStart + 1,
+            updated_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+        
+        if (insertError) {
+          // If insert fails (race condition - another request created it), fetch it
+          const { data: retryCounter, error: retryError } = await supabase
+            .from('project_counters')
+            .select('*')
+            .eq('year', year)
+            .single();
+          
+          if (retryError) {
+            console.error('Error creating/retrieving project counter:', retryError);
+            throw new Error(`Failed to create project counter: ${retryError.message}`);
+          }
+          currentSeq = retryCounter.next_seq || baseStart;
+        }
+      } else if (getError) {
+        console.error('Error getting project counter:', getError);
+        throw new Error(`Failed to get project counter: ${getError.message}`);
+      } else {
+        // Counter exists
+        currentSeq = counter.next_seq || baseStart;
+      }
+      
+      // Increment atomically - use the current value, then update
+      const { data: updated, error: updateError } = await supabase
+        .from('project_counters')
+        .update({
+          next_seq: currentSeq + 1,
+          updated_at: new Date().toISOString()
+        })
+        .eq('year', year)
+        .select()
+        .single();
+      
+      if (updateError) {
+        console.error('Error updating project counter:', updateError);
+        throw new Error(`Failed to update project counter: ${updateError.message}`);
+      }
+      
+      const projectNumber = `02-${year}-${currentSeq.toString().padStart(4, '0')}`;
       return projectNumber;
     } else {
-      // Counter exists - use current value and increment atomically
-      const nextSeq = counter.nextSeq;
-      await db.update('project_counters', {
-        nextSeq: nextSeq + 1,
-        updatedAt: new Date().toISOString()
-      }, { year });
-      const projectNumber = `02-${year}-${nextSeq.toString().padStart(4, '0')}`;
+      // SQLite fallback - ensure table exists first
+      const sqliteDb = require('../database');
+      
+      // Check if table exists, create if not
+      await new Promise((resolve, reject) => {
+        sqliteDb.run(`
+          CREATE TABLE IF NOT EXISTS project_counters (
+            year INTEGER PRIMARY KEY,
+            nextSeq INTEGER NOT NULL DEFAULT 1,
+            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      // Get or create counter
+      let counter = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          'SELECT * FROM project_counters WHERE year = ?',
+          [year],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
+          }
+        );
+      });
+      
+      if (!counter) {
+        // Create counter - use INSERT OR IGNORE to handle race conditions
+        await new Promise((resolve, reject) => {
+          sqliteDb.run(
+            'INSERT OR IGNORE INTO project_counters (year, nextSeq) VALUES (?, ?)',
+            [year, baseStart + 1],
+            (err) => {
+              if (err) reject(err);
+              else resolve();
+            }
+          );
+        });
+        
+        // Re-fetch to get the actual value
+        counter = await new Promise((resolve, reject) => {
+          sqliteDb.get(
+            'SELECT * FROM project_counters WHERE year = ?',
+            [year],
+            (err, row) => {
+              if (err) reject(err);
+              else resolve(row || null);
+            }
+          );
+        });
+      }
+      
+      if (!counter) {
+        throw new Error('Failed to create or retrieve project counter');
+      }
+      
+      // Increment atomically
+      const currentSeq = counter.nextSeq || baseStart;
+      await new Promise((resolve, reject) => {
+        sqliteDb.run(
+          'UPDATE project_counters SET nextSeq = nextSeq + 1, updatedAt = CURRENT_TIMESTAMP WHERE year = ?',
+          [year],
+          (err) => {
+            if (err) reject(err);
+            else resolve();
+          }
+        );
+      });
+      
+      const projectNumber = `02-${year}-${currentSeq.toString().padStart(4, '0')}`;
       return projectNumber;
     }
   } catch (err) {
-    throw err;
+    console.error('Error in generateProjectNumber:', err);
+    console.error('Stack:', err.stack);
+    throw new Error(`Failed to generate project number: ${err.message}`);
   }
 }
 
@@ -124,7 +246,21 @@ router.post('/', authenticate, requireAdmin, [
       projectNumber = await generateProjectNumber();
     } catch (err) {
       console.error('Error generating project number:', err);
-      return res.status(500).json({ error: 'Database error: Failed to generate project number' });
+      console.error('Error details:', {
+        message: err.message,
+        stack: err.stack,
+        isSupabase: db.isSupabase()
+      });
+      
+      // Provide more helpful error message
+      let errorMessage = 'Database error: Failed to generate project number';
+      if (err.message && err.message.includes('relation') && err.message.includes('does not exist')) {
+        errorMessage = 'Database error: project_counters table does not exist. Please run database migrations.';
+      } else if (err.message) {
+        errorMessage = `Database error: ${err.message}`;
+      }
+      
+      return res.status(500).json({ error: errorMessage });
     }
 
     if (!projectNumber) {

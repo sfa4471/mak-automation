@@ -18,7 +18,8 @@
     "supabase:migrate-data": "node scripts/migrate-data-sqlite-to-supabase.js",
     "supabase:setup": "node setup-supabase-env.js",
     "supabase:verify-connection": "node verify-supabase.js",
-    "supabase:execute-and-verify": "node scripts/execute-and-verify-migration.js"
+    "supabase:execute-and-verify": "node scripts/execute-and-verify-migration.js",
+    "check-project-counters": "node scripts/check-project-counters.js"
   },
   "keywords": [],
   "author": "",
