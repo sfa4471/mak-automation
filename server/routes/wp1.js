@@ -29,7 +29,9 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         return res.status(404).json({ error: 'Task not found' });
       }
       
-      task = {
+      // Convert snake_case keys to camelCase for consistency
+      const { keysToCamelCase } = require('../db/supabase');
+      task = keysToCamelCase({
         ...data,
         projectName: data.projects?.project_name,
         projectNumber: data.projects?.project_number,
@@ -40,7 +42,7 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         specAirContentByVolume: data.projects?.spec_air_content_by_volume,
         soilSpecs: data.projects?.soil_specs,
         projects: undefined
-      };
+      });
     } else {
       const sqliteDb = require('../database');
       task = await new Promise((resolve, reject) => {
@@ -141,8 +143,11 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
     }
     
     // Verify task type
-    const actualTaskType = db.isSupabase() ? task.task_type : task.taskType;
-    if (actualTaskType !== 'COMPRESSIVE_STRENGTH') {
+    // IMPORTANT: db.get() returns camelCase keys (taskType) for both Supabase and SQLite
+    // The db adapter converts snake_case to camelCase automatically via keysToCamelCase()
+    // So we always use task.taskType, not task.task_type
+    const actualTaskType = task.taskType;
+    if (!actualTaskType || actualTaskType !== 'COMPRESSIVE_STRENGTH') {
       return res.status(400).json({ 
         error: `This endpoint is only for COMPRESSIVE_STRENGTH tasks. Current task type: ${actualTaskType || 'unknown'}. Please use the appropriate endpoint for ${actualTaskType || 'this task type'}.` 
       });
@@ -267,7 +272,24 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error('Error saving WP1 data:', err);
-    res.status(500).json({ error: 'Database error: ' + err.message });
+    console.error('Error details:', {
+      taskId,
+      errorMessage: err.message,
+      errorStack: err.stack,
+      requestBody: req.body
+    });
+    
+    // Provide more specific error messages
+    let errorMessage = 'Save failed. Please try again.';
+    if (err.message && err.message.includes('task type')) {
+      errorMessage = err.message;
+    } else if (err.message && err.message.includes('not found')) {
+      errorMessage = 'Task not found. Please refresh and try again.';
+    } else if (err.message && err.message.includes('Database error')) {
+      errorMessage = 'Database error occurred. Please try again or contact support.';
+    }
+    
+    res.status(500).json({ error: errorMessage });
   }
 });
 
