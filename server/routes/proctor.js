@@ -344,19 +344,45 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
     const isRegeneration = req.query.regenerate === 'true' || req.query.regen === 'true';
     
     // Get task and project information for file naming
-    const task = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT t.*, p.projectNumber, p.id as projectId, p.projectName
-         FROM tasks t
-         INNER JOIN projects p ON t.projectId = p.id
-         WHERE t.id = ? AND t.taskType = 'PROCTOR'`,
-        [taskId],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
+    let task;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          projects:project_id(project_name, project_number, id)
+        `)
+        .eq('id', taskId)
+        .eq('task_type', 'PROCTOR')
+        .single();
+      
+      if (error || !data) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+      
+      task = {
+        ...data,
+        projectName: data.projects?.project_name,
+        projectNumber: data.projects?.project_number,
+        projectId: data.projects?.id,
+        projects: undefined
+      };
+    } else {
+      const sqliteDb = require('../database');
+      task = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.*, p.projectNumber, p.id as projectId, p.projectName
+           FROM tasks t
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.id = ? AND t.taskType = 'PROCTOR'`,
+          [taskId],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
+          }
+        );
+      });
+    }
     
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
@@ -906,33 +932,65 @@ router.post('/task/:taskId', authenticate, [
   body('specificGravityG').optional().trim(),
   body('proctorPoints').optional().isArray(),
   body('zavPoints').optional().isArray()
-], (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
 
-  const taskId = req.params.taskId;
+    const taskId = req.params.taskId;
 
-  // Check task access
-  db.get(
-    `SELECT t.*, p.projectName, p.projectNumber
-     FROM tasks t
-     INNER JOIN projects p ON t.projectId = p.id
-     WHERE t.id = ? AND t.taskType = 'PROCTOR'`,
-    [taskId],
-    (err, task) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
+    // Check task access
+    let task;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          projects:project_id(project_name, project_number)
+        `)
+        .eq('id', taskId)
+        .eq('task_type', 'PROCTOR')
+        .single();
+      
+      if (error || !data) {
+        return res.status(404).json({ error: 'Task not found' });
       }
+      
+      task = {
+        ...data,
+        projectName: data.projects?.project_name,
+        projectNumber: data.projects?.project_number,
+        projects: undefined
+      };
+    } else {
+      const sqliteDb = require('../database');
+      task = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.*, p.projectName, p.projectNumber
+           FROM tasks t
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.id = ? AND t.taskType = 'PROCTOR'`,
+          [taskId],
+          (err, row) => {
+            if (err) {
+              return reject(err);
+            }
+            resolve(row || null);
+          }
+        );
+      });
+      
       if (!task) {
         return res.status(404).json({ error: 'Task not found' });
       }
+    }
 
-      // Check access
-      if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
+    // Check access
+    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
       const {
         projectName,
@@ -981,210 +1039,158 @@ router.post('/task/:taskId', authenticate, [
       const passing200Json = passing200 ? JSON.stringify(passing200) : null;
 
       // Check if record exists
-      db.get('SELECT id FROM proctor_data WHERE taskId = ?', [taskId], (err, existing) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
+      const existing = await db.get('proctor_data', { taskId: parseInt(taskId) });
+
+      const proctorData = {
+        taskId: parseInt(taskId),
+        projectName: projectName || null,
+        projectNumber: projectNumber || null,
+        sampledBy: sampledBy || null,
+        testMethod: testMethod || null,
+        client: client || null,
+        soilClassification: soilClassification || null,
+        description: null, // deprecated, set to NULL
+        maximumDryDensityPcf: maximumDryDensityPcf || null, // Keep old field for backward compatibility
+        optimumMoisturePercent: optimumMoisturePercent || null, // Keep old field for backward compatibility
+        optMoisturePct: finalOptMoisture, // Canonical field
+        maxDryDensityPcf: finalMaxDensity, // Canonical field
+        liquidLimitLL: liquidLimitLL || null,
+        plasticLimit: plasticLimit || null,
+        plasticityIndex: plasticityIndex || null,
+        sampleDate: sampleDate || null,
+        calculatedBy: calculatedBy || null,
+        reviewedBy: reviewedBy || null,
+        checkedBy: checkedBy || null,
+        percentPassing200: percentPassing200 || null,
+        passing200: passing200Json,
+        passing200SummaryPct: passing200SummaryPct || null,
+        specificGravityG: specificGravityG || null,
+        proctorPoints: proctorPointsJson,
+        zavPoints: zavPointsJson
+      };
+
+      let result;
+      if (existing) {
+        // Update
+        await db.update('proctor_data', proctorData, { taskId: parseInt(taskId) });
+        result = await db.get('proctor_data', { taskId: parseInt(taskId) });
+      } else {
+        // Insert
+        result = await db.insert('proctor_data', proctorData);
+      }
+
+      // Parse JSON fields
+      if (result) {
+        try {
+          result.proctorPoints = result.proctorPoints ? JSON.parse(result.proctorPoints) : [];
+          result.zavPoints = result.zavPoints ? JSON.parse(result.zavPoints) : [];
+          result.passing200 = result.passing200 ? JSON.parse(result.passing200) : [];
+        } catch (e) {
+          result.proctorPoints = [];
+          result.zavPoints = [];
+          result.passing200 = [];
         }
+      }
 
-        if (existing) {
-          // Update
-          db.run(
-            `UPDATE proctor_data SET
-             projectName = ?, projectNumber = ?, sampledBy = ?, testMethod = ?,
-             client = ?, soilClassification = ?, description = ?, maximumDryDensityPcf = ?,
-             optimumMoisturePercent = ?, optMoisturePct = ?, maxDryDensityPcf = ?,
-             liquidLimitLL = ?, plasticLimit = ?, plasticityIndex = ?,
-             sampleDate = ?, calculatedBy = ?, reviewedBy = ?, checkedBy = ?,
-             percentPassing200 = ?, passing200 = ?, passing200SummaryPct = ?, specificGravityG = ?, proctorPoints = ?,
-             zavPoints = ?, updatedAt = CURRENT_TIMESTAMP
-             WHERE taskId = ?`,
-            [
-              projectName || null,
-              projectNumber || null,
-              sampledBy || null,
-              testMethod || null,
-              client || null,
-              soilClassification || null,
-              null, // description - deprecated, set to NULL
-              maximumDryDensityPcf || null, // Keep old field for backward compatibility
-              optimumMoisturePercent || null, // Keep old field for backward compatibility
-              finalOptMoisture, // Canonical field
-              finalMaxDensity, // Canonical field
-              liquidLimitLL || null,
-              plasticLimit || null, // Add missing plasticLimit
-              plasticityIndex || null,
-              sampleDate || null,
-              calculatedBy || null,
-              reviewedBy || null,
-              checkedBy || null,
-              percentPassing200 || null,
-              passing200Json,
-              passing200SummaryPct || null,
-              specificGravityG || null,
-              proctorPointsJson,
-              zavPointsJson,
-              taskId
-            ],
-            function(err) {
-              if (err) {
-                console.error('Error updating proctor_data:', err);
-                return res.status(500).json({ error: 'Database error: ' + err.message });
-              }
-
-              // Return updated data
-              db.get('SELECT * FROM proctor_data WHERE taskId = ?', [taskId], (err, updated) => {
-                if (err) {
-                  return res.status(500).json({ error: 'Database error' });
-                }
-                if (updated) {
-                  try {
-                    updated.proctorPoints = updated.proctorPoints ? JSON.parse(updated.proctorPoints) : [];
-                    updated.zavPoints = updated.zavPoints ? JSON.parse(updated.zavPoints) : [];
-                    updated.passing200 = updated.passing200 ? JSON.parse(updated.passing200) : [];
-                  } catch (e) {
-                    updated.proctorPoints = [];
-                    updated.zavPoints = [];
-                    updated.passing200 = [];
-                  }
-                }
-                res.json(updated);
-              });
-            }
-          );
-        } else {
-          // Insert
-          db.run(
-            `INSERT INTO proctor_data (
-             taskId, projectName, projectNumber, sampledBy, testMethod,
-             client, soilClassification, description, maximumDryDensityPcf,
-             optimumMoisturePercent, optMoisturePct, maxDryDensityPcf,
-             liquidLimitLL, plasticLimit, plasticityIndex,
-             sampleDate, calculatedBy, reviewedBy, checkedBy,
-             percentPassing200, passing200, passing200SummaryPct, specificGravityG, proctorPoints, zavPoints
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              taskId,
-              projectName || null,
-              projectNumber || null,
-              sampledBy || null,
-              testMethod || null,
-              client || null,
-              soilClassification || null,
-              null, // description - deprecated, set to NULL
-              maximumDryDensityPcf || null, // Keep old field for backward compatibility
-              optimumMoisturePercent || null, // Keep old field for backward compatibility
-              finalOptMoisture, // Canonical field
-              finalMaxDensity, // Canonical field
-              liquidLimitLL || null,
-              plasticLimit || null,
-              plasticityIndex || null,
-              sampleDate || null,
-              calculatedBy || null,
-              reviewedBy || null,
-              checkedBy || null,
-              percentPassing200 || null,
-              passing200Json,
-              passing200SummaryPct || null,
-              specificGravityG || null,
-              proctorPointsJson,
-              zavPointsJson
-            ],
-            function(err) {
-              if (err) {
-                console.error('Error inserting proctor_data:', err);
-                return res.status(500).json({ error: 'Database error: ' + err.message });
-              }
-
-              // Return created data
-              db.get('SELECT * FROM proctor_data WHERE taskId = ?', [taskId], (err, created) => {
-                if (err) {
-                  return res.status(500).json({ error: 'Database error' });
-                }
-                if (created) {
-                  try {
-                    created.proctorPoints = created.proctorPoints ? JSON.parse(created.proctorPoints) : [];
-                    created.zavPoints = created.zavPoints ? JSON.parse(created.zavPoints) : [];
-                  } catch (e) {
-                    created.proctorPoints = [];
-                    created.zavPoints = [];
-                  }
-                }
-                res.status(201).json(created);
-              });
-            }
-          );
-        }
-      });
+      res.status(existing ? 200 : 201).json(result);
+    } catch (err) {
+      console.error('Error saving Proctor data:', err);
+      res.status(500).json({ error: 'Database error: ' + err.message });
     }
-  );
+  } catch (err) {
+    console.error('Error in Proctor save handler:', err);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
 });
 
 // Get Proctor data by projectId + proctorNo (for Density auto-fill)
-router.get('/project/:projectId/proctor/:proctorNo', authenticate, (req, res) => {
-  const projectId = req.params.projectId;
-  const proctorNo = parseInt(req.params.proctorNo);
+router.get('/project/:projectId/proctor/:proctorNo', authenticate, async (req, res) => {
+  try {
+    const projectId = req.params.projectId;
+    const proctorNo = parseInt(req.params.proctorNo);
 
-  // Check project access
-  db.get('SELECT * FROM projects WHERE id = ?', [projectId], (err, project) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
+    // Check project access
+    const project = await db.get('projects', { id: parseInt(projectId) });
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
     // Get Proctor task by projectId + proctorNo
-    db.get(
-      `SELECT t.id, t.proctorNo
-       FROM tasks t
-       WHERE t.projectId = ? AND t.taskType = 'PROCTOR' AND t.proctorNo = ?`,
-      [projectId, proctorNo],
-      (err, task) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        if (!task) {
-          return res.status(404).json({ error: `Proctor #${proctorNo} not found for this project` });
-        }
-
-        // Get Proctor data - use canonical fields with backward compatibility
-        db.get('SELECT optMoisturePct, maxDryDensityPcf, optimumMoisturePercent, maximumDryDensityPcf, soilClassification FROM proctor_data WHERE taskId = ?', [task.id], (err, data) => {
-          if (err) {
-            return res.status(500).json({ error: 'Database error' });
-          }
-
-          // Use canonical fields if available, otherwise fallback to old fields
-          const optMoisturePct = data?.optMoisturePct !== null && data?.optMoisturePct !== undefined
-            ? data.optMoisturePct
-            : (data?.optimumMoisturePercent ? parseFloat(data.optimumMoisturePercent) : null);
-          
-          const maxDryDensityPcf = data?.maxDryDensityPcf !== null && data?.maxDryDensityPcf !== undefined
-            ? data.maxDryDensityPcf
-            : (data?.maximumDryDensityPcf ? parseFloat(data.maximumDryDensityPcf) : null);
-
-          // Debug logging
-          console.log(`[Proctor API] Fetching Proctor #${proctorNo} for project ${projectId}:`, {
-            taskId: task.id,
-            optMoisturePct,
-            maxDryDensityPcf,
-            rawData: data
-          });
-
-          if (optMoisturePct !== null && maxDryDensityPcf !== null) {
-            res.json({
-              proctorNo: proctorNo,
-              optMoisturePct: optMoisturePct,
-              maxDryDensityPcf: maxDryDensityPcf,
-              soilClassification: data?.soilClassification || null,
-              soilClassificationText: data?.soilClassification || null
-            });
-          } else {
-            res.status(404).json({ error: `Proctor #${proctorNo} data not found. Please save the Proctor report first.` });
-          }
-        });
+    let task;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('id, proctor_no')
+        .eq('project_id', projectId)
+        .eq('task_type', 'PROCTOR')
+        .eq('proctor_no', proctorNo)
+        .single();
+      
+      if (error || !data) {
+        return res.status(404).json({ error: `Proctor #${proctorNo} not found for this project` });
       }
-    );
-  });
+      
+      task = {
+        id: data.id,
+        proctorNo: data.proctor_no
+      };
+    } else {
+      const sqliteDb = require('../database');
+      task = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.id, t.proctorNo
+           FROM tasks t
+           WHERE t.projectId = ? AND t.taskType = 'PROCTOR' AND t.proctorNo = ?`,
+          [projectId, proctorNo],
+          (err, row) => {
+            if (err) {
+              return reject(err);
+            }
+            resolve(row || null);
+          }
+        );
+      });
+      
+      if (!task) {
+        return res.status(404).json({ error: `Proctor #${proctorNo} not found for this project` });
+      }
+    }
+
+    // Get Proctor data - use canonical fields with backward compatibility
+    const data = await db.get('proctor_data', { taskId: task.id });
+
+    // Use canonical fields if available, otherwise fallback to old fields
+    const optMoisturePct = data?.optMoisturePct !== null && data?.optMoisturePct !== undefined
+      ? data.optMoisturePct
+      : (data?.optimumMoisturePercent ? parseFloat(data.optimumMoisturePercent) : null);
+    
+    const maxDryDensityPcf = data?.maxDryDensityPcf !== null && data?.maxDryDensityPcf !== undefined
+      ? data.maxDryDensityPcf
+      : (data?.maximumDryDensityPcf ? parseFloat(data.maximumDryDensityPcf) : null);
+
+    // Debug logging
+    console.log(`[Proctor API] Fetching Proctor #${proctorNo} for project ${projectId}:`, {
+      taskId: task.id,
+      optMoisturePct,
+      maxDryDensityPcf,
+      rawData: data
+    });
+
+    if (optMoisturePct !== null && maxDryDensityPcf !== null) {
+      res.json({
+        proctorNo: proctorNo,
+        optMoisturePct: optMoisturePct,
+        maxDryDensityPcf: maxDryDensityPcf,
+        soilClassification: data?.soilClassification || null,
+        soilClassificationText: data?.soilClassification || null
+      });
+    } else {
+      res.status(404).json({ error: `Proctor #${proctorNo} data not found. Please save the Proctor report first.` });
+    }
+  } catch (err) {
+    console.error('Error fetching Proctor data by projectId + proctorNo:', err);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
 });
 
 module.exports = router;
