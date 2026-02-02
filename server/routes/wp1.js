@@ -60,7 +60,9 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
     }
 
     if (!task) {
-      return res.status(404).json({ error: 'Task not found' });
+      return res.status(404).json({ 
+        error: 'Task not found or task type is not COMPRESSIVE_STRENGTH. This endpoint is only for COMPRESSIVE_STRENGTH tasks.' 
+      });
     }
 
     // Check access
@@ -141,7 +143,9 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
     // Verify task type
     const actualTaskType = db.isSupabase() ? task.task_type : task.taskType;
     if (actualTaskType !== 'COMPRESSIVE_STRENGTH') {
-      return res.status(400).json({ error: 'This endpoint is only for COMPRESSIVE_STRENGTH tasks' });
+      return res.status(400).json({ 
+        error: `This endpoint is only for COMPRESSIVE_STRENGTH tasks. Current task type: ${actualTaskType || 'unknown'}. Please use the appropriate endpoint for ${actualTaskType || 'this task type'}.` 
+      });
     }
 
     // Check access

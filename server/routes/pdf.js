@@ -56,8 +56,19 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
           .eq('task_type', 'COMPRESSIVE_STRENGTH')
           .single();
         
-        if (error || !data) {
-          return res.status(404).json({ error: 'Task not found' });
+        if (error) {
+          if (error.code === 'PGRST116') {
+            return res.status(404).json({ 
+              error: 'Task not found or task type is not COMPRESSIVE_STRENGTH. This endpoint is only for COMPRESSIVE_STRENGTH tasks.' 
+            });
+          }
+          return res.status(500).json({ error: 'Database error: ' + error.message });
+        }
+        
+        if (!data) {
+          return res.status(404).json({ 
+            error: 'Task not found or task type is not COMPRESSIVE_STRENGTH. This endpoint is only for COMPRESSIVE_STRENGTH tasks.' 
+          });
         }
         
         taskOrWp = {
@@ -94,7 +105,9 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
       }
 
       if (!taskOrWp) {
-        return res.status(404).json({ error: 'Task not found' });
+        return res.status(404).json({ 
+          error: 'Task not found or task type is not COMPRESSIVE_STRENGTH. This endpoint is only for COMPRESSIVE_STRENGTH tasks.' 
+        });
       }
 
       // Check access

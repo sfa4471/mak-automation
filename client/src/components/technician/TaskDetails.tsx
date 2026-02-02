@@ -36,12 +36,42 @@ const TaskDetails: React.FC = () => {
   };
 
   const handleDownloadPDF = async () => {
+    if (!task) {
+      alert('Task information not available');
+      return;
+    }
+
     try {
       const token = localStorage.getItem('token');
       // Get base URL (without /api)
       const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
       const baseUrl = apiBaseUrl.replace('/api', '');
-      const url = `${baseUrl}/api/pdf/task/${id}`;
+      
+      // Route to correct PDF endpoint based on task type
+      let url: string;
+      let filename: string;
+      
+      switch (task.taskType) {
+        case 'COMPRESSIVE_STRENGTH':
+          url = `${baseUrl}/api/pdf/wp1/${id}?type=task`;
+          filename = `compressive-strength-${task.projectNumber || id}.pdf`;
+          break;
+        case 'PROCTOR':
+          url = `${baseUrl}/api/proctor/${id}/pdf`;
+          filename = `proctor-${task.projectNumber || id}.pdf`;
+          break;
+        case 'DENSITY_MEASUREMENT':
+          url = `${baseUrl}/api/pdf/density/${id}`;
+          filename = `density-${task.projectNumber || id}.pdf`;
+          break;
+        case 'REBAR':
+          url = `${baseUrl}/api/pdf/rebar/${id}`;
+          filename = `rebar-${task.projectNumber || id}.pdf`;
+          break;
+        default:
+          alert(`PDF generation is not available for task type: ${task.taskType}`);
+          return;
+      }
       
       // Fetch PDF with authentication
       const response = await fetch(url, {
@@ -51,22 +81,49 @@ const TaskDetails: React.FC = () => {
       });
       
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || 'Failed to generate PDF');
+        const errorData = await response.json().catch(() => ({ error: await response.text() }));
+        const errorMessage = errorData.error || errorData.message || 'Failed to generate PDF';
+        throw new Error(errorMessage);
       }
       
-      // Create blob and download
-      const blob = await response.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = `task-work-order-${task?.projectNumber || id}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(blobUrl);
+      // Handle different response types (JSON with base64 or direct blob)
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        // JSON response with base64 PDF
+        const data = await response.json();
+        if (data.pdfBase64) {
+          const binaryString = atob(data.pdfBase64);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          const blob = new Blob([bytes], { type: 'application/pdf' });
+          const blobUrl = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(blobUrl);
+        } else {
+          throw new Error('PDF data not found in response');
+        }
+      } else {
+        // Direct PDF blob response
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(blobUrl);
+      }
     } catch (err: any) {
       alert('Failed to download PDF: ' + (err.message || 'Unknown error'));
+      console.error('PDF download error:', err);
     }
   };
 

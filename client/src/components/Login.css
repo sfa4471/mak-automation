@@ -96,3 +96,25 @@
   color: #999;
 }
 
+@media (max-width: 480px) {
+  .login-container {
+    padding: 15px;
+  }
+
+  .login-box {
+    padding: 30px 20px;
+  }
+
+  .login-box h1 {
+    font-size: 20px;
+  }
+
+  .login-box h2 {
+    font-size: 14px;
+  }
+
+  .form-group input,
+  .login-button {
+    font-size: 16px; /* Prevents zoom on iOS */
+  }
+}
