@@ -992,113 +992,109 @@ router.post('/task/:taskId', authenticate, [
       return res.status(403).json({ error: 'Access denied' });
     }
 
-      const {
-        projectName,
-        projectNumber,
-        sampledBy,
-        testMethod,
-        client,
-        soilClassification,
-        maximumDryDensityPcf,
-        optimumMoisturePercent,
-        // Canonical fields (preferred)
-        optMoisturePct,
-        maxDryDensityPcf,
-        liquidLimitLL,
-        plasticLimit,
-        plasticityIndex,
-        sampleDate,
-        calculatedBy,
-        reviewedBy,
-        checkedBy,
-        percentPassing200,
-        passing200,
-        passing200SummaryPct,
-        specificGravityG,
-        proctorPoints,
-        zavPoints
-      } = req.body;
+    const {
+      projectName,
+      projectNumber,
+      sampledBy,
+      testMethod,
+      client,
+      soilClassification,
+      maximumDryDensityPcf,
+      optimumMoisturePercent,
+      // Canonical fields (preferred)
+      optMoisturePct,
+      maxDryDensityPcf,
+      liquidLimitLL,
+      plasticLimit,
+      plasticityIndex,
+      sampleDate,
+      calculatedBy,
+      reviewedBy,
+      checkedBy,
+      percentPassing200,
+      passing200,
+      passing200SummaryPct,
+      specificGravityG,
+      proctorPoints,
+      zavPoints
+    } = req.body;
 
-      // Use canonical fields if provided, otherwise fallback to old field names
-      // Handle both number and string types
-      const canonicalOptMoisture = (optMoisturePct !== undefined && optMoisturePct !== null && optMoisturePct !== '')
-        ? (typeof optMoisturePct === 'number' ? optMoisturePct : parseFloat(optMoisturePct))
-        : (optimumMoisturePercent && optimumMoisturePercent !== '' ? parseFloat(optimumMoisturePercent) : null);
-      
-      const canonicalMaxDensity = (maxDryDensityPcf !== undefined && maxDryDensityPcf !== null && maxDryDensityPcf !== '')
-        ? (typeof maxDryDensityPcf === 'number' ? maxDryDensityPcf : parseFloat(maxDryDensityPcf))
-        : (maximumDryDensityPcf && maximumDryDensityPcf !== '' ? parseFloat(maximumDryDensityPcf) : null);
-      
-      // Validate parsed values (reject NaN)
-      const finalOptMoisture = (canonicalOptMoisture !== null && !isNaN(canonicalOptMoisture)) ? canonicalOptMoisture : null;
-      const finalMaxDensity = (canonicalMaxDensity !== null && !isNaN(canonicalMaxDensity)) ? canonicalMaxDensity : null;
+    // Use canonical fields if provided, otherwise fallback to old field names
+    // Handle both number and string types
+    const canonicalOptMoisture = (optMoisturePct !== undefined && optMoisturePct !== null && optMoisturePct !== '')
+      ? (typeof optMoisturePct === 'number' ? optMoisturePct : parseFloat(optMoisturePct))
+      : (optimumMoisturePercent && optimumMoisturePercent !== '' ? parseFloat(optimumMoisturePercent) : null);
+    
+    const canonicalMaxDensity = (maxDryDensityPcf !== undefined && maxDryDensityPcf !== null && maxDryDensityPcf !== '')
+      ? (typeof maxDryDensityPcf === 'number' ? maxDryDensityPcf : parseFloat(maxDryDensityPcf))
+      : (maximumDryDensityPcf && maximumDryDensityPcf !== '' ? parseFloat(maximumDryDensityPcf) : null);
+    
+    // Validate parsed values (reject NaN)
+    const finalOptMoisture = (canonicalOptMoisture !== null && !isNaN(canonicalOptMoisture)) ? canonicalOptMoisture : null;
+    const finalMaxDensity = (canonicalMaxDensity !== null && !isNaN(canonicalMaxDensity)) ? canonicalMaxDensity : null;
 
-      // Serialize arrays to JSON
-      const proctorPointsJson = proctorPoints ? JSON.stringify(proctorPoints) : null;
-      const zavPointsJson = zavPoints ? JSON.stringify(zavPoints) : null;
-      const passing200Json = passing200 ? JSON.stringify(passing200) : null;
+    // Serialize arrays to JSON
+    const proctorPointsJson = proctorPoints ? JSON.stringify(proctorPoints) : null;
+    const zavPointsJson = zavPoints ? JSON.stringify(zavPoints) : null;
+    const passing200Json = passing200 ? JSON.stringify(passing200) : null;
 
-      // Check if record exists
-      const existing = await db.get('proctor_data', { taskId: parseInt(taskId) });
+    // Check if record exists
+    const existing = await db.get('proctor_data', { taskId: parseInt(taskId) });
 
-      const proctorData = {
-        taskId: parseInt(taskId),
-        projectName: projectName || null,
-        projectNumber: projectNumber || null,
-        sampledBy: sampledBy || null,
-        testMethod: testMethod || null,
-        client: client || null,
-        soilClassification: soilClassification || null,
-        description: null, // deprecated, set to NULL
-        maximumDryDensityPcf: maximumDryDensityPcf || null, // Keep old field for backward compatibility
-        optimumMoisturePercent: optimumMoisturePercent || null, // Keep old field for backward compatibility
-        optMoisturePct: finalOptMoisture, // Canonical field
-        maxDryDensityPcf: finalMaxDensity, // Canonical field
-        liquidLimitLL: liquidLimitLL || null,
-        plasticLimit: plasticLimit || null,
-        plasticityIndex: plasticityIndex || null,
-        sampleDate: sampleDate || null,
-        calculatedBy: calculatedBy || null,
-        reviewedBy: reviewedBy || null,
-        checkedBy: checkedBy || null,
-        percentPassing200: percentPassing200 || null,
-        passing200: passing200Json,
-        passing200SummaryPct: passing200SummaryPct || null,
-        specificGravityG: specificGravityG || null,
-        proctorPoints: proctorPointsJson,
-        zavPoints: zavPointsJson
-      };
+    const proctorData = {
+      taskId: parseInt(taskId),
+      projectName: projectName || null,
+      projectNumber: projectNumber || null,
+      sampledBy: sampledBy || null,
+      testMethod: testMethod || null,
+      client: client || null,
+      soilClassification: soilClassification || null,
+      description: null, // deprecated, set to NULL
+      maximumDryDensityPcf: maximumDryDensityPcf || null, // Keep old field for backward compatibility
+      optimumMoisturePercent: optimumMoisturePercent || null, // Keep old field for backward compatibility
+      optMoisturePct: finalOptMoisture, // Canonical field
+      maxDryDensityPcf: finalMaxDensity, // Canonical field
+      liquidLimitLL: liquidLimitLL || null,
+      plasticLimit: plasticLimit || null,
+      plasticityIndex: plasticityIndex || null,
+      sampleDate: sampleDate || null,
+      calculatedBy: calculatedBy || null,
+      reviewedBy: reviewedBy || null,
+      checkedBy: checkedBy || null,
+      percentPassing200: percentPassing200 || null,
+      passing200: passing200Json,
+      passing200SummaryPct: passing200SummaryPct || null,
+      specificGravityG: specificGravityG || null,
+      proctorPoints: proctorPointsJson,
+      zavPoints: zavPointsJson
+    };
 
-      let result;
-      if (existing) {
-        // Update
-        await db.update('proctor_data', proctorData, { taskId: parseInt(taskId) });
-        result = await db.get('proctor_data', { taskId: parseInt(taskId) });
-      } else {
-        // Insert
-        result = await db.insert('proctor_data', proctorData);
-      }
-
-      // Parse JSON fields
-      if (result) {
-        try {
-          result.proctorPoints = result.proctorPoints ? JSON.parse(result.proctorPoints) : [];
-          result.zavPoints = result.zavPoints ? JSON.parse(result.zavPoints) : [];
-          result.passing200 = result.passing200 ? JSON.parse(result.passing200) : [];
-        } catch (e) {
-          result.proctorPoints = [];
-          result.zavPoints = [];
-          result.passing200 = [];
-        }
-      }
-
-      res.status(existing ? 200 : 201).json(result);
-    } catch (err) {
-      console.error('Error saving Proctor data:', err);
-      res.status(500).json({ error: 'Database error: ' + err.message });
+    let result;
+    if (existing) {
+      // Update
+      await db.update('proctor_data', proctorData, { taskId: parseInt(taskId) });
+      result = await db.get('proctor_data', { taskId: parseInt(taskId) });
+    } else {
+      // Insert
+      result = await db.insert('proctor_data', proctorData);
     }
+
+    // Parse JSON fields
+    if (result) {
+      try {
+        result.proctorPoints = result.proctorPoints ? JSON.parse(result.proctorPoints) : [];
+        result.zavPoints = result.zavPoints ? JSON.parse(result.zavPoints) : [];
+        result.passing200 = result.passing200 ? JSON.parse(result.passing200) : [];
+      } catch (e) {
+        result.proctorPoints = [];
+        result.zavPoints = [];
+        result.passing200 = [];
+      }
+    }
+
+    res.status(existing ? 200 : 201).json(result);
   } catch (err) {
-    console.error('Error in Proctor save handler:', err);
+    console.error('Error saving Proctor data:', err);
     res.status(500).json({ error: 'Database error: ' + err.message });
   }
 });
