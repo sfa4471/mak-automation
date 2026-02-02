@@ -133,9 +133,15 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
     const taskId = parseInt(req.params.taskId);
 
     // Check task access
-    const task = await db.get('tasks', { id: taskId, taskType: 'COMPRESSIVE_STRENGTH' });
+    const task = await db.get('tasks', { id: taskId });
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
+    }
+    
+    // Verify task type
+    const actualTaskType = db.isSupabase() ? task.task_type : task.taskType;
+    if (actualTaskType !== 'COMPRESSIVE_STRENGTH') {
+      return res.status(400).json({ error: 'This endpoint is only for COMPRESSIVE_STRENGTH tasks' });
     }
 
     // Check access

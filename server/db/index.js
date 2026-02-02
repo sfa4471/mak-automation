@@ -44,7 +44,12 @@ class DatabaseAdapter {
       let query = supabase.from(table).select('*');
       
       for (const [key, value] of Object.entries(conditions)) {
-        query = query.eq(toSnakeCase(key), value);
+        const snakeKey = toSnakeCase(key);
+        // Ensure value is properly handled (trim strings, handle null/undefined)
+        const cleanValue = typeof value === 'string' ? value.trim() : value;
+        if (cleanValue !== null && cleanValue !== undefined) {
+          query = query.eq(snakeKey, cleanValue);
+        }
       }
       
       const { data, error } = await query.single();
@@ -54,6 +59,14 @@ class DatabaseAdapter {
           // No rows returned
           return null;
         }
+        // Enhanced error logging for debugging
+        console.error(`Database query error for table '${table}':`, {
+          conditions,
+          error: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint
+        });
         throw new Error(`Database error: ${error.message}`);
       }
       
