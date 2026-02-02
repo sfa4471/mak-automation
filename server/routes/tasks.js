@@ -277,8 +277,7 @@ router.get('/project/:projectId', authenticate, async (req, res) => {
         lastEditedByUserId: task.last_edited_by_user_id,
         lastEditedByRole: task.last_edited_by_role,
         lastEditedAt: task.last_edited_at,
-        submittedAt: task.submitted_at,
-        completedAt: task.completed_at,
+        // Note: submittedAt and completedAt columns don't exist in schema
         createdAt: task.created_at,
         updatedAt: task.updated_at,
         proctorNo: task.proctor_no,
@@ -478,8 +477,7 @@ router.get('/:id', authenticate, async (req, res) => {
         lastEditedByUserId: data.last_edited_by_user_id,
         lastEditedByRole: data.last_edited_by_role,
         lastEditedAt: data.last_edited_at,
-        submittedAt: data.submitted_at,
-        completedAt: data.completed_at,
+        // Note: submittedAt and completedAt columns don't exist in schema
         createdAt: data.created_at,
         updatedAt: data.updated_at,
         proctorNo: data.proctor_no,
@@ -1231,9 +1229,7 @@ router.put('/:id/status', authenticate, [
     // Mark report as submitted when status becomes READY_FOR_REVIEW
     if (status === 'READY_FOR_REVIEW') {
       updateData.reportSubmitted = 1;
-      if (req.user.role === 'TECHNICIAN') {
-        updateData.submittedAt = new Date().toISOString();
-      }
+      // Note: submittedAt column doesn't exist in schema, using lastEditedAt instead
     }
 
     // Update task
@@ -1332,7 +1328,7 @@ router.post('/:id/approve', authenticate, requireAdmin, async (req, res) => {
     
     const updateData = {
       status: 'APPROVED',
-      completedAt: new Date().toISOString(),
+      // Note: completedAt column doesn't exist in schema, using lastEditedAt instead
       lastEditedByUserId: req.user.id,
       lastEditedByRole: req.user.role,
       lastEditedAt: new Date().toISOString(),
@@ -2383,7 +2379,8 @@ router.get('/dashboard/technician/activity', authenticate, async (req, res) => {
   }
 });
 
-// ACTIVITY LOG: Show tasks by completedAt or submittedAt for a specific date (Admin only)
+// ACTIVITY LOG: Show tasks by last_edited_at or field_completed_at for a specific date (Admin only)
+// Note: Uses task_history table for better activity tracking
 router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) => {
   try {
     const activityDate = req.query.date || (() => {
@@ -2394,31 +2391,175 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
     
     let tasks;
     if (db.isSupabase()) {
-      const { data, error } = await supabase
+      // Fix: Query task_history instead of tasks for activity tracking
+      // This is more accurate as it tracks all status changes
+      const startOfDay = `${activityDate}T00:00:00`;
+      const endOfDay = `${activityDate}T23:59:59`;
+      
+      // Get task history entries for the activity date
+      const { data: historyEntries, error: historyError } = await supabase
+        .from('task_history')
+        .select(`
+          *,
+          tasks:task_id(
+            *,
+            users:assigned_technician_id(name, email),
+            projects:project_id(project_number, project_name)
+          )
+        `)
+        .gte('timestamp', startOfDay)
+        .lt('timestamp', `${activityDate}T23:59:59.999`)
+        .order('timestamp', { ascending: false });
+      
+      if (historyError) throw historyError;
+      
+      // Extract unique tasks from history entries
+      const taskMap = new Map();
+      (historyEntries || []).forEach(entry => {
+        const task = entry.tasks;
+        if (task && !taskMap.has(task.id)) {
+          taskMap.set(task.id, {
+            ...task,
+            assignedTechnicianName: task.users?.name || null,
+            assignedTechnicianEmail: task.users?.email || null,
+            projectNumber: task.projects?.project_number || null,
+            projectName: task.projects?.project_name || null,
+            assignedTechnicianId: task.assigned_technician_id,
+            projectId: task.project_id,
+            taskType: task.task_type,
+            dueDate: task.due_date,
+            scheduledStartDate: task.scheduled_start_date,
+            scheduledEndDate: task.scheduled_end_date,
+            fieldCompleted: task.field_completed,
+            reportSubmitted: task.report_submitted,
+            fieldCompletedAt: task.field_completed_at,
+            lastEditedAt: task.last_edited_at,
+            users: undefined,
+            projects: undefined
+          });
+        }
+      });
+      
+      tasks = Array.from(taskMap.values());
+      
+      // Also include tasks with field_completed_at on this date
+      const { data: fieldCompletedTasks, error: fieldError } = await supabase
         .from('tasks')
         .select(`
           *,
           users:assigned_technician_id(name, email),
           projects:project_id(project_number, project_name)
         `)
-        .or(`completed_at.gte.${activityDate}T00:00:00,completed_at.lt.${activityDate}T23:59:59,submitted_at.gte.${activityDate}T00:00:00,submitted_at.lt.${activityDate}T23:59:59`);
+        .not('field_completed_at', 'is', null)
+        .gte('field_completed_at', startOfDay)
+        .lt('field_completed_at', `${activityDate}T23:59:59.999`);
+      
+      if (!fieldError && fieldCompletedTasks) {
+        fieldCompletedTasks.forEach(task => {
+          if (!taskMap.has(task.id)) {
+            taskMap.set(task.id, {
+              ...task,
+              assignedTechnicianName: task.users?.name || null,
+              assignedTechnicianEmail: task.users?.email || null,
+              projectNumber: task.projects?.project_number || null,
+              projectName: task.projects?.project_name || null,
+              assignedTechnicianId: task.assigned_technician_id,
+              projectId: task.project_id,
+              taskType: task.task_type,
+              dueDate: task.due_date,
+              scheduledStartDate: task.scheduled_start_date,
+              scheduledEndDate: task.scheduled_end_date,
+              fieldCompleted: task.field_completed,
+              reportSubmitted: task.report_submitted,
+              fieldCompletedAt: task.field_completed_at,
+              lastEditedAt: task.last_edited_at,
+              users: undefined,
+              projects: undefined
+            });
+          }
+        });
+      }
+      
+      tasks = Array.from(taskMap.values());
+      
+      // Sort by last_edited_at or field_completed_at DESC
+      tasks.sort((a, b) => {
+        const aDate = a.lastEditedAt || a.fieldCompletedAt || '';
+        const bDate = b.lastEditedAt || b.fieldCompletedAt || '';
+        return bDate.localeCompare(aDate);
+      });
+    } else {
+      // SQLite fallback - use task_history
+      const sqliteDb = require('../database');
+      tasks = await new Promise((resolve, reject) => {
+        sqliteDb.all(
+          `SELECT DISTINCT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
+           p.projectNumber, p.projectName
+           FROM tasks t
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.id IN (
+             SELECT DISTINCT taskId FROM task_history
+             WHERE DATE(timestamp) = DATE(?)
+           )
+           OR (
+             t.fieldCompletedAt IS NOT NULL AND DATE(t.fieldCompletedAt) = DATE(?)
+           )
+           ORDER BY COALESCE(t.lastEditedAt, t.fieldCompletedAt) DESC`,
+          [activityDate, activityDate],
+          (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+          }
+        );
+      });
+    }
+    
+    res.json(tasks);
+  } catch (err) {
+    console.error('Error fetching activity:', err);
+    res.status(500).json({ error: 'Database error: ' + err.message });
+  }
+});
+
+// Legacy endpoint - kept for backward compatibility but uses task_history
+// ACTIVITY LOG: Show tasks by completedAt or submittedAt for a specific date (Admin only)
+// DEPRECATED: Use task_history for better activity tracking
+router.get('/dashboard/activity-old', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const activityDate = req.query.date || (() => {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      return yesterday.toISOString().split('T')[0];
+    })();
+    
+    let tasks;
+    if (db.isSupabase()) {
+      // Fetch all tasks and filter by last_edited_at or field_completed_at
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          users:assigned_technician_id(name, email),
+          projects:project_id(project_number, project_name)
+        `);
       
       if (error) throw error;
       
-      // Filter tasks where completedAt or submittedAt is on the activity date
+      // Filter tasks where last_edited_at or field_completed_at is on the activity date
       tasks = (data || []).filter(task => {
-        const completedAt = task.completed_at;
-        const submittedAt = task.submitted_at;
+        const lastEditedAt = task.last_edited_at;
+        const fieldCompletedAt = task.field_completed_at;
         const dateStr = activityDate;
         
-        if (completedAt) {
-          const completedDate = completedAt.split('T')[0];
-          if (completedDate === dateStr) return true;
+        if (lastEditedAt) {
+          const editedDate = lastEditedAt.split('T')[0];
+          if (editedDate === dateStr) return true;
         }
         
-        if (submittedAt) {
-          const submittedDate = submittedAt.split('T')[0];
-          if (submittedDate === dateStr) return true;
+        if (fieldCompletedAt) {
+          const completedDate = fieldCompletedAt.split('T')[0];
+          if (completedDate === dateStr) return true;
         }
         
         return false;
@@ -2434,16 +2575,18 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
         dueDate: task.due_date,
         scheduledStartDate: task.scheduled_start_date,
         scheduledEndDate: task.scheduled_end_date,
-        completedAt: task.completed_at,
-        submittedAt: task.submitted_at,
+        // Note: completedAt and submittedAt columns don't exist in schema
+        // Using lastEditedAt and fieldCompletedAt instead
+        lastEditedAt: task.last_edited_at,
+        fieldCompletedAt: task.field_completed_at,
         users: undefined,
         projects: undefined
       }));
       
-      // Sort by completedAt or submittedAt DESC
+      // Sort by lastEditedAt or fieldCompletedAt DESC
       tasks.sort((a, b) => {
-        const aDate = a.completedAt || a.submittedAt || '';
-        const bDate = b.completedAt || b.submittedAt || '';
+        const aDate = a.lastEditedAt || a.fieldCompletedAt || '';
+        const bDate = b.lastEditedAt || b.fieldCompletedAt || '';
         return bDate.localeCompare(aDate);
       });
     } else {
@@ -2456,12 +2599,12 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
            LEFT JOIN users u ON t.assignedTechnicianId = u.id
            INNER JOIN projects p ON t.projectId = p.id
            WHERE (
-             (t.completedAt IS NOT NULL AND DATE(t.completedAt) = DATE(?))
+             (t.lastEditedAt IS NOT NULL AND DATE(t.lastEditedAt) = DATE(?))
              OR
-             (t.submittedAt IS NOT NULL AND DATE(t.submittedAt) = DATE(?))
+             (t.fieldCompletedAt IS NOT NULL AND DATE(t.fieldCompletedAt) = DATE(?))
            )
            ORDER BY 
-             COALESCE(t.completedAt, t.submittedAt) DESC`,
+             COALESCE(t.lastEditedAt, t.fieldCompletedAt) DESC`,
           [activityDate, activityDate],
           (err, rows) => {
             if (err) reject(err);
