@@ -88,9 +88,40 @@ const supabase = supabaseUrl && supabaseServiceKey
 
 /**
  * Helper function to convert camelCase to snake_case for column names
+ * Handles consecutive uppercase letters correctly (e.g., liquidLimitLL -> liquid_limit_ll)
+ * Examples:
+ *   liquidLimitLL -> liquid_limit_ll
+ *   passing200SummaryPct -> passing200_summary_pct
+ *   optMoisturePct -> opt_moisture_pct
  */
 function toSnakeCase(str) {
-  return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+  if (!str) return str;
+  
+  let result = '';
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    const prevChar = i > 0 ? str[i - 1] : '';
+    const nextChar = i < str.length - 1 ? str[i + 1] : '';
+    
+    // If current char is uppercase
+    if (char >= 'A' && char <= 'Z') {
+      // Insert underscore if:
+      // 1. Previous char is lowercase or digit
+      // 2. Previous char is uppercase AND next char is lowercase (e.g., "LL" followed by lowercase)
+      if ((prevChar >= 'a' && prevChar <= 'z') || (prevChar >= '0' && prevChar <= '9')) {
+        result += '_' + char.toLowerCase();
+      } else if (prevChar >= 'A' && prevChar <= 'Z' && nextChar >= 'a' && nextChar <= 'z') {
+        // Multiple uppercase followed by lowercase (e.g., "LL" in "liquidLimitLL")
+        result += '_' + char.toLowerCase();
+      } else {
+        result += char.toLowerCase();
+      }
+    } else {
+      result += char;
+    }
+  }
+  
+  return result;
 }
 
 /**
