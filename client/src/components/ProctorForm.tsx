@@ -877,7 +877,15 @@ const ProctorForm: React.FC = () => {
         optimumMoisturePercent: optimumMoisture || '',
         liquidLimitLL: finalLiquidLimit || '',
         plasticLimit: plasticLimit || '', // Add Plastic Limit
-        plasticityIndex: '',
+        // Calculate PI: PI = rounded(LL) - rounded(PL)
+        plasticityIndex: (() => {
+          const ll = parseFloat(finalLiquidLimit);
+          const pl = parseFloat(plasticLimit);
+          if (!isNaN(ll) && !isNaN(pl)) {
+            return String(Math.round(ll) - Math.round(pl));
+          }
+          return '';
+        })(),
         sampleDate: '',
         calculatedBy: '',
         reviewedBy: '',
@@ -909,6 +917,7 @@ const ProctorForm: React.FC = () => {
         optimumMoisturePercent: optimumMoisture,
         specificGravityG: formData.specificGravity.toString(),
         liquidLimitLL: finalLiquidLimit,
+        plasticLimit: plasticLimit || '', // Include Plastic Limit for PI calculation
         passing200SummaryPct: passing200SummaryPct, // Add summary percentage
         
         // Chart data

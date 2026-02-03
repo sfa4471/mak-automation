@@ -184,6 +184,35 @@ const WP1Form: React.FC = () => {
       setSoilSpecs(soilSpecsData);
       const updatedData = { ...data };
       
+      // Normalize structure value to match soilSpecs keys
+      // Handle cases where structure might be saved as "_building_pad" instead of "Building Pad"
+      if (updatedData.structure && soilSpecsData && Object.keys(soilSpecsData).length > 0) {
+        const structureValue = updatedData.structure;
+        // Check if structure value matches a key in soilSpecs
+        if (!soilSpecsData[structureValue]) {
+          // Try to find a matching key by normalizing
+          // Convert "_building_pad" -> "Building Pad" or "building pad" -> "Building Pad"
+          const normalizedValue = structureValue
+            .replace(/^_+/, '') // Remove leading underscores
+            .replace(/_/g, ' ') // Replace underscores with spaces
+            .split(' ')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+          
+          // Find matching key (case-insensitive, handle spaces)
+          const matchingKey = Object.keys(soilSpecsData).find(key => 
+            key.toLowerCase().replace(/\s+/g, ' ') === normalizedValue.toLowerCase().replace(/\s+/g, ' ')
+          );
+          
+          if (matchingKey) {
+            console.log(`Normalized structure from "${structureValue}" to "${matchingKey}"`);
+            updatedData.structure = matchingKey;
+          } else {
+            console.warn(`Structure "${structureValue}" not found in soilSpecs. Available keys:`, Object.keys(soilSpecsData));
+          }
+        }
+      }
+      
       // Log loaded task and project data
       console.log('Loaded compressive task:', {
         taskId: updatedData.taskId || updatedData.workPackageId,

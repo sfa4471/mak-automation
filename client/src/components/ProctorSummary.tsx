@@ -411,6 +411,40 @@ const ProctorSummary: React.FC = () => {
       setSaving(true);
       setError(''); // Clear previous errors
       
+      // Save current state to database and localStorage BEFORE generating PDF
+      // This ensures data is preserved if user clicks Back
+      const saveData = {
+        projectName: summaryData.projectName,
+        projectNumber: summaryData.projectNumber,
+        sampledBy: summaryData.sampledBy,
+        testMethod: summaryData.testMethod,
+        client: summaryData.client,
+        soilClassification: summaryData.soilClassification,
+        maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
+        optimumMoisturePercent: summaryData.optimumMoisturePercent,
+        liquidLimitLL: roundToWholeNumber(summaryData.liquidLimitLL),
+        plasticLimit: roundToWholeNumber(summaryData.plasticLimit),
+        plasticityIndex: summaryData.plasticityIndex,
+        sampleDate: summaryData.sampleDate,
+        calculatedBy: summaryData.calculatedBy,
+        reviewedBy: summaryData.reviewedBy,
+        checkedBy: summaryData.checkedBy,
+        percentPassing200: summaryData.passing200SummaryPct || summaryData.percentPassing200 || '',
+        passing200SummaryPct: summaryData.passing200SummaryPct || '',
+        specificGravityG: summaryData.specificGravityG,
+        proctorPoints: summaryData.proctorPoints || [],
+        zavPoints: summaryData.zavPoints || []
+      };
+      
+      // Save to database
+      await proctorAPI.saveByTask(task.id, saveData);
+      
+      // Also save to localStorage for backward compatibility
+      localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(saveData));
+      
+      // Update last saved snapshot
+      lastSavedDataRef.current = JSON.stringify(summaryData);
+      
       // Prepare report data for PDF generation
       const reportData = {
         projectName: summaryData.projectName,
@@ -619,7 +653,40 @@ const ProctorSummary: React.FC = () => {
           />
           <button 
             type="button" 
-            onClick={() => navigate(`/task/${id}/proctor`)} 
+            onClick={async () => {
+              // Save current state before navigating back to preserve data
+              if (task) {
+                try {
+                  const saveData = {
+                    projectName: summaryData.projectName,
+                    projectNumber: summaryData.projectNumber,
+                    sampledBy: summaryData.sampledBy,
+                    testMethod: summaryData.testMethod,
+                    client: summaryData.client,
+                    soilClassification: summaryData.soilClassification,
+                    maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
+                    optimumMoisturePercent: summaryData.optimumMoisturePercent,
+                    liquidLimitLL: roundToWholeNumber(summaryData.liquidLimitLL),
+                    plasticLimit: roundToWholeNumber(summaryData.plasticLimit),
+                    plasticityIndex: summaryData.plasticityIndex,
+                    sampleDate: summaryData.sampleDate,
+                    calculatedBy: summaryData.calculatedBy,
+                    reviewedBy: summaryData.reviewedBy,
+                    checkedBy: summaryData.checkedBy,
+                    percentPassing200: summaryData.passing200SummaryPct || summaryData.percentPassing200 || '',
+                    passing200SummaryPct: summaryData.passing200SummaryPct || '',
+                    specificGravityG: summaryData.specificGravityG,
+                    proctorPoints: summaryData.proctorPoints || [],
+                    zavPoints: summaryData.zavPoints || []
+                  };
+                  await proctorAPI.saveByTask(task.id, saveData);
+                  localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(saveData));
+                } catch (err) {
+                  console.error('Error saving before navigation:', err);
+                }
+              }
+              navigate(`/task/${id}/proctor`);
+            }}
             className="btn-secondary"
           >
             Back
@@ -751,18 +818,6 @@ const ProctorSummary: React.FC = () => {
                 onChange={(e) => handleFieldChange('liquidLimitLL', e.target.value)}
                 onBlur={(e) => handleBlur(e, 'liquidLimitLL')}
                 onKeyDown={(e) => handleKeyDown(e, 'liquidLimitLL')}
-                readOnly={!isEditable}
-                className={!isEditable ? 'readonly' : ''}
-              />
-            </div>
-            <div className="summary-field-row">
-              <label>Plastic Limit (PL):</label>
-              <input
-                type="text"
-                value={summaryData.plasticLimit}
-                onChange={(e) => handleFieldChange('plasticLimit', e.target.value)}
-                onBlur={(e) => handleBlur(e, 'plasticLimit')}
-                onKeyDown={(e) => handleKeyDown(e, 'plasticLimit')}
                 readOnly={!isEditable}
                 className={!isEditable ? 'readonly' : ''}
               />
