@@ -909,9 +909,70 @@ const ProctorForm: React.FC = () => {
       const { maxDensity, optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
       const finalLiquidLimit = calculateFinalLiquidLimit();
       // Extract Plastic Limit from Dish 3 (atterbergLimits[2])
-      const plasticLimit = formData.atterbergLimits[2]?.plasticLimit || '';
+      // Ensure we get the value even if it's an empty string (it might be calculated but not yet in state)
+      let plasticLimit = formData.atterbergLimits[2]?.plasticLimit || '';
+      
+      // QA: If plasticLimit is empty but we have the raw data, try to recalculate it
+      if (!plasticLimit || plasticLimit.trim() === '') {
+        const dish3 = formData.atterbergLimits[2];
+        if (dish3 && dish3.massWetSampleTare && dish3.massDrySampleTare && dish3.tareMass) {
+          plasticLimit = calculatePlasticLimit(
+            dish3.massWetSampleTare,
+            dish3.massDrySampleTare,
+            dish3.tareMass
+          );
+          console.log('🔍 [QA] Recalculated plasticLimit from raw data:', plasticLimit);
+        }
+      }
+      
+      // QA: If finalLiquidLimit is empty but we have the raw data, try to recalculate it
+      let calculatedLL = finalLiquidLimit;
+      if (!calculatedLL || calculatedLL.trim() === '') {
+        const dish1 = formData.atterbergLimits[0];
+        const dish2 = formData.atterbergLimits[1];
+        // Try to recalculate from raw data if available
+        if (dish1 && dish1.massWetSampleTare && dish1.massDrySampleTare && dish1.tareMass && dish1.numberOfBlows) {
+          const ll1 = calculateLiquidLimit(
+            dish1.massWetSampleTare,
+            dish1.massDrySampleTare,
+            dish1.tareMass,
+            dish1.numberOfBlows
+          );
+          if (dish2 && dish2.massWetSampleTare && dish2.massDrySampleTare && dish2.tareMass && dish2.numberOfBlows) {
+            const ll2 = calculateLiquidLimit(
+              dish2.massWetSampleTare,
+              dish2.massDrySampleTare,
+              dish2.tareMass,
+              dish2.numberOfBlows
+            );
+            const ll1Num = parseFloat(ll1);
+            const ll2Num = parseFloat(ll2);
+            if (!isNaN(ll1Num) && !isNaN(ll2Num)) {
+              calculatedLL = String(Math.round((ll1Num + ll2Num) / 2));
+              console.log('🔍 [QA] Recalculated finalLiquidLimit from raw data:', calculatedLL);
+            } else if (!isNaN(ll1Num)) {
+              calculatedLL = ll1;
+            } else if (!isNaN(ll2Num)) {
+              calculatedLL = ll2;
+            }
+          } else if (!isNaN(parseFloat(ll1))) {
+            calculatedLL = ll1;
+          }
+        }
+      }
+      
       // Calculate Passing #200 summary (average of valid rows)
       const passing200SummaryPct = calculatePassing200Summary(formData.passing200);
+
+      // QA: Debug logging to verify values before saving
+      console.log('🔍 [QA] ProctorForm handleNext - Values before save:', {
+        finalLiquidLimit: calculatedLL,
+        plasticLimit,
+        atterbergLimits: formData.atterbergLimits,
+        dish1LL: formData.atterbergLimits[0]?.liquidLimit,
+        dish2LL: formData.atterbergLimits[1]?.liquidLimit,
+        dish3PL: formData.atterbergLimits[2]?.plasticLimit
+      });
 
       // Prepare data for database (using API format with canonical keys)
       const proctorAPIData = {
@@ -927,11 +988,11 @@ const ProctorForm: React.FC = () => {
         // Legacy fields (for backward compatibility)
         maximumDryDensityPcf: maxDensity || '',
         optimumMoisturePercent: optimumMoisture || '',
-        liquidLimitLL: finalLiquidLimit || '',
+        liquidLimitLL: calculatedLL || '', // Use recalculated value if original was empty
         plasticLimit: plasticLimit || '', // Add Plastic Limit
         // Calculate PI: PI = rounded(LL) - rounded(PL)
         plasticityIndex: (() => {
-          const ll = parseFloat(finalLiquidLimit);
+          const ll = parseFloat(calculatedLL); // Use recalculated value
           const pl = parseFloat(plasticLimit);
           if (!isNaN(ll) && !isNaN(pl)) {
             return String(Math.round(ll) - Math.round(pl));
@@ -953,6 +1014,13 @@ const ProctorForm: React.FC = () => {
       // Save to database BEFORE navigating
       await proctorAPI.saveByTask(task.id, proctorAPIData);
       
+      // QA: Debug logging to verify what was saved
+      console.log('🔍 [QA] ProctorForm handleNext - Data saved to database:', {
+        liquidLimitLL: proctorAPIData.liquidLimitLL,
+        plasticLimit: proctorAPIData.plasticLimit,
+        plasticityIndex: proctorAPIData.plasticityIndex
+      });
+      
       // Also save to localStorage for backward compatibility
       const proctorStep1Data = {
         // Page 1 inputs (for potential restoration)
@@ -968,7 +1036,7 @@ const ProctorForm: React.FC = () => {
         maximumDryDensityPcf: maxDensity,
         optimumMoisturePercent: optimumMoisture,
         specificGravityG: formData.specificGravity.toString(),
-        liquidLimitLL: finalLiquidLimit,
+        liquidLimitLL: calculatedLL, // Use recalculated value
         plasticLimit: plasticLimit || '', // Include Plastic Limit for PI calculation
         passing200SummaryPct: passing200SummaryPct, // Add summary percentage
         

@@ -919,6 +919,7 @@ router.post('/task/:taskId', authenticate, [
   body('maximumDryDensityPcf').optional().trim(),
   body('optimumMoisturePercent').optional().trim(),
   body('liquidLimitLL').optional().trim(),
+  body('plasticLimit').optional().trim(), // Add plasticLimit to validation
   body('plasticityIndex').optional().trim(),
   body('sampleDate').optional().trim(),
   body('calculatedBy').optional().trim(),

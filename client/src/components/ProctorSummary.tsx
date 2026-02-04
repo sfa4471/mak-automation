@@ -150,6 +150,14 @@ const ProctorSummary: React.FC = () => {
       try {
         const savedData = await proctorAPI.getByTask(taskId);
         
+        // QA: Debug logging to verify what was loaded from database
+        console.log('🔍 [QA] ProctorSummary loadData - Data loaded from database:', {
+          liquidLimitLL: savedData.liquidLimitLL,
+          plasticLimit: savedData.plasticLimit,
+          plasticityIndex: savedData.plasticityIndex,
+          fullSavedData: savedData
+        });
+        
         // Set project info from task (Task has projectNumber and projectName directly)
         const initialData: ProctorSummaryData = {
           projectName: savedData.projectName || taskData.projectName || '',
