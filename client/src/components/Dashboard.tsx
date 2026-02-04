@@ -341,6 +341,12 @@ const Dashboard: React.FC = () => {
             >
               Tasks Dashboard
             </button>
+            <button
+              onClick={() => navigate('/admin/settings')}
+              className="secondary-button"
+            >
+              ⚙️ Settings
+            </button>
           </div>
         )}
 

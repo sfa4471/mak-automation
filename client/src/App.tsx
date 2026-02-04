@@ -22,6 +22,7 @@ const DensityReportForm = lazy(() => import('./components/DensityReportForm'));
 const RebarForm = lazy(() => import('./components/RebarForm'));
 const ProctorForm = lazy(() => import('./components/ProctorForm'));
 const ProctorSummary = lazy(() => import('./components/ProctorSummary'));
+const Settings = lazy(() => import('./components/admin/Settings'));
 
 function App() {
   return (
@@ -132,6 +133,16 @@ function App() {
               <ProtectedRoute requireAdmin>
                 <Suspense fallback={<LoadingSpinner fullScreen message="Loading project details..." />}>
                   <ProjectDetails />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/settings"
+            element={
+              <ProtectedRoute requireAdmin>
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading settings..." />}>
+                  <Settings />
                 </Suspense>
               </ProtectedRoute>
             }
