@@ -73,6 +73,7 @@ app.use('/api/rebar', require('./routes/rebar'));
 app.use('/api/proctor', require('./routes/proctor'));
 app.use('/api/pdf', require('./routes/pdf'));
 app.use('/api/notifications', require('./routes/notifications').router);
+app.use('/api/settings', require('./routes/settings'));
 
 // Serve static files from React app in production (only if build exists)
 // This catch-all must come AFTER API routes to ensure API routes work
