@@ -430,38 +430,90 @@ const ProctorForm: React.FC = () => {
       setTask(taskData);
       
       // Try to load saved Proctor data from backend first
+      let savedProctorData = null;
       try {
-        const savedProctorData = await proctorAPI.getByTask(taskId);
+        savedProctorData = await proctorAPI.getByTask(taskId);
         if (savedProctorData) {
           setSoilClassification(savedProctorData.soilClassification || '');
-          // Initialize last saved snapshot with backend data if available
-          // We'll update this after form data is fully loaded
+          console.log('Loaded Proctor data from database:', savedProctorData);
         }
       } catch (err) {
         console.log('No Proctor data in database yet, will check localStorage');
       }
       
-      // Load saved Proctor draft data from localStorage
+      // Load saved Proctor data from localStorage (as fallback or for additional data)
+      // Try step1 data first (saved when clicking Next), then draft data
+      const step1Data = localStorage.getItem(`proctor_step1_${taskId}`);
       const draftData = localStorage.getItem(`proctor_draft_${taskId}`);
-      if (draftData) {
+      
+      // Prefer step1 data (has full form data), then database, then draft
+      let dataToUse = null;
+      if (step1Data) {
         try {
-          const saved = JSON.parse(draftData);
-          console.log('Loading Proctor draft data:', saved);
+          dataToUse = JSON.parse(step1Data);
+          console.log('Loading Proctor step1 data from localStorage:', dataToUse);
+        } catch (e) {
+          console.error('Error parsing step1 data:', e);
+        }
+      }
+      
+      // If no step1 data, try database or draft
+      if (!dataToUse) {
+        dataToUse = savedProctorData || (draftData ? JSON.parse(draftData) : null);
+      } else {
+        // If we have step1 data, merge with database data for summary fields
+        if (savedProctorData) {
+          // Merge: use step1 for form data, database for summary fields that might have been updated
+          dataToUse = {
+            ...dataToUse,
+            // Update summary fields from database if they exist
+            liquidLimitLL: savedProctorData.liquidLimitLL || dataToUse.liquidLimitLL,
+            plasticLimit: savedProctorData.plasticLimit || dataToUse.plasticLimit,
+            plasticityIndex: savedProctorData.plasticityIndex || dataToUse.plasticityIndex,
+            soilClassification: savedProctorData.soilClassification || dataToUse.soilClassification
+          };
+        }
+      }
+      
+      if (dataToUse) {
+        try {
+          const saved = dataToUse;
+          console.log('Loading Proctor data:', saved);
           
-          // Restore soilClassification from localStorage if not in DB
-          if (!soilClassification && saved.soilClassification) {
+          // Restore soilClassification
+          if (saved.soilClassification) {
             setSoilClassification(saved.soilClassification);
           }
           
           // Restore form data including Atterberg values
+          // If data comes from database, we need to check if columns/atterbergLimits exist
+          // Database might not have these, so we fallback to localStorage or initial values
+          let columns = saved.columns;
+          let atterbergLimits = saved.atterbergLimits;
+          let passing200 = saved.passing200;
+          
+          // If database data doesn't have form fields, try to get from localStorage
+          if (!columns || !atterbergLimits) {
+            if (draftData) {
+              try {
+                const localData = JSON.parse(draftData);
+                columns = localData.columns || columns;
+                atterbergLimits = localData.atterbergLimits || atterbergLimits;
+                passing200 = localData.passing200 || passing200;
+              } catch (e) {
+                console.error('Error parsing localStorage draft data:', e);
+              }
+            }
+          }
+          
           const restoredData: ProctorData = {
             moldWeight: saved.moldWeight ?? 4.74,
             moldVolume: saved.moldVolume ?? 0.0333,
-            specificGravity: saved.specificGravity ?? 2.60,
-            columns: saved.columns ?? getInitialColumns(),
-            atterbergLimits: saved.atterbergLimits ?? getInitialAtterbergLimits(),
-            passing200: saved.passing200 && Array.isArray(saved.passing200) && saved.passing200.length > 0
-              ? saved.passing200.map((d: any) => ({
+            specificGravity: saved.specificGravity ?? (saved.specificGravityG ? parseFloat(saved.specificGravityG) : 2.60),
+            columns: columns ?? getInitialColumns(),
+            atterbergLimits: atterbergLimits ?? getInitialAtterbergLimits(),
+            passing200: passing200 && Array.isArray(passing200) && passing200.length > 0
+              ? passing200.map((d: any) => ({
                   dishNo: d.dishNo || 1,
                   dryWtBeforeWash: d.dryWtBeforeWash || '',
                   dryWtAfterWash: d.dryWtAfterWash || '',

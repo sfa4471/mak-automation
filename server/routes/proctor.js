@@ -593,10 +593,6 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
           <div class="value">${escapeHtml(reportData.liquidLimitLL)}</div>
         </div>
         <div class="form-row">
-          <label>Plastic Limit (PL):</label>
-          <div class="value">${escapeHtml(reportData.plasticLimit || '')}</div>
-        </div>
-        <div class="form-row">
           <label>Plasticity Index (PI):</label>
           <div class="value">${escapeHtml(reportData.plasticityIndex)}</div>
         </div>
