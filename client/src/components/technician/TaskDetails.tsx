@@ -81,8 +81,17 @@ const TaskDetails: React.FC = () => {
       });
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: await response.text() }));
-        const errorMessage = errorData.error || errorData.message || 'Failed to generate PDF';
+        let errorMessage = 'Failed to generate PDF';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          try {
+            errorMessage = await response.text();
+          } catch {
+            // Keep default error message
+          }
+        }
         throw new Error(errorMessage);
       }
       
