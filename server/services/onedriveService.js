@@ -108,25 +108,59 @@ function sanitizePath(userPath) {
 /**
  * Validate a OneDrive path
  * Checks if path exists, is a directory, and is writable
+ * Handles OneDrive sync timing issues with retry logic and auto-creates folders if parent exists
  * @param {string} userPath - Path to validate
- * @returns {Promise<{valid: boolean, error?: string, path?: string}>}
+ * @returns {Promise<{valid: boolean, error?: string, path?: string, warning?: string}>}
  */
 async function validatePath(userPath) {
   try {
     // Sanitize path first
     const sanitized = sanitizePath(userPath);
     
-    // Check if path exists
-    if (!fs.existsSync(sanitized)) {
-      return {
-        valid: false,
-        error: 'Path does not exist',
-        path: sanitized
-      };
+    // Check if path exists using async access with retry logic (handles OneDrive sync timing)
+    let pathExists = false;
+    try {
+      // First attempt
+      await fs.promises.access(sanitized, fs.constants.F_OK);
+      pathExists = true;
+    } catch (accessError) {
+      // Retry with delay for OneDrive sync timing issues
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await fs.promises.access(sanitized, fs.constants.F_OK);
+        pathExists = true;
+      } catch (retryError) {
+        // Path doesn't exist - check if we can create it (parent exists)
+        const parentPath = path.dirname(sanitized);
+        
+        try {
+          // Check if parent exists and is accessible
+          await fs.promises.access(parentPath, fs.constants.F_OK);
+          const parentStats = await fs.promises.stat(parentPath);
+          
+          if (parentStats.isDirectory()) {
+            // Parent exists and is a directory - create the path
+            await fs.promises.mkdir(sanitized, { recursive: true });
+            pathExists = true;
+          } else {
+            return {
+              valid: false,
+              error: 'Parent path is not a directory',
+              path: sanitized
+            };
+          }
+        } catch (parentError) {
+          return {
+            valid: false,
+            error: 'Path does not exist and parent directory is not accessible',
+            path: sanitized
+          };
+        }
+      }
     }
     
     // Check if it's a directory
-    const stats = fs.statSync(sanitized);
+    const stats = await fs.promises.stat(sanitized);
     if (!stats.isDirectory()) {
       return {
         valid: false,
@@ -138,8 +172,8 @@ async function validatePath(userPath) {
     // Check if directory is writable by attempting to create a test file
     try {
       const testFile = path.join(sanitized, '.onedrive_test_' + Date.now());
-      fs.writeFileSync(testFile, 'test');
-      fs.unlinkSync(testFile);
+      await fs.promises.writeFile(testFile, 'test');
+      await fs.promises.unlink(testFile);
     } catch (writeError) {
       return {
         valid: false,

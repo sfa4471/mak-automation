@@ -184,6 +184,28 @@ db.serialize(() => {
     FOREIGN KEY (relatedProjectId) REFERENCES projects(id)
   )`);
 
+  // App Settings table (for OneDrive path and other app-wide settings)
+  db.run(`CREATE TABLE IF NOT EXISTS app_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT UNIQUE NOT NULL,
+    value TEXT,
+    description TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_by_user_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+  )`);
+
+  // Create indexes for app_settings
+  db.run(`CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_app_settings_updated_at ON app_settings(updated_at)`);
+
+  // Insert default settings (only if they don't exist)
+  db.run(`INSERT OR IGNORE INTO app_settings (key, value, description) 
+VALUES 
+  ('onedrive_base_path', NULL, 'Base folder path for OneDrive integration. Leave empty to use default PDF storage.'),
+  ('pdf_naming_convention', 'legacy', 'PDF naming convention: "new" for ProjectNumber-TaskName format, "legacy" for old format.')`);
+
   // Create default admin user if not exists
   db.get("SELECT COUNT(*) as count FROM users WHERE role = 'ADMIN'", (err, row) => {
     if (err) {
