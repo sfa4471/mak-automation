@@ -770,9 +770,37 @@ const ProctorForm: React.FC = () => {
   };
 
   // Calculate Final Liquid Limit (average of Dish 1 and Dish 2)
+  // This function tries to get values from state first, but if empty, recalculates from raw data
   const calculateFinalLiquidLimit = (): string => {
-    const dish1LL = formData.atterbergLimits[0]?.liquidLimit || '';
-    const dish2LL = formData.atterbergLimits[1]?.liquidLimit || '';
+    const dish1 = formData.atterbergLimits[0];
+    const dish2 = formData.atterbergLimits[1];
+    
+    // Try to get stored values first
+    let dish1LL = dish1?.liquidLimit || '';
+    let dish2LL = dish2?.liquidLimit || '';
+    
+    // If stored values are empty but we have raw data, recalculate
+    if ((!dish1LL || dish1LL.trim() === '') && dish1) {
+      if (dish1.massWetSampleTare && dish1.massDrySampleTare && dish1.tareMass && dish1.numberOfBlows) {
+        dish1LL = calculateLiquidLimit(
+          dish1.massWetSampleTare,
+          dish1.massDrySampleTare,
+          dish1.tareMass,
+          dish1.numberOfBlows
+        );
+      }
+    }
+    
+    if ((!dish2LL || dish2LL.trim() === '') && dish2) {
+      if (dish2.massWetSampleTare && dish2.massDrySampleTare && dish2.tareMass && dish2.numberOfBlows) {
+        dish2LL = calculateLiquidLimit(
+          dish2.massWetSampleTare,
+          dish2.massDrySampleTare,
+          dish2.tareMass,
+          dish2.numberOfBlows
+        );
+      }
+    }
     
     const ll1 = parseFloat(dish1LL);
     const ll2 = parseFloat(dish2LL);
@@ -907,12 +935,12 @@ const ProctorForm: React.FC = () => {
     try {
       // Calculate values to pass to Step 2
       const { maxDensity, optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
+      // Use calculateFinalLiquidLimit() which now has built-in fallback to recalculate from raw data
       const finalLiquidLimit = calculateFinalLiquidLimit();
-      // Extract Plastic Limit from Dish 3 (atterbergLimits[2])
-      // Ensure we get the value even if it's an empty string (it might be calculated but not yet in state)
-      let plasticLimit = formData.atterbergLimits[2]?.plasticLimit || '';
       
-      // QA: If plasticLimit is empty but we have the raw data, try to recalculate it
+      // Extract Plastic Limit from Dish 3 (atterbergLimits[2])
+      // Try stored value first, then recalculate from raw data if empty
+      let plasticLimit = formData.atterbergLimits[2]?.plasticLimit || '';
       if (!plasticLimit || plasticLimit.trim() === '') {
         const dish3 = formData.atterbergLimits[2];
         if (dish3 && dish3.massWetSampleTare && dish3.massDrySampleTare && dish3.tareMass) {
@@ -925,41 +953,8 @@ const ProctorForm: React.FC = () => {
         }
       }
       
-      // QA: If finalLiquidLimit is empty but we have the raw data, try to recalculate it
-      let calculatedLL = finalLiquidLimit;
-      if (!calculatedLL || calculatedLL.trim() === '') {
-        const dish1 = formData.atterbergLimits[0];
-        const dish2 = formData.atterbergLimits[1];
-        // Try to recalculate from raw data if available
-        if (dish1 && dish1.massWetSampleTare && dish1.massDrySampleTare && dish1.tareMass && dish1.numberOfBlows) {
-          const ll1 = calculateLiquidLimit(
-            dish1.massWetSampleTare,
-            dish1.massDrySampleTare,
-            dish1.tareMass,
-            dish1.numberOfBlows
-          );
-          if (dish2 && dish2.massWetSampleTare && dish2.massDrySampleTare && dish2.tareMass && dish2.numberOfBlows) {
-            const ll2 = calculateLiquidLimit(
-              dish2.massWetSampleTare,
-              dish2.massDrySampleTare,
-              dish2.tareMass,
-              dish2.numberOfBlows
-            );
-            const ll1Num = parseFloat(ll1);
-            const ll2Num = parseFloat(ll2);
-            if (!isNaN(ll1Num) && !isNaN(ll2Num)) {
-              calculatedLL = String(Math.round((ll1Num + ll2Num) / 2));
-              console.log('🔍 [QA] Recalculated finalLiquidLimit from raw data:', calculatedLL);
-            } else if (!isNaN(ll1Num)) {
-              calculatedLL = ll1;
-            } else if (!isNaN(ll2Num)) {
-              calculatedLL = ll2;
-            }
-          } else if (!isNaN(parseFloat(ll1))) {
-            calculatedLL = ll1;
-          }
-        }
-      }
+      // Use the calculated values (calculateFinalLiquidLimit already handles fallback)
+      const calculatedLL = finalLiquidLimit;
       
       // Calculate Passing #200 summary (average of valid rows)
       const passing200SummaryPct = calculatePassing200Summary(formData.passing200);
@@ -971,7 +966,24 @@ const ProctorForm: React.FC = () => {
         atterbergLimits: formData.atterbergLimits,
         dish1LL: formData.atterbergLimits[0]?.liquidLimit,
         dish2LL: formData.atterbergLimits[1]?.liquidLimit,
-        dish3PL: formData.atterbergLimits[2]?.plasticLimit
+        dish3PL: formData.atterbergLimits[2]?.plasticLimit,
+        dish1Raw: {
+          wet: formData.atterbergLimits[0]?.massWetSampleTare,
+          dry: formData.atterbergLimits[0]?.massDrySampleTare,
+          tare: formData.atterbergLimits[0]?.tareMass,
+          blows: formData.atterbergLimits[0]?.numberOfBlows
+        },
+        dish2Raw: {
+          wet: formData.atterbergLimits[1]?.massWetSampleTare,
+          dry: formData.atterbergLimits[1]?.massDrySampleTare,
+          tare: formData.atterbergLimits[1]?.tareMass,
+          blows: formData.atterbergLimits[1]?.numberOfBlows
+        },
+        dish3Raw: {
+          wet: formData.atterbergLimits[2]?.massWetSampleTare,
+          dry: formData.atterbergLimits[2]?.massDrySampleTare,
+          tare: formData.atterbergLimits[2]?.tareMass
+        }
       });
 
       // Prepare data for database (using API format with canonical keys)
