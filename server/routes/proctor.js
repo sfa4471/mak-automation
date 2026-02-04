@@ -862,6 +862,22 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       if (!data.passing200SummaryPct && data.percentPassing200) {
         data.passing200SummaryPct = data.percentPassing200;
       }
+      
+      // QA: Handle naming mismatch - ensure liquidLimitLL is set (might be liquidLimitLl from conversion)
+      if (!data.liquidLimitLL && data.liquidLimitLl) {
+        data.liquidLimitLL = data.liquidLimitLl;
+        delete data.liquidLimitLl; // Remove the incorrect key
+      }
+      
+      // QA: Debug logging to verify field names
+      console.log('🔍 [QA] Proctor GET - Field names in response:', {
+        hasLiquidLimitLL: !!data.liquidLimitLL,
+        hasLiquidLimitLl: !!data.liquidLimitLl,
+        liquidLimitLL: data.liquidLimitLL,
+        plasticLimit: data.plasticLimit,
+        plasticityIndex: data.plasticityIndex
+      });
+      
       res.json(data);
     } else {
       // Return empty structure with project info

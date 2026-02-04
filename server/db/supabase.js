@@ -126,8 +126,22 @@ function toSnakeCase(str) {
 
 /**
  * Helper function to convert snake_case to camelCase for column names
+ * Handles special cases like liquid_limit_ll -> liquidLimitLL (preserves consecutive uppercase)
  */
 function toCamelCase(str) {
+  if (!str) return str;
+  
+  // Special mappings for fields that should have consecutive uppercase letters
+  const specialMappings = {
+    'liquid_limit_ll': 'liquidLimitLL',
+    'passing200_summary_pct': 'passing200SummaryPct'
+  };
+  
+  if (specialMappings[str]) {
+    return specialMappings[str];
+  }
+  
+  // Standard conversion: replace _x with X
   return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 }
 
