@@ -158,6 +158,8 @@ router.post('/onedrive-test', authenticate, requireAdmin, [
     res.json({
       success: true,
       valid: validation.valid,
+      isValid: validation.isValid !== undefined ? validation.isValid : validation.valid,
+      isWritable: validation.isWritable !== undefined ? validation.isWritable : validation.valid,
       path: validation.path,
       error: validation.error || null
     });

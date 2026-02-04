@@ -110,7 +110,7 @@ function sanitizePath(userPath) {
  * Checks if path exists, is a directory, and is writable
  * Handles OneDrive sync timing issues with retry logic and auto-creates folders if parent exists
  * @param {string} userPath - Path to validate
- * @returns {Promise<{valid: boolean, error?: string, path?: string, warning?: string}>}
+ * @returns {Promise<{valid: boolean, isValid?: boolean, isWritable?: boolean, error?: string, path?: string, warning?: string}>}
  */
 async function validatePath(userPath) {
   try {
@@ -130,65 +130,109 @@ async function validatePath(userPath) {
         await fs.promises.access(sanitized, fs.constants.F_OK);
         pathExists = true;
       } catch (retryError) {
-        // Path doesn't exist - check if we can create it (parent exists)
-        const parentPath = path.dirname(sanitized);
-        
+        // Retry one more time with longer delay for OneDrive
         try {
-          // Check if parent exists and is accessible
-          await fs.promises.access(parentPath, fs.constants.F_OK);
-          const parentStats = await fs.promises.stat(parentPath);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await fs.promises.access(sanitized, fs.constants.F_OK);
+          pathExists = true;
+        } catch (secondRetryError) {
+          // Path doesn't exist - check if we can create it (parent exists)
+          const parentPath = path.dirname(sanitized);
           
-          if (parentStats.isDirectory()) {
-            // Parent exists and is a directory - create the path
-            await fs.promises.mkdir(sanitized, { recursive: true });
-            pathExists = true;
-          } else {
+          try {
+            // Check if parent exists and is accessible
+            await fs.promises.access(parentPath, fs.constants.F_OK);
+            const parentStats = await fs.promises.stat(parentPath);
+            
+            if (parentStats.isDirectory()) {
+              // Parent exists and is a directory - create the path
+              await fs.promises.mkdir(sanitized, { recursive: true });
+              pathExists = true;
+            } else {
+              return {
+                valid: false,
+                isValid: false,
+                isWritable: false,
+                error: 'Parent path is not a directory',
+                path: sanitized
+              };
+            }
+          } catch (parentError) {
             return {
               valid: false,
-              error: 'Parent path is not a directory',
+              isValid: false,
+              isWritable: false,
+              error: 'Path does not exist and parent directory is not accessible',
               path: sanitized
             };
           }
-        } catch (parentError) {
-          return {
-            valid: false,
-            error: 'Path does not exist and parent directory is not accessible',
-            path: sanitized
-          };
         }
       }
     }
     
     // Check if it's a directory
-    const stats = await fs.promises.stat(sanitized);
+    let stats;
+    try {
+      stats = await fs.promises.stat(sanitized);
+    } catch (statError) {
+      // Retry stat check for OneDrive
+      await new Promise(resolve => setTimeout(resolve, 500));
+      stats = await fs.promises.stat(sanitized);
+    }
+    
     if (!stats.isDirectory()) {
       return {
         valid: false,
+        isValid: false,
+        isWritable: false,
         error: 'Path is not a directory',
         path: sanitized
       };
     }
     
     // Check if directory is writable by attempting to create a test file
-    try {
-      const testFile = path.join(sanitized, '.onedrive_test_' + Date.now());
-      await fs.promises.writeFile(testFile, 'test');
-      await fs.promises.unlink(testFile);
-    } catch (writeError) {
+    // Use multiple retries for OneDrive sync issues
+    let isWritable = false;
+    let writeError = null;
+    
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        }
+        
+        const testFile = path.join(sanitized, '.onedrive_test_' + Date.now() + '_' + attempt);
+        await fs.promises.writeFile(testFile, 'test');
+        await fs.promises.unlink(testFile);
+        isWritable = true;
+        break;
+      } catch (testWriteError) {
+        writeError = testWriteError;
+        // Continue to next attempt
+      }
+    }
+    
+    if (!isWritable) {
       return {
         valid: false,
-        error: 'Directory is not writable',
+        isValid: true, // Path exists and is a directory
+        isWritable: false,
+        error: 'Directory is not writable. Please check OneDrive sync status and folder permissions.',
         path: sanitized
       };
     }
     
     return {
       valid: true,
+      isValid: true,
+      isWritable: true,
       path: sanitized
     };
   } catch (error) {
     return {
       valid: false,
+      isValid: false,
+      isWritable: false,
       error: error.message || 'Invalid path',
       path: userPath
     };
@@ -198,7 +242,7 @@ async function validatePath(userPath) {
 /**
  * Get OneDrive path status
  * Returns comprehensive status about the configured path
- * @returns {Promise<{configured: boolean, valid: boolean, path?: string|null, error?: string}>}
+ * @returns {Promise<{configured: boolean, valid: boolean, isValid?: boolean, isWritable?: boolean, path?: string|null, error?: string}>}
  */
 async function getPathStatus() {
   try {
@@ -208,6 +252,8 @@ async function getPathStatus() {
       return {
         configured: false,
         valid: false,
+        isValid: false,
+        isWritable: false,
         path: null
       };
     }
@@ -218,6 +264,8 @@ async function getPathStatus() {
     return {
       configured: true,
       valid: validation.valid,
+      isValid: validation.isValid !== undefined ? validation.isValid : validation.valid,
+      isWritable: validation.isWritable !== undefined ? validation.isWritable : validation.valid,
       path: basePath,
       error: validation.error || null
     };
@@ -226,6 +274,8 @@ async function getPathStatus() {
     return {
       configured: false,
       valid: false,
+      isValid: false,
+      isWritable: false,
       path: null,
       error: error.message || 'Failed to check path status'
     };
