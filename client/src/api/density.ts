@@ -1,5 +1,5 @@
 import api from './api';
-import { ConcreteSpecs } from './projects';
+import { ConcreteSpecs, SoilSpecs } from './projects';
 
 export interface TestRow {
   testNo: number;
@@ -26,6 +26,7 @@ export interface DensityReport {
   projectName?: string;
   projectNumber?: string;
   projectConcreteSpecs?: ConcreteSpecs;
+  projectSoilSpecs?: SoilSpecs;
   clientName: string;
   datePerformed: string;
   structure: string;

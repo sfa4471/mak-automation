@@ -17,7 +17,7 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         .from('tasks')
         .select(`
           *,
-          projects:project_id(project_name, project_number, concrete_specs)
+          projects:project_id(project_name, project_number, concrete_specs, soil_specs)
         `)
         .eq('id', taskId)
         .eq('task_type', 'DENSITY_MEASUREMENT')
@@ -32,13 +32,14 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         projectName: data.projects?.project_name,
         projectNumber: data.projects?.project_number,
         concreteSpecs: data.projects?.concrete_specs,
+        soilSpecs: data.projects?.soil_specs,
         projects: undefined
       };
     } else {
       const sqliteDb = require('../database');
       task = await new Promise((resolve, reject) => {
         sqliteDb.get(
-          `SELECT t.*, p.projectName, p.projectNumber, p.concreteSpecs
+          `SELECT t.*, p.projectName, p.projectNumber, p.concreteSpecs, p.soilSpecs
            FROM tasks t
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.id = ? AND t.taskType = 'DENSITY_MEASUREMENT'`,
@@ -74,6 +75,20 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       }
     }
 
+    // Parse project soilSpecs for structure dropdown (structure types are keys in soilSpecs)
+    let projectSoilSpecs = {};
+    if (task.soilSpecs) {
+      if (typeof task.soilSpecs === 'string') {
+        try {
+          projectSoilSpecs = JSON.parse(task.soilSpecs);
+        } catch (e) {
+          projectSoilSpecs = {};
+        }
+      } else {
+        projectSoilSpecs = task.soilSpecs;
+      }
+    }
+
     const data = await db.get('density_reports', { taskId });
 
     if (data) {
@@ -106,10 +121,11 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         data.proctors = data.proctors || [];
       }
       
-      // Add project info and concreteSpecs
+      // Add project info, concreteSpecs, and soilSpecs
       data.projectName = task.projectName;
       data.projectNumber = task.projectNumber;
       data.projectConcreteSpecs = projectConcreteSpecs;
+      data.projectSoilSpecs = projectSoilSpecs;
       
       // If technicianId is missing but task has assigned technician, use that
       if (!data.technicianId && task.assignedTechnicianId) {
@@ -135,6 +151,7 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         projectName: task.projectName,
         projectNumber: task.projectNumber,
         projectConcreteSpecs: projectConcreteSpecs,
+        projectSoilSpecs: projectSoilSpecs,
         clientName: '',
         datePerformed: new Date().toISOString().split('T')[0],
         structure: '',
@@ -365,21 +382,35 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       result = await db.get('density_reports', { taskId });
     }
     
-    // Get project concreteSpecs
+    // Get project concreteSpecs and soilSpecs
     let projectConcreteSpecs = {};
+    let projectSoilSpecs = {};
     if (db.isSupabase()) {
       const taskData = await db.get('tasks', { id: taskId });
       if (taskData) {
         const project = await db.get('projects', { id: taskData.projectId });
-        if (project && project.concreteSpecs) {
-          if (typeof project.concreteSpecs === 'string') {
-            try {
-              projectConcreteSpecs = JSON.parse(project.concreteSpecs);
-            } catch (e) {
-              projectConcreteSpecs = {};
+        if (project) {
+          if (project.concreteSpecs) {
+            if (typeof project.concreteSpecs === 'string') {
+              try {
+                projectConcreteSpecs = JSON.parse(project.concreteSpecs);
+              } catch (e) {
+                projectConcreteSpecs = {};
+              }
+            } else {
+              projectConcreteSpecs = project.concreteSpecs;
             }
-          } else {
-            projectConcreteSpecs = project.concreteSpecs;
+          }
+          if (project.soilSpecs) {
+            if (typeof project.soilSpecs === 'string') {
+              try {
+                projectSoilSpecs = JSON.parse(project.soilSpecs);
+              } catch (e) {
+                projectSoilSpecs = {};
+              }
+            } else {
+              projectSoilSpecs = project.soilSpecs;
+            }
           }
         }
       }
@@ -387,7 +418,7 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       const sqliteDb = require('../database');
       const projectData = await new Promise((resolve, reject) => {
         sqliteDb.get(
-          `SELECT p.concreteSpecs
+          `SELECT p.concreteSpecs, p.soilSpecs
            FROM projects p
            INNER JOIN tasks t ON p.id = t.projectId
            WHERE t.id = ?`,
@@ -399,11 +430,20 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
         );
       });
       
-      if (projectData && projectData.concreteSpecs) {
-        try {
-          projectConcreteSpecs = JSON.parse(projectData.concreteSpecs);
-        } catch (e) {
-          projectConcreteSpecs = {};
+      if (projectData) {
+        if (projectData.concreteSpecs) {
+          try {
+            projectConcreteSpecs = JSON.parse(projectData.concreteSpecs);
+          } catch (e) {
+            projectConcreteSpecs = {};
+          }
+        }
+        if (projectData.soilSpecs) {
+          try {
+            projectSoilSpecs = JSON.parse(projectData.soilSpecs);
+          } catch (e) {
+            projectSoilSpecs = {};
+          }
         }
       }
     }
@@ -430,6 +470,7 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
     }
     
     result.projectConcreteSpecs = projectConcreteSpecs;
+    result.projectSoilSpecs = projectSoilSpecs;
     result.projectName = task.projectName;
     result.projectNumber = task.projectNumber;
     

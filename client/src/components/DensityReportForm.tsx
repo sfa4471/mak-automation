@@ -9,7 +9,8 @@ import { proctorAPI } from '../api/proctor';
 import ProjectHomeButton from './ProjectHomeButton';
 import './DensityReportForm.css';
 
-const CONCRETE_STRUCTURE_TYPES = [
+// Fallback structure types if no soil specs are defined in project
+const FALLBACK_STRUCTURE_TYPES = [
   'Slab',
   'Grade Beams',
   'Piers',
@@ -942,18 +943,30 @@ const DensityReportForm: React.FC = () => {
                 disabled={!canEdit}
               >
                 <option value="">Select Structure...</option>
-                {CONCRETE_STRUCTURE_TYPES.map((type) => {
-                  // Only show structures that exist in project concrete specs, or show all if no specs defined
-                  const hasSpecs = formData.projectConcreteSpecs && Object.keys(formData.projectConcreteSpecs).length > 0;
-                  const showType = !hasSpecs || formData.projectConcreteSpecs?.[type];
-                  return showType ? (
+                {(() => {
+                  // Get structure types from project soil specs (keys of soilSpecs object)
+                  // If no soil specs, fall back to concrete specs, then to hardcoded list
+                  let structureTypes: string[] = [];
+                  
+                  if (formData.projectSoilSpecs && Object.keys(formData.projectSoilSpecs).length > 0) {
+                    // Use structure types from soil specs (keys are the structure types)
+                    structureTypes = Object.keys(formData.projectSoilSpecs);
+                  } else if (formData.projectConcreteSpecs && Object.keys(formData.projectConcreteSpecs).length > 0) {
+                    // Fallback to concrete specs if no soil specs
+                    structureTypes = Object.keys(formData.projectConcreteSpecs);
+                  } else {
+                    // Final fallback to hardcoded list
+                    structureTypes = FALLBACK_STRUCTURE_TYPES;
+                  }
+                  
+                  return structureTypes.map((type) => (
                     <option key={type} value={type}>{type}</option>
-                  ) : null;
-                })}
+                  ));
+                })()}
               </select>
-              {formData.structureType && formData.projectConcreteSpecs && !formData.projectConcreteSpecs[formData.structureType] && (
+              {formData.structureType && formData.projectSoilSpecs && !formData.projectSoilSpecs[formData.structureType] && (
                 <small style={{ color: '#dc3545', display: 'block', marginTop: '4px' }}>
-                  No specs set for this structure in project setup.
+                  No soil specs set for this structure in project setup.
                 </small>
               )}
             </div>

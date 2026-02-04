@@ -24,7 +24,8 @@
     "verify-render": "node scripts/verify-render-supabase-deployment.js",
     "pre-deploy-check": "node scripts/pre-deployment-check.js",
     "render-setup": "node scripts/add-to-render-instructions.js",
-    "qa:database": "node scripts/qa-database-verification.js"
+    "qa:database": "node scripts/qa-database-verification.js",
+    "create-admin": "node scripts/create-admin-user.js"
   },
   "keywords": [],
   "author": "",
