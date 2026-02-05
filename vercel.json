@@ -1,7 +1,7 @@
 {
-  "buildCommand": "cd client && npm run build",
+  "buildCommand": "npm run build",
   "outputDirectory": "client/build",
-  "installCommand": "cd client && npm install",
+  "installCommand": "npm run install-all",
   "framework": null,
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
