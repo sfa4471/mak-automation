@@ -380,7 +380,24 @@ const Dashboard: React.FC = () => {
                   >
                     <div className="project-header-content">
                       <div className="project-identifier">
-                        <span className="project-number-primary">{project.projectNumber}</span>
+                        <span className="project-number-primary">
+                          {project.projectNumber}
+                          {project.folderCreation && (
+                            <span 
+                              title={project.folderCreation.success 
+                                ? `Folder: ${project.folderCreation.path || 'N/A'}` 
+                                : `Error: ${project.folderCreation.error || 'Unknown error'}`}
+                              style={{
+                                color: project.folderCreation.success ? '#28a745' : '#dc3545',
+                                marginLeft: '8px',
+                                fontSize: '16px',
+                                cursor: 'help'
+                              }}
+                            >
+                              {project.folderCreation.success ? '📁' : '⚠️'}
+                            </span>
+                          )}
+                        </span>
                         <span className="project-name-secondary">{project.projectName}</span>
                       </div>
                       <span className="project-summary">{taskSummary}</span>
@@ -389,6 +406,30 @@ const Dashboard: React.FC = () => {
                       <span className="accordion-toggle">{isExpanded ? '▼' : '▶'}</span>
                       {isAdmin() && (
                         <>
+                          {project.folderCreation && !project.folderCreation.success && (
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  const result = await projectsAPI.retryFolderCreation(project.id);
+                                  if (result.success) {
+                                    alert(`Folder created successfully!\n\nPath: ${result.folderCreation.path}`);
+                                    // Reload projects to update status
+                                    loadData();
+                                  } else {
+                                    alert(`Failed to create folder:\n\n${result.folderCreation.error}`);
+                                  }
+                                } catch (err: any) {
+                                  alert(`Error: ${err.response?.data?.error || 'Failed to retry folder creation'}`);
+                                }
+                              }}
+                              className="project-details-button"
+                              style={{ marginRight: '10px', fontSize: '12px', padding: '6px 12px' }}
+                              title="Retry folder creation"
+                            >
+                              🔄 Retry Folder
+                            </button>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();

@@ -26,6 +26,18 @@ export interface ConcreteSpecs {
   [structureType: string]: ConcreteSpecRow;
 }
 
+export interface FolderCreationResult {
+  success: boolean;
+  path: string | null;
+  error: string | null;
+  warnings: string[];
+  onedriveResult?: {
+    success: boolean;
+    folderPath?: string;
+    error?: string;
+  } | null;
+}
+
 export interface Project {
   id: number;
   projectNumber: string;
@@ -33,6 +45,7 @@ export interface Project {
   customerEmails?: string[];
   soilSpecs?: SoilSpecs;
   concreteSpecs?: ConcreteSpecs;
+  folderCreation?: FolderCreationResult;
   // Legacy fields (kept for backward compatibility, but deprecated)
   projectSpec?: string;
   customerEmail?: string;
@@ -70,6 +83,11 @@ export const projectsAPI = {
 
   update: async (id: number, data: Partial<Project>): Promise<Project> => {
     const response = await api.put<Project>(`/projects/${id}`, data);
+    return response.data;
+  },
+
+  retryFolderCreation: async (id: number): Promise<{ success: boolean; folderCreation: FolderCreationResult }> => {
+    const response = await api.post<{ success: boolean; folderCreation: FolderCreationResult }>(`/projects/${id}/retry-folder`);
     return response.data;
   },
 };

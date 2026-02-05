@@ -203,7 +203,34 @@ const CreateProject: React.FC = () => {
       
       console.log('📤 Final data being sent to API:', JSON.parse(JSON.stringify(createData)));
       
-      await projectsAPI.create(createData);
+      const response = await projectsAPI.create(createData);
+      
+      // Check folder creation status
+      if (response.folderCreation) {
+        const folderStatus = response.folderCreation;
+        
+        if (folderStatus.success) {
+          // Show success message with path
+          let successMsg = `Project created successfully!\n\nFolder created at:\n${folderStatus.path}`;
+          if (folderStatus.warnings && folderStatus.warnings.length > 0) {
+            successMsg += '\n\nWarnings:\n' + folderStatus.warnings.join('\n');
+          }
+          if (folderStatus.onedriveResult?.success) {
+            successMsg += `\n\nOneDrive folder: ${folderStatus.onedriveResult.folderPath}`;
+          } else if (folderStatus.onedriveResult?.error && !folderStatus.onedriveResult.error.includes('not configured')) {
+            successMsg += `\n\nOneDrive warning: ${folderStatus.onedriveResult.error}`;
+          }
+          alert(successMsg);
+        } else {
+          // Show warning but don't block navigation
+          let warningMsg = `Project created successfully, but folder creation failed:\n\n${folderStatus.error}\n\nYou can retry folder creation from the project details page.`;
+          if (folderStatus.warnings && folderStatus.warnings.length > 0) {
+            warningMsg += '\n\nAdditional warnings:\n' + folderStatus.warnings.join('\n');
+          }
+          alert(warningMsg);
+        }
+      }
+      
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create project');
