@@ -6,8 +6,8 @@ import './ProjectDetails.css';
 
 const SOIL_STRUCTURE_TYPES = [
   'Building Pad',
-  'Parking Lot',
-  'Side Walk',
+  'Parking lot',
+  'Sidewalk',
   'Approach',
   'Utilities',
   'Other'
@@ -17,7 +17,7 @@ const CONCRETE_STRUCTURE_TYPES = [
   'Slab',
   'Grade Beams',
   'Piers',
-  'Side Walk',
+  'Sidewalk',
   'Paving',
   'Curb',
   'Other'
@@ -60,23 +60,9 @@ const ProjectDetails: React.FC = () => {
         setCustomerEmails(['']);
       }
       
-      // Load soil specs and initialize default temp ranges if missing
+      // Load soil specs
       let loadedSoilSpecs = projectData.soilSpecs || {};
-      
-      // Initialize default temp ranges for each structure type if missing
-      const initializedSoilSpecs: SoilSpecs = {};
-      SOIL_STRUCTURE_TYPES.forEach((structureType) => {
-        const spec = loadedSoilSpecs[structureType] || {};
-        initializedSoilSpecs[structureType] = {
-          ...spec,
-          // Default Ambient Temp range: 35-95
-          ambientTempF: spec.ambientTempF || '35-95',
-          // Default Concrete Temp range: 45-95
-          concreteTempF: spec.concreteTempF || '45-95',
-        };
-      });
-      
-      setSoilSpecs(initializedSoilSpecs);
+      setSoilSpecs(loadedSoilSpecs);
       
       // Load concrete specs
       if (projectData.concreteSpecs) {
@@ -109,48 +95,12 @@ const ProjectDetails: React.FC = () => {
   };
 
   const validateSoilSpecs = (): boolean => {
-    const errors: { [key: string]: string } = {};
-    
-    Object.entries(soilSpecs).forEach(([structureType, spec]) => {
-      if (spec.ambientTempF) {
-        // Validate range format or single value
-        const rangeMatch = spec.ambientTempF.match(/^(\d+)-(\d+)$/);
-        if (rangeMatch) {
-          const min = parseInt(rangeMatch[1]);
-          const max = parseInt(rangeMatch[2]);
-          if (min < 35 || min > 95 || max < 35 || max > 95 || min > max) {
-            errors[`soil-${structureType}-ambientTempF`] = 'Range must be 35-95, and min must be ≤ max';
-          }
-        } else {
-          const temp = parseFloat(spec.ambientTempF);
-          if (isNaN(temp) || temp < 35 || temp > 95) {
-            errors[`soil-${structureType}-ambientTempF`] = 'Must be between 35 and 95';
-          }
-        }
-      }
-      if (spec.concreteTempF) {
-        // Validate range format or single value
-        const rangeMatch = spec.concreteTempF.match(/^(\d+)-(\d+)$/);
-        if (rangeMatch) {
-          const min = parseInt(rangeMatch[1]);
-          const max = parseInt(rangeMatch[2]);
-          if (min < 45 || min > 95 || max < 45 || max > 95 || min > max) {
-            errors[`soil-${structureType}-concreteTempF`] = 'Range must be 45-95, and min must be ≤ max';
-          }
-        } else {
-          const temp = parseFloat(spec.concreteTempF);
-          if (isNaN(temp) || temp < 45 || temp > 95) {
-            errors[`soil-${structureType}-concreteTempF`] = 'Must be between 45 and 95';
-          }
-        }
-      }
-    });
-    
-    setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+    // Soil Specs only have densityPct and moistureRange, no temperature validation needed
+    // Validation can be added here if needed in the future
+    return true;
   };
 
-  const updateSoilSpec = (structureType: string, field: string, value: string) => {
+  const updateSoilSpec = (structureType: string, field: string, value: any) => {
     setSoilSpecs({
       ...soilSpecs,
       [structureType]: {
@@ -177,15 +127,6 @@ const ProjectDetails: React.FC = () => {
     });
   };
 
-  const updateConcreteMoistureRange = (structureType: string, min: string, max: string) => {
-    setConcreteSpecs({
-      ...concreteSpecs,
-      [structureType]: {
-        ...concreteSpecs[structureType],
-        moistureRange: { min, max }
-      }
-    });
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -370,7 +311,7 @@ const ProjectDetails: React.FC = () => {
 
           <div className="form-section">
             <h2>Concrete Specs</h2>
-            {hasSoilSpecs ? (
+            {hasConcreteSpecs ? (
               <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -384,16 +325,16 @@ const ProjectDetails: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {SOIL_STRUCTURE_TYPES.map((structureType) => {
-                      const spec = soilSpecs[structureType] || {};
+                    {CONCRETE_STRUCTURE_TYPES.map((structureType) => {
+                      const spec = concreteSpecs[structureType] || {};
                       return (
                         <tr key={structureType}>
-                          <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500' }}>{structureType}</td>
+                            <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500' }}>{structureType}</td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <input
                               type="text"
                               value={spec.specStrengthPsi || ''}
-                              onChange={(e) => updateSoilSpec(structureType, 'specStrengthPsi', e.target.value)}
+                              onChange={(e) => updateConcreteSpec(structureType, 'specStrengthPsi', e.target.value)}
                               className="form-input"
                               style={{ width: '100%', padding: '5px' }}
                             />
@@ -402,75 +343,25 @@ const ProjectDetails: React.FC = () => {
                             <input
                               type="text"
                               value={spec.ambientTempF || '35-95'}
-                              onChange={(e) => updateSoilSpec(structureType, 'ambientTempF', e.target.value)}
-                              onBlur={(e) => {
-                                // Ensure value is in range format
-                                const val = e.target.value;
-                                if (val && !val.match(/^\d+-\d+$/)) {
-                                  const num = parseFloat(val);
-                                  if (!isNaN(num)) {
-                                    const clamped = Math.max(35, Math.min(95, Math.round(num)));
-                                    updateSoilSpec(structureType, 'ambientTempF', `${clamped}-95`);
-                                  } else {
-                                    updateSoilSpec(structureType, 'ambientTempF', '35-95');
-                                  }
-                                } else if (!val) {
-                                  updateSoilSpec(structureType, 'ambientTempF', '35-95');
-                                }
-                              }}
-                              placeholder="35-95"
+                              onChange={(e) => updateConcreteSpec(structureType, 'ambientTempF', e.target.value)}
                               className="form-input"
-                              style={{ 
-                                width: '100%', 
-                                padding: '5px',
-                                border: validationErrors[`soil-${structureType}-ambientTempF`] ? '1px solid #dc3545' : undefined
-                              }}
+                              style={{ width: '100%', padding: '5px' }}
                             />
-                            {validationErrors[`soil-${structureType}-ambientTempF`] && (
-                              <div style={{ fontSize: '11px', color: '#dc3545', marginTop: '2px' }}>
-                                {validationErrors[`soil-${structureType}-ambientTempF`]}
-                              </div>
-                            )}
                           </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <input
                               type="text"
                               value={spec.concreteTempF || '45-95'}
-                              onChange={(e) => updateSoilSpec(structureType, 'concreteTempF', e.target.value)}
-                              onBlur={(e) => {
-                                // Ensure value is in range format
-                                const val = e.target.value;
-                                if (val && !val.match(/^\d+-\d+$/)) {
-                                  const num = parseFloat(val);
-                                  if (!isNaN(num)) {
-                                    const clamped = Math.max(45, Math.min(95, Math.round(num)));
-                                    updateSoilSpec(structureType, 'concreteTempF', `${clamped}-95`);
-                                  } else {
-                                    updateSoilSpec(structureType, 'concreteTempF', '45-95');
-                                  }
-                                } else if (!val) {
-                                  updateSoilSpec(structureType, 'concreteTempF', '45-95');
-                                }
-                              }}
-                              placeholder="45-95"
+                              onChange={(e) => updateConcreteSpec(structureType, 'concreteTempF', e.target.value)}
                               className="form-input"
-                              style={{ 
-                                width: '100%', 
-                                padding: '5px',
-                                border: validationErrors[`soil-${structureType}-concreteTempF`] ? '1px solid #dc3545' : undefined
-                              }}
+                              style={{ width: '100%', padding: '5px' }}
                             />
-                            {validationErrors[`soil-${structureType}-concreteTempF`] && (
-                              <div style={{ fontSize: '11px', color: '#dc3545', marginTop: '2px' }}>
-                                {validationErrors[`soil-${structureType}-concreteTempF`]}
-                              </div>
-                            )}
                           </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <input
                               type="text"
                               value={spec.slump || ''}
-                              onChange={(e) => updateSoilSpec(structureType, 'slump', e.target.value)}
+                              onChange={(e) => updateConcreteSpec(structureType, 'slump', e.target.value)}
                               className="form-input"
                               style={{ width: '100%', padding: '5px' }}
                             />
@@ -479,7 +370,7 @@ const ProjectDetails: React.FC = () => {
                             <input
                               type="text"
                               value={spec.airContent || ''}
-                              onChange={(e) => updateSoilSpec(structureType, 'airContent', e.target.value)}
+                              onChange={(e) => updateConcreteSpec(structureType, 'airContent', e.target.value)}
                               className="form-input"
                               style={{ width: '100%', padding: '5px' }}
                             />
@@ -497,7 +388,7 @@ const ProjectDetails: React.FC = () => {
 
           <div className="form-section">
             <h2>Soil Specs</h2>
-            {hasConcreteSpecs ? (
+            {hasSoilSpecs ? (
               <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -508,8 +399,8 @@ const ProjectDetails: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {CONCRETE_STRUCTURE_TYPES.map((structureType) => {
-                      const spec = concreteSpecs[structureType] || {};
+                    {SOIL_STRUCTURE_TYPES.map((structureType) => {
+                      const spec = soilSpecs[structureType] || {};
                       const moistureRange = spec.moistureRange || {};
                       return (
                         <tr key={structureType}>
@@ -518,7 +409,7 @@ const ProjectDetails: React.FC = () => {
                             <input
                               type="text"
                               value={spec.densityPct || ''}
-                              onChange={(e) => updateConcreteSpec(structureType, 'densityPct', e.target.value)}
+                              onChange={(e) => updateSoilSpec(structureType, 'densityPct', e.target.value)}
                               className="form-input"
                               style={{ width: '100%', padding: '5px' }}
                             />
@@ -528,7 +419,11 @@ const ProjectDetails: React.FC = () => {
                               <input
                                 type="text"
                                 value={moistureRange.min || ''}
-                                onChange={(e) => updateConcreteMoistureRange(structureType, e.target.value, moistureRange.max || '')}
+                                onChange={(e) => {
+                                  const currentSpec = soilSpecs[structureType] || {};
+                                  const currentRange = currentSpec.moistureRange || {};
+                                  updateSoilSpec(structureType, 'moistureRange', { min: e.target.value, max: currentRange.max || '' });
+                                }}
                                 placeholder="Min"
                                 className="form-input"
                                 style={{ width: '80px', padding: '5px' }}
@@ -537,7 +432,11 @@ const ProjectDetails: React.FC = () => {
                               <input
                                 type="text"
                                 value={moistureRange.max || ''}
-                                onChange={(e) => updateConcreteMoistureRange(structureType, moistureRange.min || '', e.target.value)}
+                                onChange={(e) => {
+                                  const currentSpec = soilSpecs[structureType] || {};
+                                  const currentRange = currentSpec.moistureRange || {};
+                                  updateSoilSpec(structureType, 'moistureRange', { min: currentRange.min || '', max: e.target.value });
+                                }}
                                 placeholder="Max"
                                 className="form-input"
                                 style={{ width: '80px', padding: '5px' }}
@@ -551,7 +450,7 @@ const ProjectDetails: React.FC = () => {
                 </table>
               </div>
             ) : (
-              <p style={{ color: '#666', fontStyle: 'italic' }}>No concrete specs defined for this project.</p>
+              <p style={{ color: '#666', fontStyle: 'italic' }}>No soil specs defined for this project.</p>
             )}
           </div>
 

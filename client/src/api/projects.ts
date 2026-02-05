@@ -1,12 +1,7 @@
 import api from './api';
 
 export interface SoilSpecRow {
-  specStrengthPsi?: string;
-  ambientTempF?: string;
-  concreteTempF?: string;
-  slump?: string;
-  airContent?: string;
-  // Density measurement properties
+  // Density measurement properties for Soil Specs
   densityPct?: string;
   moistureRange?: {
     min?: string;
@@ -15,11 +10,12 @@ export interface SoilSpecRow {
 }
 
 export interface ConcreteSpecRow {
-  densityPct?: string;
-  moistureRange?: {
-    min?: string;
-    max?: string;
-  };
+  // Concrete testing properties for Concrete Specs
+  specStrengthPsi?: string;
+  ambientTempF?: string;
+  concreteTempF?: string;
+  slump?: string;
+  airContent?: string;
 }
 
 export interface SoilSpecs {

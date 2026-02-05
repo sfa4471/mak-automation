@@ -5,7 +5,7 @@ import { wp1API } from '../api/wp1';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
-import { SoilSpecs, projectsAPI } from '../api/projects';
+import { ConcreteSpecs, projectsAPI } from '../api/projects';
 import { getApiBaseUrl } from '../utils/apiUrl';
 import ProjectHomeButton from './ProjectHomeButton';
 import './WP1Form.css';
@@ -30,7 +30,7 @@ const WP1Form: React.FC = () => {
   const [technicians, setTechnicians] = useState<User[]>([]);
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
-  const [soilSpecs, setSoilSpecs] = useState<SoilSpecs>({});
+  const [concreteSpecs, setConcreteSpecs] = useState<ConcreteSpecs>({});
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const lastSavedDataRef = useRef<string>('');
 
@@ -162,35 +162,35 @@ const WP1Form: React.FC = () => {
       
       // Auto-populate specs from project if not already set
       const projectSpecs = (data as any).projectSpecs || {};
-      let soilSpecsData = (data as any).soilSpecs || {};
+      let concreteSpecsData = (data as any).concreteSpecs || {};
       
-      // If soilSpecs not in response, fetch project directly
-      if (!soilSpecsData || Object.keys(soilSpecsData).length === 0) {
+      // If concreteSpecs not in response, fetch project directly
+      if (!concreteSpecsData || Object.keys(concreteSpecsData).length === 0) {
         try {
           const projectId = wpOrTask?.projectId;
           if (projectId) {
             const project = await projectsAPI.get(projectId);
-            soilSpecsData = project.soilSpecs || {};
-            console.log('Fetched project soilSpecs:', soilSpecsData);
-            console.log('Soil Specs structure names:', Object.keys(soilSpecsData));
+            concreteSpecsData = project.concreteSpecs || {};
+            console.log('Fetched project concreteSpecs:', concreteSpecsData);
+            console.log('Soil Specs structure names:', Object.keys(concreteSpecsData));
           }
         } catch (err) {
-          console.error('Error fetching project for soilSpecs:', err);
+          console.error('Error fetching project for concreteSpecs:', err);
         }
       } else {
-        console.log('Soil Specs from API response:', soilSpecsData);
-        console.log('Soil Specs structure names:', Object.keys(soilSpecsData));
+        console.log('Soil Specs from API response:', concreteSpecsData);
+        console.log('Soil Specs structure names:', Object.keys(concreteSpecsData));
       }
       
-      setSoilSpecs(soilSpecsData);
+      setConcreteSpecs(concreteSpecsData);
       const updatedData = { ...data };
       
-      // Normalize structure value to match soilSpecs keys
+      // Normalize structure value to match concreteSpecs keys
       // Handle cases where structure might be saved as "_building_pad" instead of "Building Pad"
-      if (updatedData.structure && soilSpecsData && Object.keys(soilSpecsData).length > 0) {
+      if (updatedData.structure && concreteSpecsData && Object.keys(concreteSpecsData).length > 0) {
         const structureValue = updatedData.structure;
-        // Check if structure value matches a key in soilSpecs
-        if (!soilSpecsData[structureValue]) {
+        // Check if structure value matches a key in concreteSpecs
+        if (!concreteSpecsData[structureValue]) {
           // Try to find a matching key by normalizing
           // Convert "_building_pad" -> "Building Pad" or "building pad" -> "Building Pad"
           const normalizedValue = structureValue
@@ -201,7 +201,7 @@ const WP1Form: React.FC = () => {
             .join(' ');
           
           // Find matching key (case-insensitive, handle spaces)
-          const matchingKey = Object.keys(soilSpecsData).find(key => 
+          const matchingKey = Object.keys(concreteSpecsData).find(key => 
             key.toLowerCase().replace(/\s+/g, ' ') === normalizedValue.toLowerCase().replace(/\s+/g, ' ')
           );
           
@@ -209,7 +209,7 @@ const WP1Form: React.FC = () => {
             console.log(`Normalized structure from "${structureValue}" to "${matchingKey}"`);
             updatedData.structure = matchingKey;
           } else {
-            console.warn(`Structure "${structureValue}" not found in soilSpecs. Available keys:`, Object.keys(soilSpecsData));
+            console.warn(`Structure "${structureValue}" not found in concreteSpecs. Available keys:`, Object.keys(concreteSpecsData));
           }
         }
       }
@@ -221,11 +221,11 @@ const WP1Form: React.FC = () => {
         ambientTempSpecs: updatedData.ambientTempSpecs,
         concreteTempSpecs: updatedData.concreteTempSpecs
       });
-      console.log('Loaded project soilSpecs:', soilSpecsData);
+      console.log('Loaded project concreteSpecs:', concreteSpecsData);
       
       // Auto-populate specs from Soil Specs if structure is already selected
       if (updatedData.structure) {
-        const selectedSpec = soilSpecsData[updatedData.structure];
+        const selectedSpec = concreteSpecsData[updatedData.structure];
         console.log('Selected structure:', updatedData.structure);
         console.log('SoilSpecs row found:', selectedSpec);
         
@@ -270,7 +270,7 @@ const WP1Form: React.FC = () => {
           });
         } else {
           console.log('No SoilSpecs row found for structure:', updatedData.structure);
-          console.log('Available structure keys:', Object.keys(soilSpecsData));
+          console.log('Available structure keys:', Object.keys(concreteSpecsData));
         }
       } else {
         console.log('No structure selected in loaded task');
@@ -497,9 +497,9 @@ const WP1Form: React.FC = () => {
     }, 800);
   }, [id, isTaskRoute, isAdmin, technicians]);
 
-  // Handle structure selection - auto-populate specs from Soil Specs
+  // Handle structure selection - auto-populate specs from Concrete Specs
   const handleStructureChange = (structureType: string) => {
-    const selectedSpec = soilSpecs[structureType];
+    const selectedSpec = concreteSpecs[structureType];
     let updatedData = { ...formData, structure: structureType };
     
     if (selectedSpec) {
@@ -509,8 +509,8 @@ const WP1Form: React.FC = () => {
       console.log('selectedSpec.ambientTempF:', selectedSpec.ambientTempF);
       console.log('selectedSpec.concreteTempF:', selectedSpec.concreteTempF);
       
-      // Explicitly map Soil Specs to canonical form keys
-      // Use the actual field names from SoilSpecRow interface
+      // Explicitly map Concrete Specs to canonical form keys
+      // Use the actual field names from ConcreteSpecRow interface
       // Apply default values if missing (35-95 for ambient, 45-95 for concrete)
       const ambientTempValue = selectedSpec.ambientTempF || '35-95';
       const concreteTempValue = selectedSpec.concreteTempF || '45-95';
@@ -937,9 +937,9 @@ const WP1Form: React.FC = () => {
       ambientTempSpecs: formData.ambientTempSpecs,
       concreteTempSpecs: formData.concreteTempSpecs,
       structure: formData.structure,
-      'soilSpecs available': Object.keys(soilSpecs).length > 0
+      'concreteSpecs available': Object.keys(concreteSpecs).length > 0
     });
-  }, [formData.ambientTempSpecs, formData.concreteTempSpecs, formData.structure, soilSpecs]);
+  }, [formData.ambientTempSpecs, formData.concreteTempSpecs, formData.structure, concreteSpecs]);
 
   if (loading) {
     return <div className="wp1-loading">Loading...</div>;
@@ -1112,10 +1112,10 @@ const WP1Form: React.FC = () => {
                   type="text"
                   value={formData.specStrength || ''}
                   onChange={(e) => handleFieldChange('specStrength', e.target.value)}
-                  readOnly={(isTechnician || (!!formData.structure && !!soilSpecs[formData.structure]))}
-                  className={(isTechnician || (!!formData.structure && !!soilSpecs[formData.structure])) ? 'readonly' : ''}
+                  readOnly={(isTechnician || (!!formData.structure && !!concreteSpecs[formData.structure]))}
+                  className={(isTechnician || (!!formData.structure && !!concreteSpecs[formData.structure])) ? 'readonly' : ''}
                   placeholder="Auto-populated from project specs"
-                  title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
+                  title={!!formData.structure && !!concreteSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                   style={{ width: '180px' }}
                 />
                 <span>at</span>
@@ -1143,8 +1143,8 @@ const WP1Form: React.FC = () => {
                 style={{ width: '100%', padding: '8px' }}
               >
                 <option value="">Select Structure...</option>
-                {Object.keys(soilSpecs).length > 0 ? (
-                  Object.keys(soilSpecs).map((structureType) => (
+                {Object.keys(concreteSpecs).length > 0 ? (
+                  Object.keys(concreteSpecs).map((structureType) => (
                     <option key={structureType} value={structureType}>
                       {structureType}
                     </option>
@@ -1282,9 +1282,9 @@ const WP1Form: React.FC = () => {
                       type="text"
                       value={formData.ambientTempSpecs || ''}
                       onChange={(e) => handleFieldChange('ambientTempSpecs', e.target.value)}
-                      readOnly={!!formData.structure && !!soilSpecs[formData.structure]}
-                      className={!!formData.structure && !!soilSpecs[formData.structure] ? 'readonly' : ''}
-                      title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
+                      readOnly={!!formData.structure && !!concreteSpecs[formData.structure]}
+                      className={!!formData.structure && !!concreteSpecs[formData.structure] ? 'readonly' : ''}
+                      title={!!formData.structure && !!concreteSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                     />
                   </td>
                 </tr>
@@ -1302,9 +1302,9 @@ const WP1Form: React.FC = () => {
                       type="text"
                       value={formData.concreteTempSpecs || ''}
                       onChange={(e) => handleFieldChange('concreteTempSpecs', e.target.value)}
-                      readOnly={!!formData.structure && !!soilSpecs[formData.structure]}
-                      className={!!formData.structure && !!soilSpecs[formData.structure] ? 'readonly' : ''}
-                      title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
+                      readOnly={!!formData.structure && !!concreteSpecs[formData.structure]}
+                      className={!!formData.structure && !!concreteSpecs[formData.structure] ? 'readonly' : ''}
+                      title={!!formData.structure && !!concreteSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                     />
                   </td>
                 </tr>
@@ -1322,9 +1322,9 @@ const WP1Form: React.FC = () => {
                       type="text"
                       value={formData.slumpSpecs || ''}
                       onChange={(e) => handleFieldChange('slumpSpecs', e.target.value)}
-                      readOnly={!!formData.structure && !!soilSpecs[formData.structure]}
-                      className={!!formData.structure && !!soilSpecs[formData.structure] ? 'readonly' : ''}
-                      title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
+                      readOnly={!!formData.structure && !!concreteSpecs[formData.structure]}
+                      className={!!formData.structure && !!concreteSpecs[formData.structure] ? 'readonly' : ''}
+                      title={!!formData.structure && !!concreteSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                     />
                   </td>
                 </tr>
@@ -1342,9 +1342,9 @@ const WP1Form: React.FC = () => {
                       type="text"
                       value={formData.airContentSpecs || ''}
                       onChange={(e) => handleFieldChange('airContentSpecs', e.target.value)}
-                      readOnly={!!formData.structure && !!soilSpecs[formData.structure]}
-                      className={!!formData.structure && !!soilSpecs[formData.structure] ? 'readonly' : ''}
-                      title={!!formData.structure && !!soilSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
+                      readOnly={!!formData.structure && !!concreteSpecs[formData.structure]}
+                      className={!!formData.structure && !!concreteSpecs[formData.structure] ? 'readonly' : ''}
+                      title={!!formData.structure && !!concreteSpecs[formData.structure] ? 'Auto-filled from Project Concrete Specs' : ''}
                     />
                   </td>
                 </tr>
