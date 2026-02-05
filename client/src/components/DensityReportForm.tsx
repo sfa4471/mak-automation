@@ -534,15 +534,16 @@ const DensityReportForm: React.FC = () => {
     if (!formData || !formData.projectSoilSpecs) return;
     
     const soilSpecs = formData.projectSoilSpecs;
-    const selectedSpec = soilSpecs[structureType] as SoilSpecRow | undefined;
+    const selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType] as SoilSpecRow | undefined;
     
     let updatedData = { ...formData, structureType, structure: structureType };
     
     // Auto-fill specs if available
     if (selectedSpec) {
-      // Set density percent
-      if ('densityPct' in selectedSpec && selectedSpec.densityPct) {
-        updatedData = { ...updatedData, densSpecPercent: selectedSpec.densityPct, specDensityPct: selectedSpec.densityPct };
+      // Set density percent - use type-safe property access
+      const densityPct = (selectedSpec as SoilSpecRow).densityPct;
+      if (densityPct) {
+        updatedData = { ...updatedData, densSpecPercent: densityPct, specDensityPct: densityPct };
       }
       
       // Set moisture range
