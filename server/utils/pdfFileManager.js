@@ -5,6 +5,44 @@ require('dotenv').config();
 // Get base path from environment variable, default to ./pdfs in project root
 const PDF_BASE_PATH = process.env.PDF_BASE_PATH || path.join(__dirname, '..', 'pdfs');
 
+// Lazy load OneDrive service to avoid circular dependencies
+let onedriveService = null;
+function getOneDriveService() {
+  if (!onedriveService) {
+    try {
+      onedriveService = require('../services/onedriveService');
+    } catch (err) {
+      // OneDrive service not available, will use default path
+      return null;
+    }
+  }
+  return onedriveService;
+}
+
+/**
+ * Get the effective base path for PDF storage
+ * Checks OneDrive first, falls back to PDF_BASE_PATH
+ * @returns {Promise<string>} The base path to use
+ */
+async function getEffectiveBasePath() {
+  const service = getOneDriveService();
+  if (service) {
+    try {
+      const onedrivePath = await service.getBasePath();
+      if (onedrivePath) {
+        // Validate OneDrive path is still valid
+        const status = await service.getPathStatus();
+        if (status.valid && status.isWritable) {
+          return onedrivePath;
+        }
+      }
+    } catch (error) {
+      console.warn('Error getting OneDrive path, using default:', error.message);
+    }
+  }
+  return PDF_BASE_PATH;
+}
+
 // Test type to folder name mapping
 const TEST_TYPE_FOLDERS = {
   'PROCTOR': 'Proctor',
@@ -17,12 +55,15 @@ const TEST_TYPE_FOLDERS = {
 
 /**
  * Ensure base PDF directory exists
+ * @param {string} basePath - Base path to ensure (optional, will be determined if not provided)
  */
-function ensureBaseDirectory() {
-  if (!fs.existsSync(PDF_BASE_PATH)) {
-    fs.mkdirSync(PDF_BASE_PATH, { recursive: true });
-    console.log(`Created PDF base directory: ${PDF_BASE_PATH}`);
+async function ensureBaseDirectory(basePath = null) {
+  const effectivePath = basePath || await getEffectiveBasePath();
+  if (!fs.existsSync(effectivePath)) {
+    fs.mkdirSync(effectivePath, { recursive: true });
+    console.log(`Created PDF base directory: ${effectivePath}`);
   }
+  return effectivePath;
 }
 
 /**
@@ -38,14 +79,15 @@ function sanitizeProjectNumber(projectNumber) {
 /**
  * Ensure project directory exists and create test type subdirectories
  * @param {string} projectNumber - The project number (e.g., "MAK-2025-8188")
- * @returns {string} - Path to project directory
+ * @returns {Promise<string>} - Path to project directory
  */
-function ensureProjectDirectory(projectNumber) {
-  ensureBaseDirectory();
+async function ensureProjectDirectory(projectNumber) {
+  const basePath = await getEffectiveBasePath();
+  await ensureBaseDirectory(basePath);
   
   // Sanitize project number for filesystem safety
   const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
-  const projectDir = path.join(PDF_BASE_PATH, sanitizedProjectNumber);
+  const projectDir = path.join(basePath, sanitizedProjectNumber);
   
   if (!fs.existsSync(projectDir)) {
     fs.mkdirSync(projectDir, { recursive: true });
@@ -78,45 +120,44 @@ function getTestTypeFolder(taskType) {
  * @param {string} taskType - Task type
  * @returns {Promise<number>} - Next sequence number (01, 02, etc.)
  */
-function getNextSequenceNumber(projectNumber, taskType) {
-  return new Promise((resolve, reject) => {
-    try {
-      const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
-      const projectDir = path.join(PDF_BASE_PATH, sanitizedProjectNumber);
-      const testTypeFolder = getTestTypeFolder(taskType);
-      const testTypeDir = path.join(projectDir, testTypeFolder);
+async function getNextSequenceNumber(projectNumber, taskType) {
+  try {
+    const basePath = await getEffectiveBasePath();
+    const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
+    const projectDir = path.join(basePath, sanitizedProjectNumber);
+    const testTypeFolder = getTestTypeFolder(taskType);
+    const testTypeDir = path.join(projectDir, testTypeFolder);
       
-      if (!fs.existsSync(testTypeDir)) {
-        return resolve(1); // First file in this test type
-      }
-      
-      // Read all files in the test type directory
-      const files = fs.readdirSync(testTypeDir).filter(file => 
-        file.endsWith('.pdf') && 
-        !file.includes('_REV') // Exclude revision files from sequence counting
-      );
-      
-      // Extract sequence numbers from filenames
-      // Format: <ProjectID>_<TestType>_<Sequence>_Field_<Date>.pdf
-      const sequenceRegex = /_(\d+)_Field_/;
-      const sequences = files
-        .map(file => {
-          const match = file.match(sequenceRegex);
-          return match ? parseInt(match[1], 10) : 0;
-        })
-        .filter(num => num > 0);
-      
-      if (sequences.length === 0) {
-        return resolve(1);
-      }
-      
-      const maxSequence = Math.max(...sequences);
-      resolve(maxSequence + 1);
-    } catch (error) {
-      console.error('Error getting sequence number:', error);
-      reject(error);
+    if (!fs.existsSync(testTypeDir)) {
+      return 1; // First file in this test type
     }
-  });
+    
+    // Read all files in the test type directory
+    const files = fs.readdirSync(testTypeDir).filter(file => 
+      file.endsWith('.pdf') && 
+      !file.includes('_REV') // Exclude revision files from sequence counting
+    );
+    
+    // Extract sequence numbers from filenames
+    // Format: <ProjectID>_<TestType>_<Sequence>_Field_<Date>.pdf
+    const sequenceRegex = /_(\d+)_Field_/;
+    const sequences = files
+      .map(file => {
+        const match = file.match(sequenceRegex);
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter(num => num > 0);
+    
+    if (sequences.length === 0) {
+      return 1;
+    }
+    
+    const maxSequence = Math.max(...sequences);
+    return maxSequence + 1;
+  } catch (error) {
+    console.error('Error getting sequence number:', error);
+    throw error;
+  }
 }
 
 /**
@@ -229,7 +270,8 @@ function generateFilename(projectNumber, taskType, sequence, fieldDate, isRevisi
  */
 async function getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration = false) {
   // Ensure project directory exists
-  ensureProjectDirectory(projectNumber);
+  const basePath = await getEffectiveBasePath();
+  await ensureProjectDirectory(projectNumber);
   
   // Get sequence number
   const sequence = await getNextSequenceNumber(projectNumber, taskType);
@@ -237,7 +279,7 @@ async function getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration
   // Get test type folder
   const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
   const testTypeFolder = getTestTypeFolder(taskType);
-  const testTypeDir = path.join(PDF_BASE_PATH, sanitizedProjectNumber, testTypeFolder);
+  const testTypeDir = path.join(basePath, sanitizedProjectNumber, testTypeFolder);
   
   // Generate base filename
   const baseFilename = generateFilename(projectNumber, taskType, sequence, fieldDate, false, 0);

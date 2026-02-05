@@ -4,6 +4,7 @@ const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { ensureProjectDirectory } = require('../utils/pdfFileManager');
+const onedriveService = require('../services/onedriveService');
 
 const router = express.Router();
 
@@ -355,10 +356,25 @@ router.post('/', authenticate, requireAdmin, [
 
     // Create project folder structure for PDF storage (use project number, not ID)
     try {
-      ensureProjectDirectory(projectNumber);
+      // Create folder in default location (or OneDrive if configured)
+      await ensureProjectDirectory(projectNumber);
     } catch (folderError) {
       console.error('Error creating project folder:', folderError);
       // Continue even if folder creation fails
+    }
+    
+    // Also create OneDrive folder if OneDrive is configured
+    try {
+      const onedriveResult = await onedriveService.ensureProjectFolder(projectNumber);
+      if (onedriveResult.success) {
+        console.log(`✅ Created OneDrive project folder: ${onedriveResult.folderPath}`);
+      } else if (onedriveResult.error && !onedriveResult.error.includes('not configured')) {
+        // Only log if it's not just "not configured" (which is expected if OneDrive isn't set up)
+        console.warn('OneDrive folder creation warning:', onedriveResult.error);
+      }
+    } catch (onedriveError) {
+      console.error('Error creating OneDrive project folder:', onedriveError);
+      // Continue even if OneDrive folder creation fails
     }
 
     // Parse JSON fields for response
