@@ -861,7 +861,9 @@ const DensityReportForm: React.FC = () => {
       }
       const { getApiBaseUrl } = require('../utils/apiUrl');
       const baseUrl = getApiBaseUrl();
-      const pdfUrl = `${baseUrl}/api/pdf/density/${task.id}`;
+      // Ensure baseUrl doesn't already end with /api to avoid double /api/api/
+      const cleanBaseUrl = baseUrl.replace(/\/api\/?$/, '');
+      const pdfUrl = `${cleanBaseUrl}/api/pdf/density/${task.id}`;
       
       const response = await fetch(pdfUrl, {
         method: 'GET',
