@@ -201,31 +201,19 @@ const DensityReportForm: React.FC = () => {
       }
       
       // Ensure header fields are properly initialized from loaded data
+      let initializedData: DensityReport | null = null;
+      
       if (reportData) {
         // Ensure clientName, datePerformed, structure, and structureType are set (even if empty strings)
-        const initializedData = {
+        initializedData = {
           ...reportData,
           clientName: reportData.clientName || '',
           datePerformed: reportData.datePerformed || new Date().toISOString().split('T')[0],
           structure: reportData.structure || '',
           structureType: reportData.structureType || reportData.structure || ''
         };
-        setFormData(initializedData);
-        lastSavedDataRef.current = JSON.stringify(initializedData);
-      } else {
-        setFormData(reportData);
-        if (reportData) {
-          lastSavedDataRef.current = JSON.stringify(reportData);
-        }
-      }
-      
-      // Reset auto-population flag when loading new data
-      hasAutoPopulatedRef.current = false;
-      // Clear proctor cache when loading new project
-      proctorCacheRef.current = {};
-
-      // Initialize moisture spec range from min/max values
-      if (reportData) {
+        
+        // Initialize moisture spec range from min/max values
         const min = reportData.moistSpecMin || '';
         const max = reportData.moistSpecMax || '';
         if (min && max) {
@@ -247,26 +235,39 @@ const DensityReportForm: React.FC = () => {
           // Only auto-populate if specs are missing but structure type is set
           if (selectedSpec && (!reportData.densSpecPercent || !reportData.moistSpecMin)) {
             const densityPct = selectedSpec.densityPct;
-            const min = selectedSpec.moistureRange?.min || '';
-            const max = selectedSpec.moistureRange?.max || '';
+            const specMin = selectedSpec.moistureRange?.min || '';
+            const specMax = selectedSpec.moistureRange?.max || '';
             
             // Update the initialized data with specs
             if (densityPct && !reportData.densSpecPercent) {
               initializedData.densSpecPercent = String(densityPct);
               initializedData.specDensityPct = String(densityPct);
             }
-            if ((min || max) && !reportData.moistSpecMin) {
-              initializedData.moistSpecMin = min;
-              initializedData.moistSpecMax = max;
-              if (min && max) {
-                setMoistSpecRange(`${min} to ${max}`);
-              } else if (min || max) {
-                setMoistSpecRange(min || max);
+            if ((specMin || specMax) && !reportData.moistSpecMin) {
+              initializedData.moistSpecMin = specMin;
+              initializedData.moistSpecMax = specMax;
+              if (specMin && specMax) {
+                setMoistSpecRange(`${specMin} to ${specMax}`);
+              } else if (specMin || specMax) {
+                setMoistSpecRange(specMin || specMax);
               }
             }
           }
         }
+        
+        setFormData(initializedData);
+        lastSavedDataRef.current = JSON.stringify(initializedData);
+      } else {
+        setFormData(reportData);
+        if (reportData) {
+          lastSavedDataRef.current = JSON.stringify(reportData);
+        }
       }
+      
+      // Reset auto-population flag when loading new data
+      hasAutoPopulatedRef.current = false;
+      // Clear proctor cache when loading new project
+      proctorCacheRef.current = {};
 
       // Auto-save initial data if no record exists yet (ensures PDF can be generated)
       // Check if this is a new/empty report by checking if it has an id
