@@ -204,6 +204,7 @@ db.serialize(() => {
   db.run(`INSERT OR IGNORE INTO app_settings (key, value, description) 
 VALUES 
   ('onedrive_base_path', NULL, 'Base folder path for OneDrive integration. Leave empty to use default PDF storage.'),
+  ('workflow_base_path', NULL, 'Base folder path for project folders and PDFs. Leave empty to use OneDrive or default location.'),
   ('pdf_naming_convention', 'legacy', 'PDF naming convention: "new" for ProjectNumber-TaskName format, "legacy" for old format.')`);
 
   // Create default admin user if not exists

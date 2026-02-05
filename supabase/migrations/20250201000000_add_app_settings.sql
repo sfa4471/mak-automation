@@ -26,6 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_app_settings_updated_at ON app_settings(updated_a
 INSERT INTO app_settings (key, value, description) 
 VALUES 
   ('onedrive_base_path', NULL, 'Base folder path for OneDrive integration. Leave empty to use default PDF storage.'),
+  ('workflow_base_path', NULL, 'Base folder path for project folders and PDFs. Leave empty to use OneDrive or default location.'),
   ('pdf_naming_convention', 'legacy', 'PDF naming convention: "new" for ProjectNumber-TaskName format, "legacy" for old format.')
 ON CONFLICT (key) DO NOTHING;
 

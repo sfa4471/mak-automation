@@ -20,11 +20,72 @@ function getOneDriveService() {
 }
 
 /**
+ * Get workflow base path from app_settings table
+ * @returns {Promise<string|null>} The workflow base path, or null if not set
+ */
+async function getWorkflowBasePath() {
+  try {
+    const db = require('../db');
+    const setting = await db.get('app_settings', { key: 'workflow_base_path' });
+    if (setting && setting.value && setting.value.trim() !== '') {
+      return setting.value.trim();
+    }
+    return null;
+  } catch (error) {
+    console.warn('Error getting workflow base path:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Validate a path exists and is writable
+ * @param {string} pathToValidate - Path to validate
+ * @returns {{valid: boolean, isWritable: boolean, error?: string}}
+ */
+function validatePath(pathToValidate) {
+  if (!pathToValidate || typeof pathToValidate !== 'string') {
+    return { valid: false, isWritable: false, error: 'Path is required' };
+  }
+  
+  if (!fs.existsSync(pathToValidate)) {
+    return { valid: false, isWritable: false, error: 'Path does not exist' };
+  }
+  
+  const stats = fs.statSync(pathToValidate);
+  if (!stats.isDirectory()) {
+    return { valid: false, isWritable: false, error: 'Path is not a directory' };
+  }
+  
+  try {
+    fs.accessSync(pathToValidate, fs.constants.W_OK);
+    return { valid: true, isWritable: true };
+  } catch (error) {
+    return { valid: true, isWritable: false, error: 'Path is not writable' };
+  }
+}
+
+/**
  * Get the effective base path for PDF storage
- * Checks OneDrive first, falls back to PDF_BASE_PATH
+ * Priority order:
+ * 1. workflow_base_path from app_settings (if set and valid)
+ * 2. onedrive_base_path from app_settings (if set and valid) - backward compatibility
+ * 3. PDF_BASE_PATH environment variable
+ * 4. Default: ./pdfs in project root
  * @returns {Promise<string>} The base path to use
  */
 async function getEffectiveBasePath() {
+  // Priority 1: workflow_base_path from app_settings
+  const workflowPath = await getWorkflowBasePath();
+  if (workflowPath) {
+    const validation = validatePath(workflowPath);
+    if (validation.valid && validation.isWritable) {
+      return workflowPath;
+    } else {
+      console.warn('Workflow path is configured but invalid:', workflowPath, validation.error || 'not writable');
+    }
+  }
+  
+  // Priority 2: OneDrive path (backward compatibility)
   const service = getOneDriveService();
   if (service) {
     try {
@@ -40,7 +101,14 @@ async function getEffectiveBasePath() {
       console.warn('Error getting OneDrive path, using default:', error.message);
     }
   }
-  return PDF_BASE_PATH;
+  
+  // Priority 3: Environment variable
+  if (PDF_BASE_PATH) {
+    return PDF_BASE_PATH;
+  }
+  
+  // Priority 4: Default
+  return path.join(__dirname, '..', 'pdfs');
 }
 
 // Test type to folder name mapping
@@ -388,5 +456,7 @@ module.exports = {
   generateFilename,
   getPDFSavePath,
   savePDFToFile,
-  saveReportPDF
+  saveReportPDF,
+  getWorkflowBasePath,
+  validatePath
 };
