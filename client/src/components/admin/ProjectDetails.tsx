@@ -166,6 +166,15 @@ const ProjectDetails: React.FC = () => {
 
     try {
       setSaving(true);
+      
+      // Debug: Log current state before filtering
+      console.log('🔍 Saving project specs:', {
+        soilSpecsKeys: Object.keys(soilSpecs),
+        soilSpecs,
+        concreteSpecsKeys: Object.keys(concreteSpecs),
+        concreteSpecs
+      });
+      
       const updateData: any = {
         projectName,
         customerEmails: validEmails
@@ -178,10 +187,10 @@ const ProjectDetails: React.FC = () => {
         const spec = soilSpecs[key];
         // Only include if it has at least one non-empty value
         if (spec && (
-          (spec.densityPct && spec.densityPct.trim() !== '') ||
+          (spec.densityPct && String(spec.densityPct).trim() !== '') ||
           (spec.moistureRange && (
-            (spec.moistureRange.min && spec.moistureRange.min.trim() !== '') ||
-            (spec.moistureRange.max && spec.moistureRange.max.trim() !== '')
+            (spec.moistureRange.min && String(spec.moistureRange.min).trim() !== '') ||
+            (spec.moistureRange.max && String(spec.moistureRange.max).trim() !== '')
           ))
         )) {
           filteredSoilSpecs[key] = spec;
@@ -193,11 +202,11 @@ const ProjectDetails: React.FC = () => {
         const spec = concreteSpecs[key];
         // Only include if it has at least one non-empty value
         if (spec && (
-          (spec.specStrengthPsi && spec.specStrengthPsi.trim() !== '') ||
-          (spec.ambientTempF && spec.ambientTempF.trim() !== '') ||
-          (spec.concreteTempF && spec.concreteTempF.trim() !== '') ||
-          (spec.slump && spec.slump.trim() !== '') ||
-          (spec.airContent && spec.airContent.trim() !== '')
+          (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') ||
+          (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') ||
+          (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
+          (spec.slump && String(spec.slump).trim() !== '') ||
+          (spec.airContent && String(spec.airContent).trim() !== '')
         )) {
           filteredConcreteSpecs[key] = spec;
         }
@@ -206,6 +215,14 @@ const ProjectDetails: React.FC = () => {
       // Always include specs objects (even if empty) to ensure consistency
       updateData.soilSpecs = filteredSoilSpecs;
       updateData.concreteSpecs = filteredConcreteSpecs;
+      
+      // Debug: Log what we're sending
+      console.log('📤 Sending update data:', {
+        soilSpecsKeys: Object.keys(filteredSoilSpecs),
+        filteredSoilSpecs,
+        concreteSpecsKeys: Object.keys(filteredConcreteSpecs),
+        filteredConcreteSpecs
+      });
       
       await projectsAPI.update(project.id, updateData);
       // Reload project to get updated data
@@ -244,9 +261,6 @@ const ProjectDetails: React.FC = () => {
       </div>
     );
   }
-
-  const hasSoilSpecs = Object.keys(soilSpecs).length > 0;
-  const hasConcreteSpecs = Object.keys(concreteSpecs).length > 0;
 
   return (
     <div className="project-details-container">
@@ -339,7 +353,8 @@ const ProjectDetails: React.FC = () => {
 
           <div className="form-section">
             <h2>Concrete Specs</h2>
-            {hasConcreteSpecs ? (
+            {/* Always show the table so users can enter data */}
+            <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
               <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -409,14 +424,11 @@ const ProjectDetails: React.FC = () => {
                   </tbody>
                 </table>
               </div>
-            ) : (
-              <p style={{ color: '#666', fontStyle: 'italic' }}>No concrete specs defined for this project.</p>
-            )}
           </div>
 
           <div className="form-section">
             <h2>Soil Specs</h2>
-            {hasSoilSpecs ? (
+            {/* Always show the table so users can enter data */}
               <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -477,9 +489,6 @@ const ProjectDetails: React.FC = () => {
                   </tbody>
                 </table>
               </div>
-            ) : (
-              <p style={{ color: '#666', fontStyle: 'italic' }}>No soil specs defined for this project.</p>
-            )}
           </div>
 
           {error && <div className="error-message">{error}</div>}

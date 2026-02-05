@@ -122,6 +122,16 @@ const CreateProject: React.FC = () => {
     setLoading(true);
 
     try {
+      // Debug: Log current state before filtering
+      console.log('🔍 Creating project with specs:', {
+        showSoilSpecs,
+        soilSpecsKeys: Object.keys(soilSpecs),
+        soilSpecs,
+        showConcreteSpecs,
+        concreteSpecsKeys: Object.keys(concreteSpecs),
+        concreteSpecs
+      });
+      
       // Filter out empty structure entries but keep objects with values
       const filteredSoilSpecs: SoilSpecs = {};
       if (showSoilSpecs) {
@@ -129,10 +139,10 @@ const CreateProject: React.FC = () => {
           const spec = soilSpecs[key];
           // Only include if it has at least one non-empty value
           if (spec && (
-            (spec.densityPct && spec.densityPct.trim() !== '') ||
+            (spec.densityPct && String(spec.densityPct).trim() !== '') ||
             (spec.moistureRange && (
-              (spec.moistureRange.min && spec.moistureRange.min.trim() !== '') ||
-              (spec.moistureRange.max && spec.moistureRange.max.trim() !== '')
+              (spec.moistureRange.min && String(spec.moistureRange.min).trim() !== '') ||
+              (spec.moistureRange.max && String(spec.moistureRange.max).trim() !== '')
             ))
           )) {
             filteredSoilSpecs[key] = spec;
@@ -146,16 +156,24 @@ const CreateProject: React.FC = () => {
           const spec = concreteSpecs[key];
           // Only include if it has at least one non-empty value
           if (spec && (
-            (spec.specStrengthPsi && spec.specStrengthPsi.trim() !== '') ||
-            (spec.ambientTempF && spec.ambientTempF.trim() !== '') ||
-            (spec.concreteTempF && spec.concreteTempF.trim() !== '') ||
-            (spec.slump && spec.slump.trim() !== '') ||
-            (spec.airContent && spec.airContent.trim() !== '')
+            (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') ||
+            (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') ||
+            (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
+            (spec.slump && String(spec.slump).trim() !== '') ||
+            (spec.airContent && String(spec.airContent).trim() !== '')
           )) {
             filteredConcreteSpecs[key] = spec;
           }
         });
       }
+      
+      // Debug: Log what we're sending
+      console.log('📤 Sending create data:', {
+        soilSpecsKeys: Object.keys(filteredSoilSpecs),
+        filteredSoilSpecs,
+        concreteSpecsKeys: Object.keys(filteredConcreteSpecs),
+        filteredConcreteSpecs
+      });
       
       await projectsAPI.create({
         projectName,
@@ -260,22 +278,6 @@ const CreateProject: React.FC = () => {
             <div style={{ display: 'flex', gap: '15px', marginBottom: '20px' }}>
               <button
                 type="button"
-                onClick={() => setShowSoilSpecs(!showSoilSpecs)}
-                style={{
-                  padding: '12px 24px',
-                  background: showSoilSpecs ? '#007bff' : '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '600'
-                }}
-              >
-                {showSoilSpecs ? '−' : '+'} Add Concrete Specs
-              </button>
-              <button
-                type="button"
                 onClick={() => setShowConcreteSpecs(!showConcreteSpecs)}
                 style={{
                   padding: '12px 24px',
@@ -288,11 +290,27 @@ const CreateProject: React.FC = () => {
                   fontWeight: '600'
                 }}
               >
-                {showConcreteSpecs ? '−' : '+'} Add Soil Specs
+                {showConcreteSpecs ? '−' : '+'} Add Concrete Specs
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSoilSpecs(!showSoilSpecs)}
+                style={{
+                  padding: '12px 24px',
+                  background: showSoilSpecs ? '#007bff' : '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600'
+                }}
+              >
+                {showSoilSpecs ? '−' : '+'} Add Soil Specs
               </button>
             </div>
 
-            {showSoilSpecs && (
+            {showConcreteSpecs && (
               <div style={{ marginBottom: '30px' }}>
                 <h3 style={{ marginBottom: '15px', fontSize: '16px', fontWeight: '600' }}>Concrete Specs</h3>
                 <div style={{ overflowX: 'auto' }}>
@@ -374,7 +392,7 @@ const CreateProject: React.FC = () => {
               </div>
             )}
 
-            {showConcreteSpecs && (
+            {showSoilSpecs && (
               <div style={{ marginBottom: '30px' }}>
                 <h3 style={{ marginBottom: '15px', fontSize: '16px', fontWeight: '600' }}>Soil Specs</h3>
                 <div style={{ overflowX: 'auto' }}>
