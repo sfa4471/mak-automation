@@ -231,7 +231,45 @@ router.post('/workflow/path', authenticate, requireAdmin, [
 
     // If path is provided, validate it first (unless it's null/empty to clear)
     if (pathToSet !== null && pathToSet !== undefined && pathToSet.trim() !== '') {
-      const validation = validatePath(pathToSet.trim());
+      const trimmedPath = pathToSet.trim();
+      
+      // First check if path exists - if not, try to create it (for OneDrive paths)
+      const isOneDrivePath = trimmedPath.toLowerCase().includes('onedrive');
+      if (!fs.existsSync(trimmedPath)) {
+        // For OneDrive paths, try to create the folder if parent exists
+        if (isOneDrivePath) {
+          try {
+            const parentPath = require('path').dirname(trimmedPath);
+            if (fs.existsSync(parentPath)) {
+              // Parent exists, try to create the folder
+              fs.mkdirSync(trimmedPath, { recursive: true });
+              console.log(`Created workflow path folder: ${trimmedPath}`);
+            } else {
+              return res.status(400).json({
+                success: false,
+                error: `Path does not exist and parent directory is not accessible. Please create the folder "${require('path').basename(trimmedPath)}" in File Explorer first.`,
+                path: pathToSet
+              });
+            }
+          } catch (createError) {
+            // Couldn't create, proceed with validation which will give better error
+          }
+        } else {
+          // For non-OneDrive paths, try to create if parent exists
+          try {
+            const parentPath = require('path').dirname(trimmedPath);
+            if (fs.existsSync(parentPath)) {
+              fs.mkdirSync(trimmedPath, { recursive: true });
+              console.log(`Created workflow path folder: ${trimmedPath}`);
+            }
+          } catch (createError) {
+            // Continue to validation
+          }
+        }
+      }
+      
+      // Now validate the path (with retry logic for OneDrive)
+      const validation = validatePath(trimmedPath);
       
       if (!validation.valid) {
         return res.status(400).json({

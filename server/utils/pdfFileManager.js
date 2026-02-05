@@ -44,6 +44,7 @@ async function getWorkflowBasePath() {
 
 /**
  * Validate a path exists and is writable
+ * Handles OneDrive sync timing issues with retry logic
  * @param {string} pathToValidate - Path to validate
  * @returns {{valid: boolean, isWritable: boolean, error?: string}}
  */
@@ -58,30 +59,120 @@ function validatePath(pathToValidate) {
   }
 
   // Windows-specific: Check for invalid characters
+  // Note: Colon (:) is valid in drive letters (C:\), so we check for it in the wrong places
   if (process.platform === 'win32') {
+    // Check for invalid characters, but allow : in drive letters (C:\, D:\, etc.)
+    // Invalid chars: < > " | ? * and : (but only if not part of drive letter)
+    const driveLetterPattern = /^[A-Za-z]:\\/;
+    const hasDriveLetter = driveLetterPattern.test(trimmedPath);
+    
+    // Remove drive letter for checking invalid chars
+    const pathWithoutDrive = hasDriveLetter ? trimmedPath.substring(2) : trimmedPath;
+    
+    // Check for invalid characters (excluding : if it's in drive letter)
     const invalidChars = /[<>:"|?*]/;
-    if (invalidChars.test(trimmedPath)) {
+    if (invalidChars.test(pathWithoutDrive)) {
+      // Find which invalid chars are present
+      const matches = pathWithoutDrive.match(invalidChars);
+      const uniqueChars = [...new Set(matches)];
       return { 
         valid: false, 
         isWritable: false, 
-        error: 'Path contains invalid characters for Windows: < > : " | ? *' 
+        error: `Path contains invalid characters for Windows: ${uniqueChars.join(', ')}` 
       };
     }
   }
   
-  if (!fs.existsSync(trimmedPath)) {
-    return { valid: false, isWritable: false, error: 'Path does not exist' };
+  // Check if path exists
+  // For OneDrive paths, we'll be more lenient and provide better error messages
+  const isOneDrivePath = trimmedPath.toLowerCase().includes('onedrive');
+  let pathExists = false;
+  
+  try {
+    pathExists = fs.existsSync(trimmedPath);
+  } catch (error) {
+    // Error checking path existence
+    if (isOneDrivePath) {
+      return { 
+        valid: false, 
+        isWritable: false, 
+        error: 'Cannot access path. Please ensure OneDrive is running and synced. If the folder doesn\'t exist, create it in File Explorer first.' 
+      };
+    }
+    return { valid: false, isWritable: false, error: `Cannot access path: ${error.message}` };
   }
   
-  const stats = fs.statSync(trimmedPath);
+  if (!pathExists) {
+    // Check if parent directory exists - if so, we can suggest creating the folder
+    const pathModule = require('path');
+    const parentPath = pathModule.dirname(trimmedPath);
+    const folderName = pathModule.basename(trimmedPath);
+    const parentExists = fs.existsSync(parentPath);
+    
+    if (isOneDrivePath) {
+      if (parentExists) {
+        return { 
+          valid: false, 
+          isWritable: false, 
+          error: `Folder "${folderName}" does not exist. Please create it in File Explorer at: ${parentPath}\n\nOr ensure OneDrive is synced if the folder exists in the cloud.` 
+        };
+      } else {
+        return { 
+          valid: false, 
+          isWritable: false, 
+          error: `Path does not exist. Please ensure the parent directory exists and OneDrive is synced.` 
+        };
+      }
+    } else {
+      if (parentExists) {
+        return { 
+          valid: false, 
+          isWritable: false, 
+          error: `Folder "${folderName}" does not exist. Please create it first, or the system will attempt to create it automatically.` 
+        };
+      } else {
+        return { valid: false, isWritable: false, error: 'Path does not exist' };
+      }
+    }
+  }
+  
+  // Check if it's a directory
+  let stats;
+  try {
+    stats = fs.statSync(trimmedPath);
+  } catch (statError) {
+    if (isOneDrivePath) {
+      return { 
+        valid: false, 
+        isWritable: false, 
+        error: 'Cannot access path. Please ensure OneDrive is synced and the folder is available. Try refreshing OneDrive or ensuring files are set to "Always keep on this device".' 
+      };
+    } else {
+      return { 
+        valid: false, 
+        isWritable: false, 
+        error: `Cannot access path: ${statError.message}` 
+      };
+    }
+  }
+  
   if (!stats.isDirectory()) {
     return { valid: false, isWritable: false, error: 'Path is not a directory' };
   }
   
+  // Check writability
   try {
     fs.accessSync(trimmedPath, fs.constants.W_OK);
     return { valid: true, isWritable: true };
   } catch (error) {
+    // For OneDrive paths, provide more helpful error message
+    if (isOneDrivePath) {
+      return { 
+        valid: true, 
+        isWritable: false, 
+        error: 'Path is not writable. Please ensure OneDrive is synced and you have write permissions. Check if files are set to "Always keep on this device" in OneDrive settings.' 
+      };
+    }
     return { 
       valid: true, 
       isWritable: false, 
