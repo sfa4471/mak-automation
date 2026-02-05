@@ -178,6 +178,33 @@
   background: #5a6268;
 }
 
+/* Project Home Button styling - match other buttons */
+.btn-secondary {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  background-color: #6c757d;
+  color: white;
+  transition: background-color 0.2s;
+  min-height: 36px; /* Match other buttons height */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #545b62;
+}
+
+.btn-secondary:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .density-form-content {
   max-width: 1400px;
   margin: 0 auto;

@@ -235,6 +235,37 @@ const DensityReportForm: React.FC = () => {
         } else {
           setMoistSpecRange('');
         }
+        
+        // Auto-populate specs if structure type is already selected but specs are missing
+        const structureType = reportData.structureType || reportData.structure;
+        if (structureType && reportData.projectSoilSpecs && 
+            typeof reportData.projectSoilSpecs === 'object' && 
+            !Array.isArray(reportData.projectSoilSpecs)) {
+          const soilSpecs = reportData.projectSoilSpecs;
+          const selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType] as SoilSpecRow | undefined;
+          
+          // Only auto-populate if specs are missing but structure type is set
+          if (selectedSpec && (!reportData.densSpecPercent || !reportData.moistSpecMin)) {
+            const densityPct = selectedSpec.densityPct;
+            const min = selectedSpec.moistureRange?.min || '';
+            const max = selectedSpec.moistureRange?.max || '';
+            
+            // Update the initialized data with specs
+            if (densityPct && !reportData.densSpecPercent) {
+              initializedData.densSpecPercent = String(densityPct);
+              initializedData.specDensityPct = String(densityPct);
+            }
+            if ((min || max) && !reportData.moistSpecMin) {
+              initializedData.moistSpecMin = min;
+              initializedData.moistSpecMax = max;
+              if (min && max) {
+                setMoistSpecRange(`${min} to ${max}`);
+              } else if (min || max) {
+                setMoistSpecRange(min || max);
+              }
+            }
+          }
+        }
       }
 
       // Auto-save initial data if no record exists yet (ensures PDF can be generated)
@@ -403,8 +434,14 @@ const DensityReportForm: React.FC = () => {
       
       return result;
     } catch (err: any) {
+      // Only log as error if it's not a 404 (expected when proctor doesn't exist)
+      if (err.response?.status === 404) {
+        // Proctor not found - this is expected if the proctor hasn't been created yet
+        // Silently return null without logging an error
+        return null;
+      }
+      // For other errors, log them
       console.error(`Error fetching Proctor ${proctorNo} data:`, err);
-      // Return null if proctor not found or error
       return null;
     }
   };
@@ -523,38 +560,59 @@ const DensityReportForm: React.FC = () => {
 
   // Handle structure selection - auto-fill specs from project soil specs (for density reports)
   const handleStructureChange = (structureType: string) => {
-    if (!formData || !formData.projectSoilSpecs) return;
-    
-    const soilSpecs = formData.projectSoilSpecs;
-    const selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType] as SoilSpecRow | undefined;
+    if (!formData) return;
     
     let updatedData = { ...formData, structureType, structure: structureType };
     
-    // Auto-fill specs if available
-    if (selectedSpec) {
-      // Set density percent - use type-safe property access
-      const densityPct = selectedSpec.densityPct;
-      if (densityPct) {
-        updatedData = { ...updatedData, densSpecPercent: densityPct, specDensityPct: densityPct };
-      }
+    // Auto-fill specs from project soil specs if available
+    if (formData.projectSoilSpecs && typeof formData.projectSoilSpecs === 'object' && !Array.isArray(formData.projectSoilSpecs)) {
+      const soilSpecs = formData.projectSoilSpecs;
+      const selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType] as SoilSpecRow | undefined;
       
-      // Set moisture range
-      if (selectedSpec.moistureRange) {
-        const min = selectedSpec.moistureRange.min || '';
-        const max = selectedSpec.moistureRange.max || '';
-        updatedData = { ...updatedData, moistSpecMin: min, moistSpecMax: max };
+      // Debug logging
+      console.log('🔍 Structure selected:', structureType);
+      console.log('🔍 Available soil specs keys:', Object.keys(soilSpecs));
+      console.log('🔍 Selected spec:', selectedSpec);
+      
+      // Auto-fill specs if available
+      if (selectedSpec) {
+        // Set density percent - use type-safe property access
+        const densityPct = selectedSpec.densityPct;
+        if (densityPct !== undefined && densityPct !== null && densityPct !== '') {
+          updatedData = { ...updatedData, densSpecPercent: String(densityPct), specDensityPct: String(densityPct) };
+          console.log('✅ Set Dens. (%):', densityPct);
+        }
         
-        // Update moisture range display
-        if (min && max) {
-          setMoistSpecRange(`${min} to ${max}`);
-        } else if (min || max) {
-          setMoistSpecRange(min || max);
+        // Set moisture range
+        if (selectedSpec.moistureRange) {
+          const min = selectedSpec.moistureRange.min || '';
+          const max = selectedSpec.moistureRange.max || '';
+          updatedData = { ...updatedData, moistSpecMin: min, moistSpecMax: max };
+          
+          // Update moisture range display
+          if (min && max) {
+            setMoistSpecRange(`${min} to ${max}`);
+            console.log('✅ Set Moist. (%) Range:', `${min} to ${max}`);
+          } else if (min || max) {
+            setMoistSpecRange(min || max);
+            console.log('✅ Set Moist. (%) Range:', min || max);
+          } else {
+            setMoistSpecRange('');
+          }
         } else {
+          // Clear moisture range if not in spec
+          updatedData = { ...updatedData, moistSpecMin: '', moistSpecMax: '' };
           setMoistSpecRange('');
         }
+      } else {
+        // Clear specs if structure has no specs
+        console.warn('⚠️ No soil specs found for structure type:', structureType);
+        updatedData = { ...updatedData, densSpecPercent: '', specDensityPct: '', moistSpecMin: '', moistSpecMax: '' };
+        setMoistSpecRange('');
       }
     } else {
-      // Clear specs if structure has no specs
+      // No project soil specs available
+      console.warn('⚠️ No project soil specs available');
       updatedData = { ...updatedData, densSpecPercent: '', specDensityPct: '', moistSpecMin: '', moistSpecMax: '' };
       setMoistSpecRange('');
     }
