@@ -541,7 +541,7 @@ const DensityReportForm: React.FC = () => {
     // Auto-fill specs if available
     if (selectedSpec) {
       // Set density percent - use type-safe property access
-      const densityPct = (selectedSpec as SoilSpecRow).densityPct;
+      const densityPct = selectedSpec.densityPct;
       if (densityPct) {
         updatedData = { ...updatedData, densSpecPercent: densityPct, specDensityPct: densityPct };
       }
