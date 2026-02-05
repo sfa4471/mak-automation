@@ -4,7 +4,7 @@ import { densityAPI, DensityReport, TestRow, ProctorRow } from '../api/density';
 import { tasksAPI, Task, TaskHistoryEntry, ProctorTask } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
-// import { ConcreteSpecs } from '../api/projects'; // Unused but kept for potential future use
+import { SoilSpecRow } from '../api/projects';
 import { proctorAPI } from '../api/proctor';
 import ProjectHomeButton from './ProjectHomeButton';
 import './DensityReportForm.css';
@@ -534,7 +534,7 @@ const DensityReportForm: React.FC = () => {
     if (!formData || !formData.projectSoilSpecs) return;
     
     const soilSpecs = formData.projectSoilSpecs;
-    const selectedSpec = soilSpecs[structureType];
+    const selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType];
     
     let updatedData = { ...formData, structureType, structure: structureType };
     
