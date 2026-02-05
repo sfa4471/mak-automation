@@ -32,7 +32,12 @@ async function getWorkflowBasePath() {
     }
     return null;
   } catch (error) {
-    console.warn('Error getting workflow base path:', error.message);
+    console.error('❌ Error getting workflow base path from database:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code
+    });
+    // Still return null to allow fallback, but log the error
     return null;
   }
 }
@@ -47,20 +52,41 @@ function validatePath(pathToValidate) {
     return { valid: false, isWritable: false, error: 'Path is required' };
   }
   
-  if (!fs.existsSync(pathToValidate)) {
+  const trimmedPath = pathToValidate.trim();
+  if (trimmedPath === '') {
+    return { valid: false, isWritable: false, error: 'Path cannot be empty' };
+  }
+
+  // Windows-specific: Check for invalid characters
+  if (process.platform === 'win32') {
+    const invalidChars = /[<>:"|?*]/;
+    if (invalidChars.test(trimmedPath)) {
+      return { 
+        valid: false, 
+        isWritable: false, 
+        error: 'Path contains invalid characters for Windows: < > : " | ? *' 
+      };
+    }
+  }
+  
+  if (!fs.existsSync(trimmedPath)) {
     return { valid: false, isWritable: false, error: 'Path does not exist' };
   }
   
-  const stats = fs.statSync(pathToValidate);
+  const stats = fs.statSync(trimmedPath);
   if (!stats.isDirectory()) {
     return { valid: false, isWritable: false, error: 'Path is not a directory' };
   }
   
   try {
-    fs.accessSync(pathToValidate, fs.constants.W_OK);
+    fs.accessSync(trimmedPath, fs.constants.W_OK);
     return { valid: true, isWritable: true };
   } catch (error) {
-    return { valid: true, isWritable: false, error: 'Path is not writable' };
+    return { 
+      valid: true, 
+      isWritable: false, 
+      error: `Path is not writable: ${error.message}` 
+    };
   }
 }
 
@@ -145,32 +171,144 @@ function sanitizeProjectNumber(projectNumber) {
 }
 
 /**
- * Ensure project directory exists and create test type subdirectories
- * @param {string} projectNumber - The project number (e.g., "MAK-2025-8188")
- * @returns {Promise<string>} - Path to project directory
+ * Normalize Windows path for long path support
+ * @param {string} filePath - Path to normalize
+ * @returns {string} Normalized path with long path prefix if needed
  */
-async function ensureProjectDirectory(projectNumber) {
-  const basePath = await getEffectiveBasePath();
-  await ensureBaseDirectory(basePath);
-  
-  // Sanitize project number for filesystem safety
-  const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
-  const projectDir = path.join(basePath, sanitizedProjectNumber);
-  
-  if (!fs.existsSync(projectDir)) {
-    fs.mkdirSync(projectDir, { recursive: true });
-    console.log(`Created project directory: ${projectDir}`);
+function normalizeWindowsPath(filePath) {
+  if (process.platform !== 'win32') {
+    return filePath;
   }
   
-  // Create test type subdirectories
-  Object.values(TEST_TYPE_FOLDERS).forEach(folderName => {
-    const testTypeDir = path.join(projectDir, folderName);
-    if (!fs.existsSync(testTypeDir)) {
-      fs.mkdirSync(testTypeDir, { recursive: true });
+  // Check if path length exceeds 260 characters
+  if (filePath.length > 260) {
+    // Use long path prefix if not already present
+    if (!filePath.startsWith('\\\\?\\')) {
+      const resolvedPath = path.resolve(filePath);
+      return '\\\\?\\' + resolvedPath;
     }
-  });
+  }
   
-  return projectDir;
+  return filePath;
+}
+
+/**
+ * Ensure project directory exists and create test type subdirectories
+ * @param {string} projectNumber - The project number (e.g., "MAK-2025-8188")
+ * @returns {Promise<{success: boolean, path: string|null, error: string|null, warnings: string[], details: object}>} - Structured result
+ */
+async function ensureProjectDirectory(projectNumber) {
+  const result = {
+    success: false,
+    path: null,
+    error: null,
+    warnings: [],
+    details: {}
+  };
+
+  try {
+    // Step 1: Get base path
+    const basePath = await getEffectiveBasePath();
+    result.details.basePath = basePath;
+    
+    if (!basePath) {
+      result.error = 'No valid base path configured';
+      return result;
+    }
+
+    // Step 2: Validate base path exists and is writable
+    const baseValidation = validatePath(basePath);
+    if (!baseValidation.valid) {
+      result.error = `Base path is invalid: ${baseValidation.error}`;
+      return result;
+    }
+    if (!baseValidation.isWritable) {
+      result.error = `Base path is not writable: ${baseValidation.error}`;
+      return result;
+    }
+
+    // Step 3: Sanitize project number
+    const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
+    result.details.sanitizedProjectNumber = sanitizedProjectNumber;
+    
+    // Step 4: Check Windows path length (260 char limit)
+    const projectDir = path.join(basePath, sanitizedProjectNumber);
+    const fullPathLength = projectDir.length;
+    
+    if (process.platform === 'win32' && fullPathLength > 260) {
+      result.warnings.push(`Path length (${fullPathLength}) exceeds Windows limit (260). Consider using shorter paths.`);
+      // Try to use long path prefix
+      if (!projectDir.startsWith('\\\\?\\')) {
+        const longPath = '\\\\?\\' + path.resolve(projectDir);
+        if (longPath.length <= 32767) {
+          result.details.usingLongPath = true;
+          // Note: We'll use the normalized path for actual operations
+        }
+      }
+    }
+
+    // Step 5: Test actual folder creation capability
+    const testFolder = path.join(basePath, '.test_' + Date.now());
+    try {
+      fs.mkdirSync(testFolder, { recursive: true });
+      fs.rmdirSync(testFolder);
+    } catch (testError) {
+      result.error = `Cannot create folders in base path: ${testError.message}`;
+      return result;
+    }
+
+    // Step 6: Create project directory
+    try {
+      // Use normalized path for Windows long path support
+      const normalizedProjectDir = normalizeWindowsPath(projectDir);
+      
+      if (!fs.existsSync(normalizedProjectDir)) {
+        fs.mkdirSync(normalizedProjectDir, { recursive: true });
+        result.details.created = true;
+      } else {
+        result.details.created = false;
+        result.details.existed = true;
+      }
+      
+      // Verify it was actually created (use original path for checking)
+      if (!fs.existsSync(projectDir)) {
+        throw new Error('Folder creation reported success but folder does not exist');
+      }
+      
+      result.path = projectDir;
+    } catch (createError) {
+      result.error = `Failed to create project directory: ${createError.message}`;
+      result.details.createError = createError.message;
+      return result;
+    }
+
+    // Step 7: Create test type subdirectories
+    const subdirResults = [];
+    for (const folderName of Object.values(TEST_TYPE_FOLDERS)) {
+      const testTypeDir = path.join(projectDir, folderName);
+      try {
+        if (!fs.existsSync(testTypeDir)) {
+          fs.mkdirSync(testTypeDir, { recursive: true });
+        }
+        subdirResults.push({ name: folderName, success: true });
+      } catch (subdirError) {
+        subdirResults.push({ 
+          name: folderName, 
+          success: false, 
+          error: subdirError.message 
+        });
+        result.warnings.push(`Failed to create subdirectory ${folderName}: ${subdirError.message}`);
+      }
+    }
+    result.details.subdirectories = subdirResults;
+
+    result.success = true;
+    return result;
+  } catch (error) {
+    result.error = `Unexpected error: ${error.message}`;
+    result.details.unexpectedError = error.stack;
+    return result;
+  }
 }
 
 /**
@@ -339,7 +477,11 @@ function generateFilename(projectNumber, taskType, sequence, fieldDate, isRevisi
 async function getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration = false) {
   // Ensure project directory exists
   const basePath = await getEffectiveBasePath();
-  await ensureProjectDirectory(projectNumber);
+  const folderResult = await ensureProjectDirectory(projectNumber);
+  if (!folderResult.success) {
+    // Log warning but continue - PDF generation should still work
+    console.warn(`⚠️  Project folder creation failed for ${projectNumber}: ${folderResult.error}`);
+  }
   
   // Get sequence number
   const sequence = await getNextSequenceNumber(projectNumber, taskType);
@@ -458,5 +600,6 @@ module.exports = {
   savePDFToFile,
   saveReportPDF,
   getWorkflowBasePath,
-  validatePath
+  validatePath,
+  normalizeWindowsPath
 };

@@ -354,22 +354,51 @@ router.post('/', authenticate, requireAdmin, [
       return res.status(500).json({ error: 'Database error' });
     }
 
-    // Create project folder structure for PDF storage (use project number, not ID)
+    // Create project folder structure for PDF storage
+    let folderCreationResult = {
+      success: false,
+      path: null,
+      error: null,
+      warnings: [],
+      onedriveResult: null
+    };
+
     console.log(`📁 Creating project folder for: ${projectNumber}`);
     try {
-      // Create folder in default location (or OneDrive if configured)
-      const folderPath = await ensureProjectDirectory(projectNumber);
-      console.log(`✅ Project folder created/verified: ${folderPath}`);
+      const folderResult = await ensureProjectDirectory(projectNumber);
+      folderCreationResult = {
+        success: folderResult.success,
+        path: folderResult.path,
+        error: folderResult.error,
+        warnings: folderResult.warnings || []
+      };
+      
+      if (folderResult.success) {
+        console.log(`✅ Project folder created/verified: ${folderResult.path}`);
+        if (folderResult.warnings && folderResult.warnings.length > 0) {
+          console.warn('⚠️  Folder creation warnings:', folderResult.warnings);
+        }
+      } else {
+        console.error('❌ Error creating project folder:', folderResult.error);
+        console.error('Folder creation details:', folderResult.details);
+      }
     } catch (folderError) {
-      console.error('❌ Error creating project folder:', folderError);
+      folderCreationResult = {
+        success: false,
+        path: null,
+        error: folderError.message,
+        warnings: []
+      };
+      console.error('❌ Unexpected error creating project folder:', folderError);
       console.error('Folder error stack:', folderError.stack);
-      // Continue even if folder creation fails
     }
-    
+
     // Also create OneDrive folder if OneDrive is configured
     try {
       console.log(`📁 Checking OneDrive configuration for project: ${projectNumber}`);
       const onedriveResult = await onedriveService.ensureProjectFolder(projectNumber);
+      folderCreationResult.onedriveResult = onedriveResult;
+      
       if (onedriveResult.success) {
         console.log(`✅ Created OneDrive project folder: ${onedriveResult.folderPath}`);
       } else if (onedriveResult.error) {
@@ -380,14 +409,20 @@ router.post('/', authenticate, requireAdmin, [
         }
       }
     } catch (onedriveError) {
+      folderCreationResult.onedriveResult = {
+        success: false,
+        error: onedriveError.message
+      };
       console.error('❌ Error creating OneDrive project folder:', onedriveError);
       console.error('OneDrive error stack:', onedriveError.stack);
-      // Continue even if OneDrive folder creation fails
     }
 
     // Parse JSON fields for response
     parseProjectJSONFields(project);
-    res.status(201).json(project);
+    res.status(201).json({
+      ...project,
+      folderCreation: folderCreationResult  // Include folder creation status
+    });
   } catch (err) {
     console.error('Error in create project:', err);
     res.status(500).json({ error: 'Database error' });
@@ -544,6 +579,46 @@ router.get('/:id', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Error fetching project:', err);
     res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Retry folder creation for a project (Admin only)
+router.post('/:id/retry-folder', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const project = await db.get('projects', { id: projectId });
+    
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Attempt to create folder
+    const folderResult = await ensureProjectDirectory(project.projectNumber);
+    
+    // Also try OneDrive if configured
+    let onedriveResult = null;
+    try {
+      onedriveResult = await onedriveService.ensureProjectFolder(project.projectNumber);
+    } catch (onedriveError) {
+      onedriveResult = {
+        success: false,
+        error: onedriveError.message
+      };
+    }
+
+    res.json({
+      success: folderResult.success,
+      folderCreation: {
+        success: folderResult.success,
+        path: folderResult.path,
+        error: folderResult.error,
+        warnings: folderResult.warnings || [],
+        onedriveResult: onedriveResult
+      }
+    });
+  } catch (err) {
+    console.error('Error retrying folder creation:', err);
+    res.status(500).json({ error: 'Failed to retry folder creation' });
   }
 });
 
