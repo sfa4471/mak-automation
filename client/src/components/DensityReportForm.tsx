@@ -234,9 +234,12 @@ const DensityReportForm: React.FC = () => {
           
           // Only auto-populate if specs are missing but structure type is set
           if (selectedSpec && (!reportData.densSpecPercent || !reportData.moistSpecMin)) {
-            const densityPct = selectedSpec.densityPct;
-            const specMin = selectedSpec.moistureRange?.min || '';
-            const specMax = selectedSpec.moistureRange?.max || '';
+            // Handle both camelCase (densityPct) and snake_case (density_pct) formats
+            const densityPct = (selectedSpec as any).densityPct || (selectedSpec as any).density_pct;
+            // Handle both camelCase (moistureRange) and snake_case (moisture_range) formats
+            const moistureRange = (selectedSpec as any).moistureRange || (selectedSpec as any).moisture_range;
+            const specMin = moistureRange?.min || '';
+            const specMax = moistureRange?.max || '';
             
             // Update the initialized data with specs
             if (densityPct && !reportData.densSpecPercent) {
@@ -569,14 +572,6 @@ const DensityReportForm: React.FC = () => {
     if (formData.projectSoilSpecs && typeof formData.projectSoilSpecs === 'object' && !Array.isArray(formData.projectSoilSpecs)) {
       const soilSpecs = formData.projectSoilSpecs;
       
-      // Debug logging - detailed inspection
-      console.log('🔍 Structure selected:', structureType);
-      console.log('🔍 Structure type type:', typeof structureType);
-      console.log('🔍 Structure type length:', structureType.length);
-      console.log('🔍 Structure type char codes:', Array.from(structureType).map(c => c.charCodeAt(0)));
-      console.log('🔍 Available soil specs keys:', Object.keys(soilSpecs));
-      console.log('🔍 Full soil specs object:', JSON.stringify(soilSpecs, null, 2));
-      
       // Try direct lookup first
       let selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType] as SoilSpecRow | undefined;
       
@@ -586,56 +581,31 @@ const DensityReportForm: React.FC = () => {
         for (const key in soilSpecs) {
           if (key.trim().toLowerCase() === normalizedStructureType) {
             selectedSpec = soilSpecs[key] as SoilSpecRow;
-            console.log('✅ Found match using normalized key:', key);
             break;
           }
         }
-      }
-      
-      // If still not found, try exact match with each key
-      if (!selectedSpec) {
-        for (const key of Object.keys(soilSpecs)) {
-          console.log('🔍 Comparing key:', key, 'with structureType:', structureType);
-          console.log('🔍 Key === structureType?', key === structureType);
-          console.log('🔍 Key length:', key.length, 'structureType length:', structureType.length);
-          if (key === structureType) {
-            selectedSpec = soilSpecs[key] as SoilSpecRow;
-            console.log('✅ Found exact match:', key);
-            break;
-          }
-        }
-      }
-      
-      console.log('🔍 Selected spec after lookup:', selectedSpec);
-      console.log('🔍 Selected spec type:', typeof selectedSpec);
-      if (selectedSpec) {
-        console.log('🔍 Selected spec keys:', Object.keys(selectedSpec));
-        console.log('🔍 Selected spec densityPct:', selectedSpec.densityPct);
-        console.log('🔍 Selected spec moistureRange:', selectedSpec.moistureRange);
       }
       
       // Auto-fill specs if available
       if (selectedSpec && typeof selectedSpec === 'object') {
-        // Set density percent - use type-safe property access
-        const densityPct = selectedSpec.densityPct;
+        // Handle both camelCase (densityPct) and snake_case (density_pct) formats
+        const densityPct = (selectedSpec as any).densityPct || (selectedSpec as any).density_pct;
         if (densityPct !== undefined && densityPct !== null && densityPct !== '') {
           updatedData = { ...updatedData, densSpecPercent: String(densityPct), specDensityPct: String(densityPct) };
-          console.log('✅ Set Dens. (%):', densityPct);
         }
         
-        // Set moisture range
-        if (selectedSpec.moistureRange && typeof selectedSpec.moistureRange === 'object') {
-          const min = selectedSpec.moistureRange.min || '';
-          const max = selectedSpec.moistureRange.max || '';
+        // Handle both camelCase (moistureRange) and snake_case (moisture_range) formats
+        const moistureRange = (selectedSpec as any).moistureRange || (selectedSpec as any).moisture_range;
+        if (moistureRange && typeof moistureRange === 'object') {
+          const min = moistureRange.min || '';
+          const max = moistureRange.max || '';
           updatedData = { ...updatedData, moistSpecMin: min, moistSpecMax: max };
           
           // Update moisture range display
           if (min && max) {
             setMoistSpecRange(`${min} to ${max}`);
-            console.log('✅ Set Moist. (%) Range:', `${min} to ${max}`);
           } else if (min || max) {
             setMoistSpecRange(min || max);
-            console.log('✅ Set Moist. (%) Range:', min || max);
           } else {
             setMoistSpecRange('');
           }
@@ -646,14 +616,11 @@ const DensityReportForm: React.FC = () => {
         }
       } else {
         // Clear specs if structure has no specs
-        console.warn('⚠️ No soil specs found for structure type:', structureType);
-        console.warn('⚠️ Available keys were:', Object.keys(soilSpecs));
         updatedData = { ...updatedData, densSpecPercent: '', specDensityPct: '', moistSpecMin: '', moistSpecMax: '' };
         setMoistSpecRange('');
       }
     } else {
       // No project soil specs available
-      console.warn('⚠️ No project soil specs available');
       updatedData = { ...updatedData, densSpecPercent: '', specDensityPct: '', moistSpecMin: '', moistSpecMax: '' };
       setMoistSpecRange('');
     }
