@@ -110,6 +110,23 @@
   margin-bottom: 20px;
 }
 
+.field-error {
+  display: block;
+  color: #dc3545;
+  font-size: 12px;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.form-input.error {
+  border-color: #dc3545;
+}
+
+.form-input.error:focus {
+  border-color: #dc3545;
+  box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.25);
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;

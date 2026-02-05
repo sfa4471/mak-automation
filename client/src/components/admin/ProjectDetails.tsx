@@ -45,7 +45,22 @@ const ProjectDetails: React.FC = () => {
   const loadProject = async () => {
     try {
       setLoading(true);
-      const projectId = parseInt(id!);
+      setError('');
+      
+      // Validate project ID parameter
+      if (!id) {
+        setError('Invalid project ID. Please select a project from the dashboard.');
+        setLoading(false);
+        return;
+      }
+      
+      const projectId = parseInt(id, 10);
+      if (isNaN(projectId) || projectId <= 0) {
+        setError('Invalid project ID. Please select a project from the dashboard.');
+        setLoading(false);
+        return;
+      }
+      
       const projectData = await projectsAPI.get(projectId);
       setProject(projectData);
       setProjectName(projectData.projectName || '');
@@ -72,7 +87,17 @@ const ProjectDetails: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Error loading project:', err);
-      setError(err.response?.data?.error || 'Failed to load project details.');
+      
+      // Provide more specific error messages
+      if (err.response?.status === 404) {
+        setError('Project not found. It may have been deleted.');
+      } else if (err.response?.status === 403) {
+        setError('You do not have permission to view this project.');
+      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        setError('Request timed out. Please check your connection and try again.');
+      } else {
+        setError(err.response?.data?.error || 'Failed to load project details. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -95,9 +120,38 @@ const ProjectDetails: React.FC = () => {
   };
 
   const validateSoilSpecs = (): boolean => {
-    // Soil Specs only have densityPct and moistureRange, no temperature validation needed
-    // Validation can be added here if needed in the future
-    return true;
+    const errors: { [key: string]: string } = {};
+    
+    Object.keys(soilSpecs).forEach(structureType => {
+      const spec = soilSpecs[structureType];
+      
+      // Validate densityPct if provided
+      if (spec.densityPct && String(spec.densityPct).trim() !== '') {
+        const density = parseFloat(String(spec.densityPct));
+        if (isNaN(density) || density < 0 || density > 100) {
+          errors[`soil-${structureType}-densityPct`] = 'Density must be between 0 and 100';
+        }
+      }
+      
+      // Validate moisture range if provided
+      if (spec.moistureRange) {
+        const min = spec.moistureRange.min ? parseFloat(String(spec.moistureRange.min)) : null;
+        const max = spec.moistureRange.max ? parseFloat(String(spec.moistureRange.max)) : null;
+        
+        if (min !== null && (isNaN(min) || min < 0)) {
+          errors[`soil-${structureType}-moistureMin`] = 'Minimum moisture must be a positive number';
+        }
+        if (max !== null && (isNaN(max) || max < 0)) {
+          errors[`soil-${structureType}-moistureMax`] = 'Maximum moisture must be a positive number';
+        }
+        if (min !== null && max !== null && !isNaN(min) && !isNaN(max) && min > max) {
+          errors[`soil-${structureType}-moistureRange`] = 'Minimum must be less than or equal to maximum';
+        }
+      }
+    });
+    
+    setValidationErrors(prev => ({ ...prev, ...errors }));
+    return Object.keys(errors).length === 0;
   };
 
   const updateSoilSpec = (structureType: string, field: string, value: any) => {
@@ -117,6 +171,70 @@ const ProjectDetails: React.FC = () => {
     }
   };
 
+  const validateConcreteSpecs = (): boolean => {
+    const errors: { [key: string]: string } = {};
+    
+    Object.keys(concreteSpecs).forEach(structureType => {
+      const spec = concreteSpecs[structureType];
+      
+      // Validate specStrengthPsi
+      if (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') {
+        const strength = parseFloat(String(spec.specStrengthPsi));
+        if (isNaN(strength) || strength <= 0) {
+          errors[`concrete-${structureType}-specStrengthPsi`] = 'Spec strength must be a positive number';
+        }
+      }
+      
+      // Validate temperature ranges (format: "min-max" or single number)
+      if (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') {
+        const tempStr = String(spec.ambientTempF).trim();
+        const tempMatch = tempStr.match(/^(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?$/);
+        if (!tempMatch) {
+          errors[`concrete-${structureType}-ambientTempF`] = 'Invalid temperature format. Use "min-max" or single number';
+        } else {
+          const min = parseFloat(tempMatch[1]);
+          const max = tempMatch[2] ? parseFloat(tempMatch[2]) : min;
+          if (min > max) {
+            errors[`concrete-${structureType}-ambientTempF`] = 'Minimum must be less than or equal to maximum';
+          }
+        }
+      }
+      
+      if (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') {
+        const tempStr = String(spec.concreteTempF).trim();
+        const tempMatch = tempStr.match(/^(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?$/);
+        if (!tempMatch) {
+          errors[`concrete-${structureType}-concreteTempF`] = 'Invalid temperature format. Use "min-max" or single number';
+        } else {
+          const min = parseFloat(tempMatch[1]);
+          const max = tempMatch[2] ? parseFloat(tempMatch[2]) : min;
+          if (min > max) {
+            errors[`concrete-${structureType}-concreteTempF`] = 'Minimum must be less than or equal to maximum';
+          }
+        }
+      }
+      
+      // Validate slump if provided
+      if (spec.slump && String(spec.slump).trim() !== '') {
+        const slump = parseFloat(String(spec.slump));
+        if (isNaN(slump) || slump < 0) {
+          errors[`concrete-${structureType}-slump`] = 'Slump must be a positive number';
+        }
+      }
+      
+      // Validate airContent if provided
+      if (spec.airContent && String(spec.airContent).trim() !== '') {
+        const airContent = parseFloat(String(spec.airContent));
+        if (isNaN(airContent) || airContent < 0 || airContent > 100) {
+          errors[`concrete-${structureType}-airContent`] = 'Air content must be between 0 and 100';
+        }
+      }
+    });
+    
+    setValidationErrors(prev => ({ ...prev, ...errors }));
+    return Object.keys(errors).length === 0;
+  };
+
   const updateConcreteSpec = (structureType: string, field: string, value: any) => {
     setConcreteSpecs({
       ...concreteSpecs,
@@ -125,6 +243,13 @@ const ProjectDetails: React.FC = () => {
         [field]: value
       }
     });
+    // Clear validation error for this field
+    const errorKey = `concrete-${structureType}-${field}`;
+    if (validationErrors[errorKey]) {
+      const newErrors = { ...validationErrors };
+      delete newErrors[errorKey];
+      setValidationErrors(newErrors);
+    }
   };
 
 
@@ -160,6 +285,12 @@ const ProjectDetails: React.FC = () => {
 
     // Validate soil specs
     if (!validateSoilSpecs()) {
+      setError('Please fix validation errors in Soil Specs');
+      return;
+    }
+
+    // Validate concrete specs
+    if (!validateConcreteSpecs()) {
       setError('Please fix validation errors in Concrete Specs');
       return;
     }
@@ -224,13 +355,51 @@ const ProjectDetails: React.FC = () => {
         filteredConcreteSpecs
       });
       
-      await projectsAPI.update(project.id, updateData);
-      // Reload project to get updated data
-      await loadProject();
+      const updatedProject = await projectsAPI.update(project.id, updateData);
+      
+      // Update local state immediately with response data to prevent data loss
+      setProject(updatedProject);
+      setProjectName(updatedProject.projectName || '');
+      
+      // Update customer emails
+      if (updatedProject.customerEmails && Array.isArray(updatedProject.customerEmails) && updatedProject.customerEmails.length > 0) {
+        setCustomerEmails(updatedProject.customerEmails);
+      } else {
+        setCustomerEmails(['']);
+      }
+      
+      // Update specs
+      setSoilSpecs(updatedProject.soilSpecs || {});
+      setConcreteSpecs(updatedProject.concreteSpecs || {});
+      
+      // Clear any validation errors
+      setValidationErrors({});
+      setError('');
+      
+      // Show success message (using alert for now, can be replaced with toast notification)
       alert('Project details updated successfully!');
+      
+      // Optionally reload to ensure consistency (but state is already updated above)
+      // Only reload if there might be server-side computed fields
+      try {
+        await loadProject();
+      } catch (reloadErr) {
+        // If reload fails, we still have the updated state from the API response
+        console.warn('Failed to reload project after update, but update was successful:', reloadErr);
+      }
     } catch (err: any) {
       console.error('Error updating project:', err);
-      setError(err.response?.data?.error || 'Failed to update project details.');
+      
+      // Provide more specific error messages
+      if (err.response?.status === 404) {
+        setError('Project not found. It may have been deleted.');
+      } else if (err.response?.status === 403) {
+        setError('You do not have permission to update this project.');
+      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        setError('Request timed out. Please check your connection and try again.');
+      } else {
+        setError(err.response?.data?.error || 'Failed to update project details. Please try again.');
+      }
     } finally {
       setSaving(false);
     }
@@ -377,45 +546,60 @@ const ProjectDetails: React.FC = () => {
                               type="text"
                               value={spec.specStrengthPsi || ''}
                               onChange={(e) => updateConcreteSpec(structureType, 'specStrengthPsi', e.target.value)}
-                              className="form-input"
+                              className={`form-input ${validationErrors[`concrete-${structureType}-specStrengthPsi`] ? 'error' : ''}`}
                               style={{ width: '100%', padding: '5px' }}
                             />
+                            {validationErrors[`concrete-${structureType}-specStrengthPsi`] && (
+                              <span className="field-error">{validationErrors[`concrete-${structureType}-specStrengthPsi`]}</span>
+                            )}
                           </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <input
                               type="text"
                               value={spec.ambientTempF || '35-95'}
                               onChange={(e) => updateConcreteSpec(structureType, 'ambientTempF', e.target.value)}
-                              className="form-input"
+                              className={`form-input ${validationErrors[`concrete-${structureType}-ambientTempF`] ? 'error' : ''}`}
                               style={{ width: '100%', padding: '5px' }}
                             />
+                            {validationErrors[`concrete-${structureType}-ambientTempF`] && (
+                              <span className="field-error">{validationErrors[`concrete-${structureType}-ambientTempF`]}</span>
+                            )}
                           </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <input
                               type="text"
                               value={spec.concreteTempF || '45-95'}
                               onChange={(e) => updateConcreteSpec(structureType, 'concreteTempF', e.target.value)}
-                              className="form-input"
+                              className={`form-input ${validationErrors[`concrete-${structureType}-concreteTempF`] ? 'error' : ''}`}
                               style={{ width: '100%', padding: '5px' }}
                             />
+                            {validationErrors[`concrete-${structureType}-concreteTempF`] && (
+                              <span className="field-error">{validationErrors[`concrete-${structureType}-concreteTempF`]}</span>
+                            )}
                           </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <input
                               type="text"
                               value={spec.slump || ''}
                               onChange={(e) => updateConcreteSpec(structureType, 'slump', e.target.value)}
-                              className="form-input"
+                              className={`form-input ${validationErrors[`concrete-${structureType}-slump`] ? 'error' : ''}`}
                               style={{ width: '100%', padding: '5px' }}
                             />
+                            {validationErrors[`concrete-${structureType}-slump`] && (
+                              <span className="field-error">{validationErrors[`concrete-${structureType}-slump`]}</span>
+                            )}
                           </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <input
                               type="text"
                               value={spec.airContent || ''}
                               onChange={(e) => updateConcreteSpec(structureType, 'airContent', e.target.value)}
-                              className="form-input"
+                              className={`form-input ${validationErrors[`concrete-${structureType}-airContent`] ? 'error' : ''}`}
                               style={{ width: '100%', padding: '5px' }}
                             />
+                            {validationErrors[`concrete-${structureType}-airContent`] && (
+                              <span className="field-error">{validationErrors[`concrete-${structureType}-airContent`]}</span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -449,38 +633,54 @@ const ProjectDetails: React.FC = () => {
                               type="text"
                               value={spec.densityPct || ''}
                               onChange={(e) => updateSoilSpec(structureType, 'densityPct', e.target.value)}
-                              className="form-input"
+                              className={`form-input ${validationErrors[`soil-${structureType}-densityPct`] ? 'error' : ''}`}
                               style={{ width: '100%', padding: '5px' }}
                             />
+                            {validationErrors[`soil-${structureType}-densityPct`] && (
+                              <span className="field-error">{validationErrors[`soil-${structureType}-densityPct`]}</span>
+                            )}
                           </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                              <input
-                                type="text"
-                                value={moistureRange.min || ''}
-                                onChange={(e) => {
-                                  const currentSpec = soilSpecs[structureType] || {};
-                                  const currentRange = currentSpec.moistureRange || {};
-                                  updateSoilSpec(structureType, 'moistureRange', { min: e.target.value, max: currentRange.max || '' });
-                                }}
-                                placeholder="Min"
-                                className="form-input"
-                                style={{ width: '80px', padding: '5px' }}
-                              />
+                              <div style={{ flex: 1 }}>
+                                <input
+                                  type="text"
+                                  value={moistureRange.min || ''}
+                                  onChange={(e) => {
+                                    const currentSpec = soilSpecs[structureType] || {};
+                                    const currentRange = currentSpec.moistureRange || {};
+                                    updateSoilSpec(structureType, 'moistureRange', { min: e.target.value, max: currentRange.max || '' });
+                                  }}
+                                  placeholder="Min"
+                                  className={`form-input ${validationErrors[`soil-${structureType}-moistureMin`] ? 'error' : ''}`}
+                                  style={{ width: '100%', padding: '5px' }}
+                                />
+                                {validationErrors[`soil-${structureType}-moistureMin`] && (
+                                  <span className="field-error">{validationErrors[`soil-${structureType}-moistureMin`]}</span>
+                                )}
+                              </div>
                               <span>-</span>
-                              <input
-                                type="text"
-                                value={moistureRange.max || ''}
-                                onChange={(e) => {
-                                  const currentSpec = soilSpecs[structureType] || {};
-                                  const currentRange = currentSpec.moistureRange || {};
-                                  updateSoilSpec(structureType, 'moistureRange', { min: currentRange.min || '', max: e.target.value });
-                                }}
-                                placeholder="Max"
-                                className="form-input"
-                                style={{ width: '80px', padding: '5px' }}
-                              />
+                              <div style={{ flex: 1 }}>
+                                <input
+                                  type="text"
+                                  value={moistureRange.max || ''}
+                                  onChange={(e) => {
+                                    const currentSpec = soilSpecs[structureType] || {};
+                                    const currentRange = currentSpec.moistureRange || {};
+                                    updateSoilSpec(structureType, 'moistureRange', { min: currentRange.min || '', max: e.target.value });
+                                  }}
+                                  placeholder="Max"
+                                  className={`form-input ${validationErrors[`soil-${structureType}-moistureMax`] ? 'error' : ''}`}
+                                  style={{ width: '100%', padding: '5px' }}
+                                />
+                                {validationErrors[`soil-${structureType}-moistureMax`] && (
+                                  <span className="field-error">{validationErrors[`soil-${structureType}-moistureMax`]}</span>
+                                )}
+                              </div>
                             </div>
+                            {validationErrors[`soil-${structureType}-moistureRange`] && (
+                              <span className="field-error" style={{ marginTop: '4px', display: 'block' }}>{validationErrors[`soil-${structureType}-moistureRange`]}</span>
+                            )}
                           </td>
                         </tr>
                       );
