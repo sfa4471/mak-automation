@@ -355,25 +355,33 @@ router.post('/', authenticate, requireAdmin, [
     }
 
     // Create project folder structure for PDF storage (use project number, not ID)
+    console.log(`📁 Creating project folder for: ${projectNumber}`);
     try {
       // Create folder in default location (or OneDrive if configured)
-      await ensureProjectDirectory(projectNumber);
+      const folderPath = await ensureProjectDirectory(projectNumber);
+      console.log(`✅ Project folder created/verified: ${folderPath}`);
     } catch (folderError) {
-      console.error('Error creating project folder:', folderError);
+      console.error('❌ Error creating project folder:', folderError);
+      console.error('Folder error stack:', folderError.stack);
       // Continue even if folder creation fails
     }
     
     // Also create OneDrive folder if OneDrive is configured
     try {
+      console.log(`📁 Checking OneDrive configuration for project: ${projectNumber}`);
       const onedriveResult = await onedriveService.ensureProjectFolder(projectNumber);
       if (onedriveResult.success) {
         console.log(`✅ Created OneDrive project folder: ${onedriveResult.folderPath}`);
-      } else if (onedriveResult.error && !onedriveResult.error.includes('not configured')) {
-        // Only log if it's not just "not configured" (which is expected if OneDrive isn't set up)
-        console.warn('OneDrive folder creation warning:', onedriveResult.error);
+      } else if (onedriveResult.error) {
+        if (onedriveResult.error.includes('not configured')) {
+          console.log(`ℹ️  OneDrive not configured, skipping OneDrive folder creation`);
+        } else {
+          console.warn('⚠️  OneDrive folder creation warning:', onedriveResult.error);
+        }
       }
     } catch (onedriveError) {
-      console.error('Error creating OneDrive project folder:', onedriveError);
+      console.error('❌ Error creating OneDrive project folder:', onedriveError);
+      console.error('OneDrive error stack:', onedriveError.stack);
       // Continue even if OneDrive folder creation fails
     }
 

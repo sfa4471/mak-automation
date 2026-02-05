@@ -259,7 +259,9 @@ const RebarForm: React.FC = () => {
       }
       const { getApiBaseUrl } = require('../utils/apiUrl');
       const baseUrl = getApiBaseUrl();
-      const pdfUrl = `${baseUrl}/api/pdf/rebar/${task.id}`;
+      // Ensure baseUrl doesn't already end with /api to avoid double /api/api/
+      const cleanBaseUrl = baseUrl.replace(/\/api\/?$/, '');
+      const pdfUrl = `${cleanBaseUrl}/api/pdf/rebar/${task.id}`;
       
       const response = await fetch(pdfUrl, {
         method: 'GET',
