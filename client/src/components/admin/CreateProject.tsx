@@ -122,11 +122,46 @@ const CreateProject: React.FC = () => {
     setLoading(true);
 
     try {
+      // Filter out empty structure entries but keep objects with values
+      const filteredSoilSpecs: SoilSpecs = {};
+      if (showSoilSpecs) {
+        Object.keys(soilSpecs).forEach(key => {
+          const spec = soilSpecs[key];
+          // Only include if it has at least one non-empty value
+          if (spec && (
+            (spec.densityPct && spec.densityPct.trim() !== '') ||
+            (spec.moistureRange && (
+              (spec.moistureRange.min && spec.moistureRange.min.trim() !== '') ||
+              (spec.moistureRange.max && spec.moistureRange.max.trim() !== '')
+            ))
+          )) {
+            filteredSoilSpecs[key] = spec;
+          }
+        });
+      }
+      
+      const filteredConcreteSpecs: ConcreteSpecs = {};
+      if (showConcreteSpecs) {
+        Object.keys(concreteSpecs).forEach(key => {
+          const spec = concreteSpecs[key];
+          // Only include if it has at least one non-empty value
+          if (spec && (
+            (spec.specStrengthPsi && spec.specStrengthPsi.trim() !== '') ||
+            (spec.ambientTempF && spec.ambientTempF.trim() !== '') ||
+            (spec.concreteTempF && spec.concreteTempF.trim() !== '') ||
+            (spec.slump && spec.slump.trim() !== '') ||
+            (spec.airContent && spec.airContent.trim() !== '')
+          )) {
+            filteredConcreteSpecs[key] = spec;
+          }
+        });
+      }
+      
       await projectsAPI.create({
         projectName,
         customerEmails: validEmails,
-        soilSpecs: showSoilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : undefined,
-        concreteSpecs: showConcreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : undefined
+        soilSpecs: Object.keys(filteredSoilSpecs).length > 0 ? filteredSoilSpecs : undefined,
+        concreteSpecs: Object.keys(filteredConcreteSpecs).length > 0 ? filteredConcreteSpecs : undefined
       });
       navigate('/dashboard');
     } catch (err: any) {

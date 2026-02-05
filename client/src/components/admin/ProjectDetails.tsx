@@ -171,13 +171,41 @@ const ProjectDetails: React.FC = () => {
         customerEmails: validEmails
       };
       
-      // Only include specs if they have data
-      if (Object.keys(soilSpecs).length > 0) {
-        updateData.soilSpecs = soilSpecs;
-      }
-      if (Object.keys(concreteSpecs).length > 0) {
-        updateData.concreteSpecs = concreteSpecs;
-      }
+      // Always include specs - filter out empty structure entries but keep the object
+      // This ensures that any entered values are saved
+      const filteredSoilSpecs: SoilSpecs = {};
+      Object.keys(soilSpecs).forEach(key => {
+        const spec = soilSpecs[key];
+        // Only include if it has at least one non-empty value
+        if (spec && (
+          (spec.densityPct && spec.densityPct.trim() !== '') ||
+          (spec.moistureRange && (
+            (spec.moistureRange.min && spec.moistureRange.min.trim() !== '') ||
+            (spec.moistureRange.max && spec.moistureRange.max.trim() !== '')
+          ))
+        )) {
+          filteredSoilSpecs[key] = spec;
+        }
+      });
+      
+      const filteredConcreteSpecs: ConcreteSpecs = {};
+      Object.keys(concreteSpecs).forEach(key => {
+        const spec = concreteSpecs[key];
+        // Only include if it has at least one non-empty value
+        if (spec && (
+          (spec.specStrengthPsi && spec.specStrengthPsi.trim() !== '') ||
+          (spec.ambientTempF && spec.ambientTempF.trim() !== '') ||
+          (spec.concreteTempF && spec.concreteTempF.trim() !== '') ||
+          (spec.slump && spec.slump.trim() !== '') ||
+          (spec.airContent && spec.airContent.trim() !== '')
+        )) {
+          filteredConcreteSpecs[key] = spec;
+        }
+      });
+      
+      // Always include specs objects (even if empty) to ensure consistency
+      updateData.soilSpecs = filteredSoilSpecs;
+      updateData.concreteSpecs = filteredConcreteSpecs;
       
       await projectsAPI.update(project.id, updateData);
       // Reload project to get updated data

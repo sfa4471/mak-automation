@@ -984,13 +984,12 @@ const DensityReportForm: React.FC = () => {
               >
                 <option value="">Select Structure...</option>
                 {(() => {
-                  // For Density Measurement reports, ALWAYS use soil specs (not concrete specs)
-                  // Structure types are the keys of the soilSpecs object
+                  // For Density Measurement reports, ONLY use soil specs (not concrete specs)
+                  // Structure types are ONLY the keys that exist in the soilSpecs object from Project Details
                   let structureTypes: string[] = [];
-                  let source = 'unknown';
                   
-                  // Priority 1: Use soil specs (required for density reports)
-                  // Check if projectSoilSpecs exists and is a non-null object with keys
+                  // Use soil specs ONLY - these are the structure types defined in the Soil Specs section
+                  // of the Project Details page
                   if (formData.projectSoilSpecs && 
                       typeof formData.projectSoilSpecs === 'object' && 
                       formData.projectSoilSpecs !== null &&
@@ -998,29 +997,24 @@ const DensityReportForm: React.FC = () => {
                     const soilSpecKeys = Object.keys(formData.projectSoilSpecs);
                     if (soilSpecKeys.length > 0) {
                       structureTypes = soilSpecKeys;
-                      source = 'soilSpecs';
-                      console.log('✅ Using structure types from Soil Specs:', structureTypes);
+                      console.log('✅ Using structure types from Soil Specs (Project Details):', structureTypes);
                     } else {
-                      console.warn('⚠️ projectSoilSpecs exists but is empty object');
+                      console.warn('⚠️ No soil specs defined in Project Details. Please add soil specs in the Project Details page.');
                     }
                   } else {
-                    console.warn('⚠️ projectSoilSpecs missing or invalid:', {
-                      exists: !!formData.projectSoilSpecs,
-                      type: typeof formData.projectSoilSpecs,
-                      value: formData.projectSoilSpecs
-                    });
+                    console.warn('⚠️ projectSoilSpecs missing or invalid. Please ensure soil specs are defined in Project Details.');
                   }
                   
-                  // Priority 2: If no soil specs, show warning and use fallback
+                  // Do NOT use fallback - only show structure types that are actually defined in Project Details
+                  // This ensures the dropdown only shows what's configured in the Soil Specs section
+                  
                   if (structureTypes.length === 0) {
-                    console.error('❌ ERROR: No soil specs found for density report! This should not happen.');
-                    console.error('   Falling back to hardcoded list. Please check project configuration.');
-                    structureTypes = FALLBACK_STRUCTURE_TYPES;
-                    source = 'fallback';
+                    return (
+                      <option value="" disabled>
+                        No soil specs defined - Please configure in Project Details
+                      </option>
+                    );
                   }
-                  
-                  // Note: We do NOT use concrete specs for density reports - density reports use soil specs only
-                  console.log(`📋 Structure dropdown populated from: ${source}`, structureTypes);
                   
                   return structureTypes.map((type) => (
                     <option key={type} value={type}>{formatStructureName(type)}</option>
