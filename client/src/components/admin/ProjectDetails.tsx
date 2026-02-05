@@ -355,8 +355,7 @@ const ProjectDetails: React.FC = () => {
             <h2>Concrete Specs</h2>
             {/* Always show the table so users can enter data */}
             <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
-              <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
                       <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Structure Type</th>
@@ -429,7 +428,7 @@ const ProjectDetails: React.FC = () => {
           <div className="form-section">
             <h2>Soil Specs</h2>
             {/* Always show the table so users can enter data */}
-              <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
+            <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>

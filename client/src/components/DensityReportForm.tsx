@@ -9,16 +9,8 @@ import { proctorAPI } from '../api/proctor';
 import ProjectHomeButton from './ProjectHomeButton';
 import './DensityReportForm.css';
 
-// Fallback structure types if no soil specs are defined in project
-// These should match SOIL_STRUCTURE_TYPES from project creation forms
-const FALLBACK_STRUCTURE_TYPES = [
-  'Building Pad',
-  'Parking lot',
-  'Sidewalk',
-  'Approach',
-  'Utilities',
-  'Other'
-];
+// Note: We no longer use fallback structure types - only show structure types
+// that are actually defined in the project's Soil Specs section
 
 /**
  * Format structure name for display
