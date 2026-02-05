@@ -311,37 +311,92 @@ const ProjectDetails: React.FC = () => {
         customerEmails: validEmails
       };
       
-      // Always include specs - filter out empty structure entries but keep the object
-      // This ensures that any entered values are saved
+      // Build soil specs - start with current state (which has all user-entered values)
+      // Then merge with existing saved specs to preserve any that weren't modified
       const filteredSoilSpecs: SoilSpecs = {};
+      
+      // First, include all structure types from current state (user-entered values)
       Object.keys(soilSpecs).forEach(key => {
         const spec = soilSpecs[key];
-        // Only include if it has at least one non-empty value
-        if (spec && (
-          (spec.densityPct && String(spec.densityPct).trim() !== '') ||
-          (spec.moistureRange && (
-            (spec.moistureRange.min && String(spec.moistureRange.min).trim() !== '') ||
-            (spec.moistureRange.max && String(spec.moistureRange.max).trim() !== '')
-          ))
-        )) {
-          filteredSoilSpecs[key] = spec;
+        if (spec) {
+          // Check if it has at least one non-empty value
+          const hasValue = (
+            (spec.densityPct && String(spec.densityPct).trim() !== '') ||
+            (spec.moistureRange && (
+              (spec.moistureRange.min && String(spec.moistureRange.min).trim() !== '') ||
+              (spec.moistureRange.max && String(spec.moistureRange.max).trim() !== '')
+            ))
+          );
+          
+          if (hasValue) {
+            filteredSoilSpecs[key] = { ...spec };
+          }
         }
       });
       
+      // Then, preserve any existing saved specs that weren't modified in this session
+      if (project.soilSpecs) {
+        Object.keys(project.soilSpecs).forEach(key => {
+          // Only preserve if it wasn't already included from current state
+          if (!filteredSoilSpecs[key]) {
+            const existingSpec = project.soilSpecs![key];
+            // Only preserve if it has values
+            if (existingSpec && (
+              (existingSpec.densityPct && String(existingSpec.densityPct).trim() !== '') ||
+              (existingSpec.moistureRange && (
+                (existingSpec.moistureRange.min && String(existingSpec.moistureRange.min).trim() !== '') ||
+                (existingSpec.moistureRange.max && String(existingSpec.moistureRange.max).trim() !== '')
+              ))
+            )) {
+              filteredSoilSpecs[key] = { ...existingSpec };
+            }
+          }
+        });
+      }
+      
+      // Build concrete specs - start with current state (which has all user-entered values)
+      // Then merge with existing saved specs to preserve any that weren't modified
       const filteredConcreteSpecs: ConcreteSpecs = {};
+      
+      // First, include all structure types from current state (user-entered values)
       Object.keys(concreteSpecs).forEach(key => {
         const spec = concreteSpecs[key];
-        // Only include if it has at least one non-empty value
-        if (spec && (
-          (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') ||
-          (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') ||
-          (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
-          (spec.slump && String(spec.slump).trim() !== '') ||
-          (spec.airContent && String(spec.airContent).trim() !== '')
-        )) {
-          filteredConcreteSpecs[key] = spec;
+        if (spec) {
+          // Check if it has at least one non-empty value
+          // If a value is in state, it means the user interacted with it, so save it (even if it's "35-95" or "45-95")
+          const hasValue = (
+            (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') ||
+            (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') ||
+            (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
+            (spec.slump && String(spec.slump).trim() !== '') ||
+            (spec.airContent && String(spec.airContent).trim() !== '')
+          );
+          
+          if (hasValue) {
+            filteredConcreteSpecs[key] = { ...spec };
+          }
         }
       });
+      
+      // Then, preserve any existing saved specs that weren't modified in this session
+      if (project.concreteSpecs) {
+        Object.keys(project.concreteSpecs).forEach(key => {
+          // Only preserve if it wasn't already included from current state
+          if (!filteredConcreteSpecs[key]) {
+            const existingSpec = project.concreteSpecs![key];
+            // Only preserve if it has values
+            if (existingSpec && (
+              (existingSpec.specStrengthPsi && String(existingSpec.specStrengthPsi).trim() !== '') ||
+              (existingSpec.ambientTempF && String(existingSpec.ambientTempF).trim() !== '') ||
+              (existingSpec.concreteTempF && String(existingSpec.concreteTempF).trim() !== '') ||
+              (existingSpec.slump && String(existingSpec.slump).trim() !== '') ||
+              (existingSpec.airContent && String(existingSpec.airContent).trim() !== '')
+            )) {
+              filteredConcreteSpecs[key] = { ...existingSpec };
+            }
+          }
+        });
+      }
       
       // Always include specs objects (even if empty) to ensure consistency
       updateData.soilSpecs = filteredSoilSpecs;
@@ -368,9 +423,14 @@ const ProjectDetails: React.FC = () => {
         setCustomerEmails(['']);
       }
       
-      // Update specs
-      setSoilSpecs(updatedProject.soilSpecs || {});
-      setConcreteSpecs(updatedProject.concreteSpecs || {});
+      // Update specs from the API response (which has the saved values)
+      // Merge with current state to preserve any unsaved changes (though there shouldn't be any at this point)
+      const mergedSoilSpecs = { ...(updatedProject.soilSpecs || {}) };
+      const mergedConcreteSpecs = { ...(updatedProject.concreteSpecs || {}) };
+      
+      // Use the saved values from the API response
+      setSoilSpecs(mergedSoilSpecs);
+      setConcreteSpecs(mergedConcreteSpecs);
       
       // Clear any validation errors
       setValidationErrors({});
@@ -379,14 +439,8 @@ const ProjectDetails: React.FC = () => {
       // Show success message (using alert for now, can be replaced with toast notification)
       alert('Project details updated successfully!');
       
-      // Optionally reload to ensure consistency (but state is already updated above)
-      // Only reload if there might be server-side computed fields
-      try {
-        await loadProject();
-      } catch (reloadErr) {
-        // If reload fails, we still have the updated state from the API response
-        console.warn('Failed to reload project after update, but update was successful:', reloadErr);
-      }
+      // Don't reload - we already have the updated data from the API response
+      // Reloading could cause a flash and might overwrite with stale data
     } catch (err: any) {
       console.error('Error updating project:', err);
       
