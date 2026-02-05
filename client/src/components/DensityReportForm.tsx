@@ -534,14 +534,14 @@ const DensityReportForm: React.FC = () => {
     if (!formData || !formData.projectSoilSpecs) return;
     
     const soilSpecs = formData.projectSoilSpecs;
-    const selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType];
+    const selectedSpec = soilSpecs[structureType] as SoilSpecRow | undefined;
     
     let updatedData = { ...formData, structureType, structure: structureType };
     
     // Auto-fill specs if available
     if (selectedSpec) {
       // Set density percent
-      if (selectedSpec.densityPct) {
+      if ('densityPct' in selectedSpec && selectedSpec.densityPct) {
         updatedData = { ...updatedData, densSpecPercent: selectedSpec.densityPct, specDensityPct: selectedSpec.densityPct };
       }
       
