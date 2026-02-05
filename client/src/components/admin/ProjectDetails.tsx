@@ -486,14 +486,19 @@ const ProjectDetails: React.FC = () => {
         setCustomerEmails(['']);
       }
       
-      // Update specs from the API response (which has the saved values)
-      // Merge with current state to preserve any unsaved changes (though there shouldn't be any at this point)
-      const mergedSoilSpecs = { ...(updatedProject.soilSpecs || {}) };
-      const mergedConcreteSpecs = { ...(updatedProject.concreteSpecs || {}) };
+      // Use the normalized filtered specs we just sent (they have the correct case)
+      // Don't use the API response directly as it might have different case
+      // The filtered specs already have the correct normalized keys
+      setSoilSpecs(filteredSoilSpecs);
+      setConcreteSpecs(filteredConcreteSpecs);
       
-      // Use the saved values from the API response
-      setSoilSpecs(mergedSoilSpecs);
-      setConcreteSpecs(mergedConcreteSpecs);
+      // Debug: Log state after update
+      console.log('✅ Updated state after save (using filtered data):', {
+        soilSpecsKeys: Object.keys(filteredSoilSpecs),
+        concreteSpecsKeys: Object.keys(filteredConcreteSpecs),
+        soilSpecs: JSON.parse(JSON.stringify(filteredSoilSpecs)),
+        concreteSpecs: JSON.parse(JSON.stringify(filteredConcreteSpecs))
+      });
       
       // Clear any validation errors
       setValidationErrors({});
