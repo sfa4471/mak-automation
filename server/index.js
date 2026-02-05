@@ -35,6 +35,14 @@ if (REQUIRE_SUPABASE) {
   }
 }
 
+// Ensure database is initialized before starting server
+// This is important for SQLite to create tables if they don't exist
+if (!process.env.SUPABASE_URL || process.env.FORCE_SQLITE === 'true') {
+  // Force database initialization by requiring it
+  require('./database');
+  console.log('✅ SQLite database initialized\n');
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 

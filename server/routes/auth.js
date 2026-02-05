@@ -20,6 +20,15 @@ router.post('/login', [
 
     const { email, password } = req.body;
 
+    // Log which database is being used for debugging
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Login attempt:', { 
+        email, 
+        usingSupabase: db.isSupabase(),
+        usingSQLite: db.isSQLite()
+      });
+    }
+
     const user = await db.get('users', { email });
 
     if (!user) {
@@ -47,7 +56,17 @@ router.post('/login', [
     });
   } catch (err) {
     console.error('Login error:', err);
-    res.status(500).json({ error: 'Database error' });
+    console.error('Error details:', {
+      message: err.message,
+      stack: err.stack,
+      name: err.name
+    });
+    // Provide more specific error message for debugging
+    const errorMessage = err.message || 'Database error';
+    res.status(500).json({ 
+      error: 'Database error',
+      details: process.env.NODE_ENV === 'development' ? errorMessage : undefined
+    });
   }
 });
 

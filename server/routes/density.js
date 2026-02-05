@@ -82,12 +82,23 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         try {
           projectSoilSpecs = JSON.parse(task.soilSpecs);
         } catch (e) {
+          console.error('Error parsing soilSpecs JSON:', e);
           projectSoilSpecs = {};
         }
       } else {
         projectSoilSpecs = task.soilSpecs;
       }
     }
+    
+    // Debug: Log soil specs for density reports
+    console.log('Density report GET - Soil Specs Debug:', {
+      hasSoilSpecs: !!task.soilSpecs,
+      soilSpecsType: typeof task.soilSpecs,
+      soilSpecsRaw: task.soilSpecs,
+      parsedSoilSpecs: projectSoilSpecs,
+      soilSpecKeys: Object.keys(projectSoilSpecs),
+      soilSpecKeysCount: Object.keys(projectSoilSpecs).length
+    });
 
     const data = await db.get('density_reports', { taskId });
 
@@ -127,6 +138,14 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       data.projectConcreteSpecs = projectConcreteSpecs;
       data.projectSoilSpecs = projectSoilSpecs;
       
+      // Debug: Verify what's being sent to frontend
+      console.log('Density report GET - Sending to frontend:', {
+        projectSoilSpecs: data.projectSoilSpecs,
+        projectSoilSpecsKeys: Object.keys(data.projectSoilSpecs || {}),
+        projectConcreteSpecs: data.projectConcreteSpecs,
+        projectConcreteSpecsKeys: Object.keys(data.projectConcreteSpecs || {})
+      });
+      
       // If technicianId is missing but task has assigned technician, use that
       if (!data.technicianId && task.assignedTechnicianId) {
         data.technicianId = task.assignedTechnicianId;
@@ -145,6 +164,14 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       // Return empty structure with default technician from task assignment
       const defaultTechId = task.assignedTechnicianId || null;
       const defaultTechName = req.user.name || req.user.email || '';
+      
+      // Debug: Verify what's being sent for new reports
+      console.log('Density report GET - New report, sending:', {
+        projectSoilSpecs: projectSoilSpecs,
+        projectSoilSpecsKeys: Object.keys(projectSoilSpecs),
+        projectConcreteSpecs: projectConcreteSpecs,
+        projectConcreteSpecsKeys: Object.keys(projectConcreteSpecs)
+      });
       
       res.json({
         taskId: parseInt(taskId),
