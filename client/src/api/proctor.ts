@@ -53,10 +53,9 @@ export const proctorAPI = {
   generatePDF: async (taskId: number, reportData: ProctorReportData): Promise<Blob> => {
     try {
       const token = localStorage.getItem('token');
-      // Get base URL - REACT_APP_API_URL already includes /api, so we need to extract base
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
-      // Extract base URL (remove /api suffix if present)
-      const baseUrl = apiUrl.replace(/\/api\/?$/, '');
+      // Use centralized API URL utility
+      const { getApiBaseUrl } = require('../utils/apiUrl');
+      const baseUrl = getApiBaseUrl();
       
       const pdfUrl = `${baseUrl}/api/proctor/${taskId}/pdf`;
       

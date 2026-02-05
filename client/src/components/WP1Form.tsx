@@ -6,6 +6,7 @@ import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
 import { SoilSpecs, projectsAPI } from '../api/projects';
+import { getApiBaseUrl } from '../utils/apiUrl';
 import ProjectHomeButton from './ProjectHomeButton';
 import './WP1Form.css';
 
@@ -846,8 +847,7 @@ const WP1Form: React.FC = () => {
     setLastSavedPath(null); // Clear previous saved path
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
-      const baseUrl = apiUrl.replace(/\/api\/?$/, '');
+      const baseUrl = getApiBaseUrl();
       
       // Use task or workpackage route for PDF
       const pdfRoute = id;

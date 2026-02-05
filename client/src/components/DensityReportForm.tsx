@@ -10,15 +10,32 @@ import ProjectHomeButton from './ProjectHomeButton';
 import './DensityReportForm.css';
 
 // Fallback structure types if no soil specs are defined in project
+// These should match SOIL_STRUCTURE_TYPES from project creation forms
 const FALLBACK_STRUCTURE_TYPES = [
-  'Slab',
-  'Grade Beams',
-  'Piers',
-  'Side Walk',
-  'Paving',
-  'Curb',
+  'Building Pad',
+  'Parking lot',
+  'Sidewalk',
+  'Approach',
+  'Utilities',
   'Other'
 ];
+
+/**
+ * Format structure name for display
+ * Converts "_building_pad" -> "Building Pad"
+ * Handles underscores, leading underscores, and capitalization
+ */
+const formatStructureName = (structureName: string): string => {
+  if (!structureName) return '';
+  
+  return structureName
+    .replace(/^_+/, '') // Remove leading underscores
+    .replace(/_/g, ' ') // Replace underscores with spaces
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+    .trim();
+};
 
 const DensityReportForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -159,14 +176,36 @@ const DensityReportForm: React.FC = () => {
       ]);
       setTask(taskData);
       
-      // Debug: Log loaded data to verify header fields are present
+      // Debug: Log loaded data to verify header fields and specs are present
       if (reportData) {
-        console.log('Loaded density report data:', {
+        const soilSpecsKeys = reportData.projectSoilSpecs && typeof reportData.projectSoilSpecs === 'object' 
+          ? Object.keys(reportData.projectSoilSpecs) 
+          : [];
+        const concreteSpecsKeys = reportData.projectConcreteSpecs && typeof reportData.projectConcreteSpecs === 'object'
+          ? Object.keys(reportData.projectConcreteSpecs)
+          : [];
+        
+        console.log('🔍 Density Report Data Loaded:', {
           clientName: reportData.clientName,
           datePerformed: reportData.datePerformed,
           structure: reportData.structure,
-          structureType: reportData.structureType
+          structureType: reportData.structureType,
+          hasProjectSoilSpecs: !!reportData.projectSoilSpecs,
+          projectSoilSpecsType: typeof reportData.projectSoilSpecs,
+          projectSoilSpecs: reportData.projectSoilSpecs,
+          soilSpecsKeys: soilSpecsKeys,
+          soilSpecsCount: soilSpecsKeys.length,
+          hasProjectConcreteSpecs: !!reportData.projectConcreteSpecs,
+          projectConcreteSpecsType: typeof reportData.projectConcreteSpecs,
+          projectConcreteSpecs: reportData.projectConcreteSpecs,
+          concreteSpecsKeys: concreteSpecsKeys,
+          concreteSpecsCount: concreteSpecsKeys.length
         });
+        
+        // Warn if soil specs are missing but concrete specs exist
+        if (soilSpecsKeys.length === 0 && concreteSpecsKeys.length > 0) {
+          console.warn('⚠️ WARNING: No Soil Specs found but Concrete Specs exist. Density reports should use Soil Specs!');
+        }
       }
       
       // Ensure header fields are properly initialized from loaded data
@@ -490,12 +529,12 @@ const DensityReportForm: React.FC = () => {
     debouncedSave(updatedData);
   };
 
-  // Handle structure selection - auto-fill specs from project concrete specs
+  // Handle structure selection - auto-fill specs from project soil specs (for density reports)
   const handleStructureChange = (structureType: string) => {
-    if (!formData || !formData.projectConcreteSpecs) return;
+    if (!formData || !formData.projectSoilSpecs) return;
     
-    const concreteSpecs = formData.projectConcreteSpecs;
-    const selectedSpec = concreteSpecs[structureType];
+    const soilSpecs = formData.projectSoilSpecs;
+    const selectedSpec = soilSpecs[structureType];
     
     let updatedData = { ...formData, structureType, structure: structureType };
     
@@ -761,8 +800,8 @@ const DensityReportForm: React.FC = () => {
         alert('Authentication required. Please log in again.');
         return;
       }
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
-      const baseUrl = apiUrl.replace(/\/api\/?$/, '');
+      const { getApiBaseUrl } = require('../utils/apiUrl');
+      const baseUrl = getApiBaseUrl();
       const pdfUrl = `${baseUrl}/api/pdf/density/${task.id}`;
       
       const response = await fetch(pdfUrl, {
@@ -944,23 +983,46 @@ const DensityReportForm: React.FC = () => {
               >
                 <option value="">Select Structure...</option>
                 {(() => {
-                  // Get structure types from project soil specs (keys of soilSpecs object)
-                  // If no soil specs, fall back to concrete specs, then to hardcoded list
+                  // For Density Measurement reports, ALWAYS use soil specs (not concrete specs)
+                  // Structure types are the keys of the soilSpecs object
                   let structureTypes: string[] = [];
+                  let source = 'unknown';
                   
-                  if (formData.projectSoilSpecs && Object.keys(formData.projectSoilSpecs).length > 0) {
-                    // Use structure types from soil specs (keys are the structure types)
-                    structureTypes = Object.keys(formData.projectSoilSpecs);
-                  } else if (formData.projectConcreteSpecs && Object.keys(formData.projectConcreteSpecs).length > 0) {
-                    // Fallback to concrete specs if no soil specs
-                    structureTypes = Object.keys(formData.projectConcreteSpecs);
+                  // Priority 1: Use soil specs (required for density reports)
+                  // Check if projectSoilSpecs exists and is a non-null object with keys
+                  if (formData.projectSoilSpecs && 
+                      typeof formData.projectSoilSpecs === 'object' && 
+                      formData.projectSoilSpecs !== null &&
+                      !Array.isArray(formData.projectSoilSpecs)) {
+                    const soilSpecKeys = Object.keys(formData.projectSoilSpecs);
+                    if (soilSpecKeys.length > 0) {
+                      structureTypes = soilSpecKeys;
+                      source = 'soilSpecs';
+                      console.log('✅ Using structure types from Soil Specs:', structureTypes);
+                    } else {
+                      console.warn('⚠️ projectSoilSpecs exists but is empty object');
+                    }
                   } else {
-                    // Final fallback to hardcoded list
-                    structureTypes = FALLBACK_STRUCTURE_TYPES;
+                    console.warn('⚠️ projectSoilSpecs missing or invalid:', {
+                      exists: !!formData.projectSoilSpecs,
+                      type: typeof formData.projectSoilSpecs,
+                      value: formData.projectSoilSpecs
+                    });
                   }
                   
+                  // Priority 2: If no soil specs, show warning and use fallback
+                  if (structureTypes.length === 0) {
+                    console.error('❌ ERROR: No soil specs found for density report! This should not happen.');
+                    console.error('   Falling back to hardcoded list. Please check project configuration.');
+                    structureTypes = FALLBACK_STRUCTURE_TYPES;
+                    source = 'fallback';
+                  }
+                  
+                  // Note: We do NOT use concrete specs for density reports - density reports use soil specs only
+                  console.log(`📋 Structure dropdown populated from: ${source}`, structureTypes);
+                  
                   return structureTypes.map((type) => (
-                    <option key={type} value={type}>{type}</option>
+                    <option key={type} value={type}>{formatStructureName(type)}</option>
                   ));
                 })()}
               </select>

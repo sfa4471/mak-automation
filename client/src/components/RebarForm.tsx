@@ -257,8 +257,8 @@ const RebarForm: React.FC = () => {
         alert('Authentication required. Please log in again.');
         return;
       }
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
-      const baseUrl = apiUrl.replace(/\/api\/?$/, '');
+      const { getApiBaseUrl } = require('../utils/apiUrl');
+      const baseUrl = getApiBaseUrl();
       const pdfUrl = `${baseUrl}/api/pdf/rebar/${task.id}`;
       
       const response = await fetch(pdfUrl, {

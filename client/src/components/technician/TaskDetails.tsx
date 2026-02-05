@@ -44,8 +44,8 @@ const TaskDetails: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       // Get base URL (without /api)
-      const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://192.168.4.24:5000/api';
-      const baseUrl = apiBaseUrl.replace('/api', '');
+      const { getApiBaseUrl } = require('../../utils/apiUrl');
+      const baseUrl = getApiBaseUrl();
       
       // Route to correct PDF endpoint based on task type
       let url: string;
