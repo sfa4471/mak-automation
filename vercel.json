@@ -1,5 +1,5 @@
 {
-  "buildCommand": "bash build.sh",
+  "buildCommand": "pwd && ls -la && if [ -d client ]; then cd client && npm install && npm run build; else echo 'ERROR: client directory not found!' && ls -la && exit 1; fi",
   "outputDirectory": "client/build",
   "framework": null,
   "rewrites": [
