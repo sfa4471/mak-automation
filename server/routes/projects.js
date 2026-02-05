@@ -582,6 +582,128 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
+// Diagnostic endpoint for folder creation testing (Admin only)
+router.get('/diagnostic/folder-creation', authenticate, requireAdmin, async (req, res) => {
+  const diagnostics = {
+    timestamp: new Date().toISOString(),
+    steps: [],
+    errors: [],
+    warnings: [],
+    finalResult: null
+  };
+
+  try {
+    // Step 1: Check database connection
+    diagnostics.steps.push({ step: 1, name: 'Database Connection', status: 'checking' });
+    const db = require('../db');
+    diagnostics.steps[0].isSupabase = db.isSupabase();
+    diagnostics.steps[0].status = 'success';
+    console.log('🔍 [DIAGNOSTIC ENDPOINT] Database connection:', diagnostics.steps[0]);
+
+    // Step 2: Get workflow path from database
+    diagnostics.steps.push({ step: 2, name: 'Get Workflow Path', status: 'checking' });
+    const { getWorkflowBasePath } = require('../utils/pdfFileManager');
+    const workflowPath = await getWorkflowBasePath();
+    diagnostics.steps[1].result = workflowPath;
+    diagnostics.steps[1].status = workflowPath ? 'success' : 'failed';
+    if (!workflowPath) {
+      diagnostics.errors.push('Workflow path not configured in database');
+    }
+    console.log('🔍 [DIAGNOSTIC ENDPOINT] Workflow path:', diagnostics.steps[1]);
+
+    // Step 3: Validate path
+    if (workflowPath) {
+      diagnostics.steps.push({ step: 3, name: 'Validate Path', status: 'checking' });
+      const { validatePath } = require('../utils/pdfFileManager');
+      const validation = validatePath(workflowPath);
+      diagnostics.steps[2].result = validation;
+      diagnostics.steps[2].status = validation.valid && validation.isWritable ? 'success' : 'failed';
+      if (!validation.valid || !validation.isWritable) {
+        diagnostics.errors.push(`Path validation failed: ${validation.error}`);
+      }
+      console.log('🔍 [DIAGNOSTIC ENDPOINT] Path validation:', diagnostics.steps[2]);
+    }
+
+    // Step 4: Test folder creation
+    if (workflowPath) {
+      diagnostics.steps.push({ step: 4, name: 'Test Folder Creation', status: 'checking' });
+      const fs = require('fs');
+      const path = require('path');
+      const testFolder = path.join(workflowPath, '.diagnostic_test_' + Date.now());
+      
+      try {
+        console.log('🔍 [DIAGNOSTIC ENDPOINT] Creating test folder:', testFolder);
+        fs.mkdirSync(testFolder, { recursive: true });
+        const exists = fs.existsSync(testFolder);
+        const stats = fs.statSync(testFolder);
+        const isDirectory = stats.isDirectory();
+        
+        // Test write
+        const testFile = path.join(testFolder, 'test.txt');
+        fs.writeFileSync(testFile, 'test');
+        fs.unlinkSync(testFile);
+        fs.rmdirSync(testFolder);
+        
+        diagnostics.steps[3].result = {
+          created: true,
+          exists: exists,
+          isDirectory: isDirectory,
+          writable: true
+        };
+        diagnostics.steps[3].status = 'success';
+        console.log('🔍 [DIAGNOSTIC ENDPOINT] Test folder creation:', diagnostics.steps[3]);
+      } catch (testError) {
+        diagnostics.steps[3].result = {
+          error: testError.message,
+          stack: testError.stack
+        };
+        diagnostics.steps[3].status = 'failed';
+        diagnostics.errors.push(`Folder creation test failed: ${testError.message}`);
+        console.error('🔍 [DIAGNOSTIC ENDPOINT] Test folder creation failed:', testError);
+      }
+    }
+
+    // Step 5: Test actual project folder creation
+    if (workflowPath) {
+      diagnostics.steps.push({ step: 5, name: 'Test Project Folder Creation', status: 'checking' });
+      const testProjectNumber = '02-2026-TEST';
+      const { ensureProjectDirectory } = require('../utils/pdfFileManager');
+      console.log('🔍 [DIAGNOSTIC ENDPOINT] Testing project folder creation with:', testProjectNumber);
+      const folderResult = await ensureProjectDirectory(testProjectNumber);
+      
+      diagnostics.steps[4].result = folderResult;
+      diagnostics.steps[4].status = folderResult.success ? 'success' : 'failed';
+      
+      if (!folderResult.success) {
+        diagnostics.errors.push(`Project folder creation failed: ${folderResult.error}`);
+      }
+      if (folderResult.warnings && folderResult.warnings.length > 0) {
+        diagnostics.warnings.push(...folderResult.warnings);
+      }
+      
+      diagnostics.finalResult = folderResult;
+      console.log('🔍 [DIAGNOSTIC ENDPOINT] Project folder creation result:', folderResult);
+    }
+
+    res.json({
+      success: diagnostics.errors.length === 0,
+      diagnostics: diagnostics
+    });
+  } catch (error) {
+    diagnostics.errors.push(`Diagnostic failed: ${error.message}`);
+    diagnostics.finalResult = {
+      success: false,
+      error: error.message,
+      stack: error.stack
+    };
+    console.error('🔍 [DIAGNOSTIC ENDPOINT] Diagnostic error:', error);
+    res.status(500).json({
+      success: false,
+      diagnostics: diagnostics
+    });
+  }
+});
+
 // Retry folder creation for a project (Admin only)
 router.post('/:id/retry-folder', authenticate, requireAdmin, async (req, res) => {
   try {

@@ -24,20 +24,34 @@ function getOneDriveService() {
  * @returns {Promise<string|null>} The workflow base path, or null if not set
  */
 async function getWorkflowBasePath() {
+  console.log('🔍 [DIAGNOSTIC] getWorkflowBasePath() called');
   try {
     const db = require('../db');
+    console.log('🔍 [DIAGNOSTIC] Database module loaded, isSupabase:', db.isSupabase());
+    
     const setting = await db.get('app_settings', { key: 'workflow_base_path' });
+    console.log('🔍 [DIAGNOSTIC] Database query result:', {
+      found: !!setting,
+      hasValue: !!(setting && setting.value),
+      value: setting?.value,
+      valueType: typeof setting?.value,
+      fullSetting: setting
+    });
+    
     if (setting && setting.value && setting.value.trim() !== '') {
-      return setting.value.trim();
+      const path = setting.value.trim();
+      console.log('🔍 [DIAGNOSTIC] Returning path:', path);
+      return path;
     }
+    console.log('🔍 [DIAGNOSTIC] No path found, returning null');
     return null;
   } catch (error) {
-    console.error('❌ Error getting workflow base path from database:', {
+    console.error('🔍 [DIAGNOSTIC] Error in getWorkflowBasePath:', {
       message: error.message,
       stack: error.stack,
-      code: error.code
+      code: error.code,
+      name: error.name
     });
-    // Still return null to allow fallback, but log the error
     return null;
   }
 }
@@ -289,6 +303,7 @@ function normalizeWindowsPath(filePath) {
  * @returns {Promise<{success: boolean, path: string|null, error: string|null, warnings: string[], details: object}>} - Structured result
  */
 async function ensureProjectDirectory(projectNumber) {
+  console.log('🔍 [DIAGNOSTIC] ensureProjectDirectory() called with projectNumber:', projectNumber);
   const result = {
     success: false,
     path: null,
@@ -299,7 +314,9 @@ async function ensureProjectDirectory(projectNumber) {
 
   try {
     // Step 1: Get base path
+    console.log('🔍 [DIAGNOSTIC] Step 1: Getting effective base path');
     const basePath = await getEffectiveBasePath();
+    console.log('🔍 [DIAGNOSTIC] Base path determined:', basePath);
     result.details.basePath = basePath;
     
     if (!basePath) {
@@ -311,15 +328,20 @@ async function ensureProjectDirectory(projectNumber) {
     const isOneDrivePath = basePath.toLowerCase().includes('onedrive');
 
     // Step 2: Validate base path exists and is writable
+    console.log('🔍 [DIAGNOSTIC] Step 2: Validating base path');
     const baseValidation = validatePath(basePath);
+    console.log('🔍 [DIAGNOSTIC] Path validation result:', baseValidation);
     if (!baseValidation.valid) {
+      console.error('🔍 [DIAGNOSTIC] Path validation failed - invalid:', baseValidation.error);
       result.error = `Base path is invalid: ${baseValidation.error}`;
       return result;
     }
     if (!baseValidation.isWritable) {
+      console.error('🔍 [DIAGNOSTIC] Path validation failed - not writable:', baseValidation.error);
       result.error = `Base path is not writable: ${baseValidation.error}`;
       return result;
     }
+    console.log('🔍 [DIAGNOSTIC] Path validation passed');
 
     // Step 3: Sanitize project number
     const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
@@ -355,14 +377,23 @@ async function ensureProjectDirectory(projectNumber) {
     }
 
     // Step 6: Create project directory with enhanced verification for OneDrive
+    console.log('🔍 [DIAGNOSTIC] Step 6: Creating project directory');
+    console.log('🔍 [DIAGNOSTIC] Project directory path:', projectDir);
     try {
       // Use normalized path for Windows long path support
       const normalizedProjectDir = normalizeWindowsPath(projectDir);
+      console.log('🔍 [DIAGNOSTIC] Normalized path:', normalizedProjectDir);
+      console.log('🔍 [DIAGNOSTIC] Normalized path exists before creation:', fs.existsSync(normalizedProjectDir));
       
       if (!fs.existsSync(normalizedProjectDir)) {
+        console.log('🔍 [DIAGNOSTIC] Calling mkdirSync with recursive: true');
         fs.mkdirSync(normalizedProjectDir, { recursive: true });
+        console.log('🔍 [DIAGNOSTIC] mkdirSync completed, checking if folder exists now');
+        console.log('🔍 [DIAGNOSTIC] Normalized path exists after creation:', fs.existsSync(normalizedProjectDir));
+        console.log('🔍 [DIAGNOSTIC] Original path exists after creation:', fs.existsSync(projectDir));
         result.details.created = true;
       } else {
+        console.log('🔍 [DIAGNOSTIC] Folder already exists');
         result.details.created = false;
         result.details.existed = true;
       }
