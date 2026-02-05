@@ -50,6 +50,36 @@ export interface SetOneDrivePathResponse {
 }
 
 /**
+ * Response when getting the workflow path
+ */
+export interface WorkflowPathResponse {
+  success: boolean;
+  path: string | null;
+}
+
+/**
+ * Response when getting the status of workflow path
+ */
+export interface WorkflowStatusResponse {
+  success: boolean;
+  configured: boolean;
+  path?: string;
+  isValid?: boolean;
+  isWritable?: boolean;
+  error?: string;
+}
+
+/**
+ * Response when testing a workflow path
+ */
+export interface WorkflowTestResponse {
+  success: boolean;
+  isValid: boolean;
+  isWritable?: boolean;
+  error?: string;
+}
+
+/**
  * API Client for Settings
  * Provides type-safe functions to interact with the settings API
  */
@@ -103,6 +133,60 @@ export const settingsAPI = {
   testOneDrivePath: async (path: string): Promise<OneDriveTestResponse> => {
     const response = await api.post<OneDriveTestResponse>(
       '/settings/onedrive-test',
+      { path }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get the current workflow base path
+   * 
+   * API Endpoint: GET /api/settings/workflow/path
+   */
+  getWorkflowPath: async (): Promise<WorkflowPathResponse> => {
+    const response = await api.get<WorkflowPathResponse>('/settings/workflow/path');
+    return response.data;
+  },
+
+  /**
+   * Set or update the workflow base path
+   * 
+   * API Endpoint: POST /api/settings/workflow/path
+   * Body: { path: string | null }
+   * 
+   * @param path - The path to set, or null to clear
+   */
+  setWorkflowPath: async (path: string | null): Promise<SetOneDrivePathResponse> => {
+    const response = await api.post<SetOneDrivePathResponse>(
+      '/settings/workflow/path',
+      { path }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get the status of the workflow path
+   * Includes validation information (is it valid? is it writable?)
+   * 
+   * API Endpoint: GET /api/settings/workflow/status
+   */
+  getWorkflowStatus: async (): Promise<WorkflowStatusResponse> => {
+    const response = await api.get<WorkflowStatusResponse>('/settings/workflow/status');
+    return response.data;
+  },
+
+  /**
+   * Test a workflow path without saving it
+   * Useful for validating user input before saving
+   * 
+   * API Endpoint: POST /api/settings/workflow/path/test
+   * Body: { path: string }
+   * 
+   * @param path - The path to test
+   */
+  testWorkflowPath: async (path: string): Promise<WorkflowTestResponse> => {
+    const response = await api.post<WorkflowTestResponse>(
+      '/settings/workflow/path/test',
       { path }
     );
     return response.data;
