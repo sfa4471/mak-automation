@@ -1,0 +1,7 @@
+# Ignore server files - frontend only deployment
+server/
+supabase/
+scripts/
+*.md
+node_modules/
+package-lock.json
