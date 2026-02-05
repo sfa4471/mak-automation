@@ -75,16 +75,41 @@ const ProjectDetails: React.FC = () => {
         setCustomerEmails(['']);
       }
       
-      // Load soil specs
+      // Load soil specs - normalize keys to match defined structure types
       let loadedSoilSpecs = projectData.soilSpecs || {};
-      setSoilSpecs(loadedSoilSpecs);
+      const normalizedSoilSpecs: SoilSpecs = {};
+      Object.keys(loadedSoilSpecs).forEach(key => {
+        // Find matching structure type (case-insensitive)
+        const matchingType = SOIL_STRUCTURE_TYPES.find(
+          type => type.toLowerCase() === key.toLowerCase()
+        );
+        if (matchingType) {
+          // Use the correct case from the defined types
+          normalizedSoilSpecs[matchingType] = loadedSoilSpecs[key];
+        } else {
+          // Keep original if no match (for backward compatibility)
+          normalizedSoilSpecs[key] = loadedSoilSpecs[key];
+        }
+      });
+      setSoilSpecs(normalizedSoilSpecs);
       
-      // Load concrete specs
-      if (projectData.concreteSpecs) {
-        setConcreteSpecs(projectData.concreteSpecs);
-      } else {
-        setConcreteSpecs({});
-      }
+      // Load concrete specs - normalize keys to match defined structure types
+      let loadedConcreteSpecs = projectData.concreteSpecs || {};
+      const normalizedConcreteSpecs: ConcreteSpecs = {};
+      Object.keys(loadedConcreteSpecs).forEach(key => {
+        // Find matching structure type (case-insensitive)
+        const matchingType = CONCRETE_STRUCTURE_TYPES.find(
+          type => type.toLowerCase() === key.toLowerCase()
+        );
+        if (matchingType) {
+          // Use the correct case from the defined types
+          normalizedConcreteSpecs[matchingType] = loadedConcreteSpecs[key];
+        } else {
+          // Keep original if no match (for backward compatibility)
+          normalizedConcreteSpecs[key] = loadedConcreteSpecs[key];
+        }
+      });
+      setConcreteSpecs(normalizedConcreteSpecs);
     } catch (err: any) {
       console.error('Error loading project:', err);
       
@@ -327,14 +352,18 @@ const ProjectDetails: React.FC = () => {
         customerEmails: validEmails
       };
       
-      // Build soil specs - start with current state (which has all user-entered values)
-      // Then merge with existing saved specs to preserve any that weren't modified
+      // Build soil specs - normalize keys to use correct case from defined structure types
       const filteredSoilSpecs: SoilSpecs = {};
       
-      // First, include all structure types from current state (user-entered values)
+      // Process current state (user-entered values) - normalize keys
       Object.keys(soilSpecs).forEach(key => {
         const spec = soilSpecs[key];
         if (spec) {
+          // Find matching structure type (case-insensitive)
+          const matchingType = SOIL_STRUCTURE_TYPES.find(
+            type => type.toLowerCase() === key.toLowerCase()
+          ) || key; // Use original if no match
+          
           // Check if it has at least one non-empty value
           const hasValue = (
             (spec.densityPct && String(spec.densityPct).trim() !== '') ||
@@ -345,16 +374,22 @@ const ProjectDetails: React.FC = () => {
           );
           
           if (hasValue) {
-            filteredSoilSpecs[key] = { ...spec };
+            // Use normalized key (correct case)
+            filteredSoilSpecs[matchingType] = { ...spec };
           }
         }
       });
       
-      // Then, preserve any existing saved specs that weren't modified in this session
+      // Process existing saved specs - normalize keys and merge
       if (project.soilSpecs) {
         Object.keys(project.soilSpecs).forEach(key => {
+          // Find matching structure type (case-insensitive)
+          const matchingType = SOIL_STRUCTURE_TYPES.find(
+            type => type.toLowerCase() === key.toLowerCase()
+          ) || key; // Use original if no match
+          
           // Only preserve if it wasn't already included from current state
-          if (!filteredSoilSpecs[key]) {
+          if (!filteredSoilSpecs[matchingType]) {
             const existingSpec = project.soilSpecs![key];
             // Only preserve if it has values
             if (existingSpec && (
@@ -364,20 +399,24 @@ const ProjectDetails: React.FC = () => {
                 (existingSpec.moistureRange.max && String(existingSpec.moistureRange.max).trim() !== '')
               ))
             )) {
-              filteredSoilSpecs[key] = { ...existingSpec };
+              filteredSoilSpecs[matchingType] = { ...existingSpec };
             }
           }
         });
       }
       
-      // Build concrete specs - start with current state (which has all user-entered values)
-      // Then merge with existing saved specs to preserve any that weren't modified
+      // Build concrete specs - normalize keys to use correct case from defined structure types
       const filteredConcreteSpecs: ConcreteSpecs = {};
       
-      // First, include all structure types from current state (user-entered values)
+      // Process current state (user-entered values) - normalize keys
       Object.keys(concreteSpecs).forEach(key => {
         const spec = concreteSpecs[key];
         if (spec) {
+          // Find matching structure type (case-insensitive)
+          const matchingType = CONCRETE_STRUCTURE_TYPES.find(
+            type => type.toLowerCase() === key.toLowerCase()
+          ) || key; // Use original if no match
+          
           // Check if it has at least one non-empty value
           // If a value is in state, it means the user interacted with it, so save it (even if it's "35-95" or "45-95")
           const hasValue = (
@@ -389,16 +428,22 @@ const ProjectDetails: React.FC = () => {
           );
           
           if (hasValue) {
-            filteredConcreteSpecs[key] = { ...spec };
+            // Use normalized key (correct case)
+            filteredConcreteSpecs[matchingType] = { ...spec };
           }
         }
       });
       
-      // Then, preserve any existing saved specs that weren't modified in this session
+      // Process existing saved specs - normalize keys and merge
       if (project.concreteSpecs) {
         Object.keys(project.concreteSpecs).forEach(key => {
+          // Find matching structure type (case-insensitive)
+          const matchingType = CONCRETE_STRUCTURE_TYPES.find(
+            type => type.toLowerCase() === key.toLowerCase()
+          ) || key; // Use original if no match
+          
           // Only preserve if it wasn't already included from current state
-          if (!filteredConcreteSpecs[key]) {
+          if (!filteredConcreteSpecs[matchingType]) {
             const existingSpec = project.concreteSpecs![key];
             // Only preserve if it has values
             if (existingSpec && (
@@ -408,7 +453,7 @@ const ProjectDetails: React.FC = () => {
               (existingSpec.slump && String(existingSpec.slump).trim() !== '') ||
               (existingSpec.airContent && String(existingSpec.airContent).trim() !== '')
             )) {
-              filteredConcreteSpecs[key] = { ...existingSpec };
+              filteredConcreteSpecs[matchingType] = { ...existingSpec };
             }
           }
         });
