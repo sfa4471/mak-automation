@@ -321,13 +321,25 @@ router.post('/', authenticate, requireAdmin, [
 
     // Prepare data for insertion
     // For Supabase, JSONB fields accept objects directly; for SQLite, we stringify
+    // Always include specs objects (even if empty) to ensure they're saved
     const projectData = {
       projectNumber,
       projectName,
       customerEmails: customerEmails && customerEmails.length > 0 ? customerEmails : [],
-      soilSpecs: soilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : {},
-      concreteSpecs: concreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : {}
+      soilSpecs: soilSpecs || {},
+      concreteSpecs: concreteSpecs || {}
     };
+    
+    // Debug: Log what we're saving
+    console.log('💾 Saving project data:', {
+      projectNumber,
+      projectName,
+      customerEmailsCount: projectData.customerEmails.length,
+      soilSpecsKeys: Object.keys(projectData.soilSpecs),
+      soilSpecs: projectData.soilSpecs,
+      concreteSpecsKeys: Object.keys(projectData.concreteSpecs),
+      concreteSpecs: projectData.concreteSpecs
+    });
 
     // Create project
     let project;
@@ -552,12 +564,23 @@ router.put('/:id', authenticate, requireAdmin, [
     if (customerEmails !== undefined && customerEmails !== null) {
       updateData.customerEmails = customerEmails;
     }
+    // Always include specs if provided (even if empty object) to ensure they're saved/updated
     if (soilSpecs !== undefined && soilSpecs !== null) {
       updateData.soilSpecs = soilSpecs;
     }
     if (concreteSpecs !== undefined && concreteSpecs !== null) {
       updateData.concreteSpecs = concreteSpecs;
     }
+    
+    // Debug: Log what we're updating
+    console.log('💾 Updating project data:', {
+      projectId,
+      updateDataKeys: Object.keys(updateData),
+      soilSpecsKeys: updateData.soilSpecs ? Object.keys(updateData.soilSpecs) : [],
+      soilSpecs: updateData.soilSpecs,
+      concreteSpecsKeys: updateData.concreteSpecs ? Object.keys(updateData.concreteSpecs) : [],
+      concreteSpecs: updateData.concreteSpecs
+    });
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ error: 'No fields to update' });

@@ -58,12 +58,20 @@ const CreateProject: React.FC = () => {
   };
 
   const updateSoilSpec = (structureType: string, field: string, value: any) => {
-    setSoilSpecs({
-      ...soilSpecs,
-      [structureType]: {
-        ...soilSpecs[structureType],
-        [field]: value
+    // Use functional update to ensure we have the latest state
+    setSoilSpecs(prev => {
+      const updated = {
+        ...prev,
+        [structureType]: {
+          ...prev[structureType],
+          [field]: value
+        }
+      };
+      // Debug: Log state update
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔄 Updated soil spec: ${structureType}.${field} = ${value}`, updated[structureType]);
       }
+      return updated;
     });
     // Clear validation error for this field
     const errorKey = `soil-${structureType}-${field}`;
@@ -75,12 +83,20 @@ const CreateProject: React.FC = () => {
   };
 
   const updateConcreteSpec = (structureType: string, field: string, value: any) => {
-    setConcreteSpecs({
-      ...concreteSpecs,
-      [structureType]: {
-        ...concreteSpecs[structureType],
-        [field]: value
+    // Use functional update to ensure we have the latest state
+    setConcreteSpecs(prev => {
+      const updated = {
+        ...prev,
+        [structureType]: {
+          ...prev[structureType],
+          [field]: value
+        }
+      };
+      // Debug: Log state update
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔄 Updated concrete spec: ${structureType}.${field} = ${value}`, updated[structureType]);
       }
+      return updated;
     });
   };
 
@@ -123,13 +139,13 @@ const CreateProject: React.FC = () => {
 
     try {
       // Debug: Log current state before filtering
-      console.log('🔍 Creating project with specs:', {
+      console.log('🔍 Current state before filtering:', {
         showSoilSpecs,
         soilSpecsKeys: Object.keys(soilSpecs),
-        soilSpecs,
+        soilSpecs: JSON.parse(JSON.stringify(soilSpecs)), // Deep clone for accurate logging
         showConcreteSpecs,
         concreteSpecsKeys: Object.keys(concreteSpecs),
-        concreteSpecs
+        concreteSpecs: JSON.parse(JSON.stringify(concreteSpecs)) // Deep clone for accurate logging
       });
       
       // Filter out empty structure entries but keep objects with values
@@ -175,12 +191,19 @@ const CreateProject: React.FC = () => {
         filteredConcreteSpecs
       });
       
-      await projectsAPI.create({
+      // Always send specs objects (even if empty) to ensure they're saved
+      const createData: any = {
         projectName,
-        customerEmails: validEmails,
-        soilSpecs: Object.keys(filteredSoilSpecs).length > 0 ? filteredSoilSpecs : undefined,
-        concreteSpecs: Object.keys(filteredConcreteSpecs).length > 0 ? filteredConcreteSpecs : undefined
-      });
+        customerEmails: validEmails
+      };
+      
+      // Always include specs - send empty object if no values, but don't send undefined
+      createData.soilSpecs = filteredSoilSpecs;
+      createData.concreteSpecs = filteredConcreteSpecs;
+      
+      console.log('📤 Final data being sent to API:', JSON.parse(JSON.stringify(createData)));
+      
+      await projectsAPI.create(createData);
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create project');

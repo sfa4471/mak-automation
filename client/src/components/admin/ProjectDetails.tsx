@@ -155,12 +155,20 @@ const ProjectDetails: React.FC = () => {
   };
 
   const updateSoilSpec = (structureType: string, field: string, value: any) => {
-    setSoilSpecs({
-      ...soilSpecs,
-      [structureType]: {
-        ...soilSpecs[structureType],
-        [field]: value
+    // Use functional update to ensure we have the latest state
+    setSoilSpecs(prev => {
+      const updated = {
+        ...prev,
+        [structureType]: {
+          ...prev[structureType],
+          [field]: value
+        }
+      };
+      // Debug: Log state update
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔄 Updated soil spec: ${structureType}.${field} = ${value}`, updated[structureType]);
       }
+      return updated;
     });
     // Clear validation error for this field
     const errorKey = `soil-${structureType}-${field}`;
@@ -236,12 +244,20 @@ const ProjectDetails: React.FC = () => {
   };
 
   const updateConcreteSpec = (structureType: string, field: string, value: any) => {
-    setConcreteSpecs({
-      ...concreteSpecs,
-      [structureType]: {
-        ...concreteSpecs[structureType],
-        [field]: value
+    // Use functional update to ensure we have the latest state
+    setConcreteSpecs(prev => {
+      const updated = {
+        ...prev,
+        [structureType]: {
+          ...prev[structureType],
+          [field]: value
+        }
+      };
+      // Debug: Log state update
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔄 Updated concrete spec: ${structureType}.${field} = ${value}`, updated[structureType]);
       }
+      return updated;
     });
     // Clear validation error for this field
     const errorKey = `concrete-${structureType}-${field}`;
@@ -299,11 +315,11 @@ const ProjectDetails: React.FC = () => {
       setSaving(true);
       
       // Debug: Log current state before filtering
-      console.log('🔍 Saving project specs:', {
+      console.log('🔍 Current state before filtering:', {
         soilSpecsKeys: Object.keys(soilSpecs),
-        soilSpecs,
+        soilSpecs: JSON.parse(JSON.stringify(soilSpecs)), // Deep clone for accurate logging
         concreteSpecsKeys: Object.keys(concreteSpecs),
-        concreteSpecs
+        concreteSpecs: JSON.parse(JSON.stringify(concreteSpecs)) // Deep clone for accurate logging
       });
       
       const updateData: any = {
@@ -399,15 +415,17 @@ const ProjectDetails: React.FC = () => {
       }
       
       // Always include specs objects (even if empty) to ensure consistency
+      // This ensures the backend receives the data even if some structure types are empty
       updateData.soilSpecs = filteredSoilSpecs;
       updateData.concreteSpecs = filteredConcreteSpecs;
       
       // Debug: Log what we're sending
-      console.log('📤 Sending update data:', {
+      console.log('📤 Final update data being sent to API:', {
+        updateDataKeys: Object.keys(updateData),
         soilSpecsKeys: Object.keys(filteredSoilSpecs),
-        filteredSoilSpecs,
+        soilSpecs: JSON.parse(JSON.stringify(filteredSoilSpecs)), // Deep clone
         concreteSpecsKeys: Object.keys(filteredConcreteSpecs),
-        filteredConcreteSpecs
+        concreteSpecs: JSON.parse(JSON.stringify(filteredConcreteSpecs)) // Deep clone
       });
       
       const updatedProject = await projectsAPI.update(project.id, updateData);
