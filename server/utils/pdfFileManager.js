@@ -307,6 +307,9 @@ async function ensureProjectDirectory(projectNumber) {
       return result;
     }
 
+    // Check if this is a OneDrive path (for special handling)
+    const isOneDrivePath = basePath.toLowerCase().includes('onedrive');
+
     // Step 2: Validate base path exists and is writable
     const baseValidation = validatePath(basePath);
     if (!baseValidation.valid) {
@@ -342,13 +345,16 @@ async function ensureProjectDirectory(projectNumber) {
     const testFolder = path.join(basePath, '.test_' + Date.now());
     try {
       fs.mkdirSync(testFolder, { recursive: true });
-      fs.rmdirSync(testFolder);
+      // Verify test folder exists before removing
+      if (fs.existsSync(testFolder)) {
+        fs.rmdirSync(testFolder);
+      }
     } catch (testError) {
       result.error = `Cannot create folders in base path: ${testError.message}`;
       return result;
     }
 
-    // Step 6: Create project directory
+    // Step 6: Create project directory with enhanced verification for OneDrive
     try {
       // Use normalized path for Windows long path support
       const normalizedProjectDir = normalizeWindowsPath(projectDir);
@@ -361,19 +367,70 @@ async function ensureProjectDirectory(projectNumber) {
         result.details.existed = true;
       }
       
-      // Verify it was actually created (use original path for checking)
-      if (!fs.existsSync(projectDir)) {
-        throw new Error('Folder creation reported success but folder does not exist');
+      // Enhanced verification with retry logic for OneDrive sync delays
+      let verified = false;
+      const maxRetries = isOneDrivePath ? 5 : 2; // More retries for OneDrive paths
+      const retryDelay = isOneDrivePath ? 1000 : 500; // Longer delay for OneDrive
+      
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        // Check both normalized and original paths
+        const checkPath = fs.existsSync(projectDir) ? projectDir : normalizedProjectDir;
+        if (fs.existsSync(checkPath)) {
+          try {
+            const stats = fs.statSync(checkPath);
+            if (stats.isDirectory()) {
+              // Verify it's accessible
+              fs.accessSync(checkPath, fs.constants.R_OK);
+              verified = true;
+              result.details.verificationAttempts = attempt + 1;
+              break;
+            }
+          } catch (accessError) {
+            // Continue to next attempt
+          }
+        }
+        
+        // Wait before next attempt (except on last attempt)
+        if (attempt < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
       }
       
-      result.path = projectDir;
+      if (!verified) {
+        // Folder creation may have succeeded but not yet visible (OneDrive sync delay)
+        if (isOneDrivePath) {
+          result.warnings.push(
+            'Folder may have been created but OneDrive sync is delayed. ' +
+            'Please check OneDrive sync status and wait a few moments, then verify the folder exists at: ' + projectDir
+          );
+          // Still report success but with warning for OneDrive
+          result.success = true;
+          result.path = projectDir;
+        } else {
+          result.error = 'Folder creation reported success but folder does not exist or is not accessible';
+          return result;
+        }
+      } else {
+        result.path = projectDir;
+        
+        // Test write capability to ensure folder is fully functional
+        try {
+          const testFile = path.join(projectDir, '.test_write_' + Date.now() + '.tmp');
+          fs.writeFileSync(testFile, 'test');
+          fs.unlinkSync(testFile);
+          result.details.writeTestPassed = true;
+        } catch (writeError) {
+          result.warnings.push(`Write test failed: ${writeError.message}. This may indicate OneDrive sync issues.`);
+          result.details.writeTestPassed = false;
+        }
+      }
     } catch (createError) {
       result.error = `Failed to create project directory: ${createError.message}`;
       result.details.createError = createError.message;
       return result;
     }
 
-    // Step 7: Create test type subdirectories
+    // Step 7: Create test type subdirectories with verification
     const subdirResults = [];
     for (const folderName of Object.values(TEST_TYPE_FOLDERS)) {
       const testTypeDir = path.join(projectDir, folderName);
@@ -381,7 +438,40 @@ async function ensureProjectDirectory(projectNumber) {
         if (!fs.existsSync(testTypeDir)) {
           fs.mkdirSync(testTypeDir, { recursive: true });
         }
-        subdirResults.push({ name: folderName, success: true });
+        
+        // Verify subdirectory was actually created (with retry for OneDrive)
+        let subdirVerified = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (fs.existsSync(testTypeDir)) {
+            try {
+              const stats = fs.statSync(testTypeDir);
+              if (stats.isDirectory()) {
+                subdirVerified = true;
+                break;
+              }
+            } catch (statError) {
+              // Continue to next attempt
+            }
+          }
+          if (attempt < 2) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+        
+        if (subdirVerified) {
+          subdirResults.push({ name: folderName, success: true });
+        } else {
+          subdirResults.push({ 
+            name: folderName, 
+            success: false, 
+            error: 'Subdirectory created but not verified' 
+          });
+          if (isOneDrivePath) {
+            result.warnings.push(`Subdirectory ${folderName} may not be immediately accessible due to OneDrive sync.`);
+          } else {
+            result.warnings.push(`Subdirectory ${folderName} created but verification failed.`);
+          }
+        }
       } catch (subdirError) {
         subdirResults.push({ 
           name: folderName, 
