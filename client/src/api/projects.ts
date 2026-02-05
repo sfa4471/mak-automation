@@ -6,6 +6,12 @@ export interface SoilSpecRow {
   concreteTempF?: string;
   slump?: string;
   airContent?: string;
+  // Density measurement properties
+  densityPct?: string;
+  moistureRange?: {
+    min?: string;
+    max?: string;
+  };
 }
 
 export interface ConcreteSpecRow {
