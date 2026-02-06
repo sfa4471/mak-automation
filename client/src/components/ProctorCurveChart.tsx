@@ -27,13 +27,15 @@ interface ProctorCurveChartProps {
   zavPoints: ZAVPoint[];
   omc?: number; // Optimum Moisture Content
   maxDryDensity?: number; // Maximum Dry Density
+  correctedPoint?: ProctorPoint | null; // Corrected point if correction factor is applied
 }
 
 const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
   proctorPoints,
   zavPoints,
   omc,
-  maxDryDensity
+  maxDryDensity,
+  correctedPoint
 }) => {
   // Helper to convert values to numbers
   const toNum = (v: any): number => {
@@ -532,6 +534,37 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
                 );
               }}
               data={[{ moisture: omc, peakMarker: maxDryDensity }]}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          )}
+
+          {/* Corrected Point Marker - dot similar to other points */}
+          {correctedPoint && !isNaN(correctedPoint.x) && !isNaN(correctedPoint.y) && 
+           Number.isFinite(correctedPoint.x) && Number.isFinite(correctedPoint.y) &&
+           correctedPoint.x >= 0 && correctedPoint.x <= 25 && 
+           correctedPoint.y >= yDomain[0] && correctedPoint.y <= yDomain[1] && (
+            <Line
+              type="monotone"
+              dataKey="correctedMarker"
+              stroke="none"
+              dot={(props: any) => {
+                const { cx, cy } = props;
+                if (cx === null || cy === null) return null;
+                return (
+                  <g>
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={4}
+                      fill="#000"
+                      stroke="#000"
+                      strokeWidth={1}
+                    />
+                  </g>
+                );
+              }}
+              data={[{ moisture: correctedPoint.x, correctedMarker: correctedPoint.y }]}
               connectNulls={false}
               isAnimationActive={false}
             />

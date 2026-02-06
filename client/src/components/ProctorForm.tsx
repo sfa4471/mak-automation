@@ -98,6 +98,7 @@ const ProctorForm: React.FC = () => {
   };
 
   const [soilClassification, setSoilClassification] = useState<string>('');
+  const [applyCorrectionFactor, setApplyCorrectionFactor] = useState<boolean>(false);
   const [formData, setFormData] = useState<ProctorData>({
     moldWeight: 4.74,
     moldVolume: 0.0333,
@@ -332,6 +333,26 @@ const ProctorForm: React.FC = () => {
     };
   };
 
+  // Calculate Corrected Dry Density
+  const calculateCorrectedDryDensity = (maxDensity: string): string => {
+    if (!applyCorrectionFactor || !maxDensity) return '';
+    const maxDensityNum = parseFloat(maxDensity);
+    if (isNaN(maxDensityNum)) return '';
+    // Formula: (0.81*Maximum Density (PCF)+0.19*2.7*62.4)/(0.81+0.19)
+    const corrected = (0.81 * maxDensityNum + 0.19 * 2.7 * 62.4) / (0.81 + 0.19);
+    return corrected.toFixed(2);
+  };
+
+  // Calculate Corrected Moisture Content
+  const calculateCorrectedMoistureContent = (optimumMoisture: string): string => {
+    if (!applyCorrectionFactor || !optimumMoisture) return '';
+    const optimumMoistureNum = parseFloat(optimumMoisture);
+    if (isNaN(optimumMoistureNum)) return '';
+    // Formula: 0.81*Optimum Moisture Content/(0.81+0.19)
+    const corrected = (0.81 * optimumMoistureNum) / (0.81 + 0.19);
+    return corrected.toFixed(1);
+  };
+
   useEffect(() => {
     loadData();
     
@@ -398,8 +419,35 @@ const ProctorForm: React.FC = () => {
     return calculateMaxDensityAndOptimumMoisture(formData.columns);
   }, [formData.columns]);
 
-  const omcValue = optimumMoisture ? parseFloat(optimumMoisture) : undefined;
-  const maxDensityValue = maxDensity ? parseFloat(maxDensity) : undefined;
+  // Calculate corrected values if correction factor is applied
+  const correctedDryDensity = useMemo(() => {
+    return applyCorrectionFactor ? calculateCorrectedDryDensity(maxDensity) : '';
+  }, [applyCorrectionFactor, maxDensity]);
+
+  const correctedMoistureContent = useMemo(() => {
+    return applyCorrectionFactor ? calculateCorrectedMoistureContent(optimumMoisture) : '';
+  }, [applyCorrectionFactor, optimumMoisture]);
+
+  // Use corrected values if available, otherwise use original values
+  const omcValue = correctedMoistureContent 
+    ? parseFloat(correctedMoistureContent) 
+    : (optimumMoisture ? parseFloat(optimumMoisture) : undefined);
+  const maxDensityValue = correctedDryDensity 
+    ? parseFloat(correctedDryDensity) 
+    : (maxDensity ? parseFloat(maxDensity) : undefined);
+
+  // Corrected point for chart (only if correction factor is applied)
+  const correctedPoint: ProctorPoint | null = useMemo(() => {
+    if (!applyCorrectionFactor || !correctedDryDensity || !correctedMoistureContent) {
+      return null;
+    }
+    const correctedMoisture = parseFloat(correctedMoistureContent);
+    const correctedDensity = parseFloat(correctedDryDensity);
+    if (isNaN(correctedMoisture) || isNaN(correctedDensity)) {
+      return null;
+    }
+    return { x: correctedMoisture, y: correctedDensity };
+  }, [applyCorrectionFactor, correctedDryDensity, correctedMoistureContent]);
 
   // Recalculate all columns on initial mount with sample data
   useEffect(() => {
@@ -435,6 +483,7 @@ const ProctorForm: React.FC = () => {
         savedProctorData = await proctorAPI.getByTask(taskId);
         if (savedProctorData) {
           setSoilClassification(savedProctorData.soilClassification || '');
+          setApplyCorrectionFactor((savedProctorData as any).applyCorrectionFactor || false);
           console.log('Loaded Proctor data from database:', savedProctorData);
         }
       } catch (err) {
@@ -483,6 +532,11 @@ const ProctorForm: React.FC = () => {
           // Restore soilClassification
           if (saved.soilClassification) {
             setSoilClassification(saved.soilClassification);
+          }
+          
+          // Restore correction factor state
+          if (saved.applyCorrectionFactor !== undefined) {
+            setApplyCorrectionFactor(saved.applyCorrectionFactor);
           }
           
           // Restore form data including Atterberg values
@@ -823,10 +877,11 @@ const ProctorForm: React.FC = () => {
     // Compare current form data to last saved snapshot
     const currentData = JSON.stringify({
       formData,
-      soilClassification
+      soilClassification,
+      applyCorrectionFactor
     });
     return currentData !== lastSavedDataRef.current;
-  }, [formData, soilClassification, task]);
+  }, [formData, soilClassification, applyCorrectionFactor, task]);
 
   // Track changes whenever form data or soil classification changes
   useEffect(() => {
@@ -848,6 +903,10 @@ const ProctorForm: React.FC = () => {
       // Calculate Passing #200 summary (average of valid rows)
       const passing200SummaryPct = calculatePassing200Summary(formData.passing200);
       
+      // Calculate corrected values if correction factor is applied
+      const correctedDryDensityValue = applyCorrectionFactor ? calculateCorrectedDryDensity(maxDensity) : '';
+      const correctedMoistureContentValue = applyCorrectionFactor ? calculateCorrectedMoistureContent(optimumMoisture) : '';
+      
       // Prepare complete Proctor draft data to save
       const proctorDraftData = {
         // Page 1 inputs
@@ -858,10 +917,13 @@ const ProctorForm: React.FC = () => {
         columns: formData.columns,
         atterbergLimits: formData.atterbergLimits,
         passing200: formData.passing200, // Add Passing #200 table
+        applyCorrectionFactor: applyCorrectionFactor,
         
         // Computed values (normalized keys for Page 2)
         maximumDryDensityPcf: maxDensity,
         optimumMoisturePercent: optimumMoisture,
+        correctedDryDensityPcf: correctedDryDensityValue,
+        correctedMoistureContentPercent: correctedMoistureContentValue,
         specificGravityG: formData.specificGravity.toString(),
         liquidLimitLL: finalLiquidLimit,
         plasticLimit: plasticLimit,
@@ -889,6 +951,9 @@ const ProctorForm: React.FC = () => {
         // Legacy fields (for backward compatibility)
         maximumDryDensityPcf: maxDensity || '',
         optimumMoisturePercent: optimumMoisture || '',
+        correctedDryDensityPcf: correctedDryDensityValue || '',
+        correctedMoistureContentPercent: correctedMoistureContentValue || '',
+        applyCorrectionFactor: applyCorrectionFactor,
         liquidLimitLL: finalLiquidLimit || '',
         plasticLimit: plasticLimit || '',
         plasticityIndex: '',
@@ -914,7 +979,8 @@ const ProctorForm: React.FC = () => {
       // Update last saved snapshot
       lastSavedDataRef.current = JSON.stringify({
         formData,
-        soilClassification
+        soilClassification,
+        applyCorrectionFactor
       });
       setHasUnsavedChanges(false);
       
@@ -959,6 +1025,10 @@ const ProctorForm: React.FC = () => {
       // Calculate Passing #200 summary (average of valid rows)
       const passing200SummaryPct = calculatePassing200Summary(formData.passing200);
 
+      // Calculate corrected values if correction factor is applied
+      const correctedDryDensityValue = applyCorrectionFactor ? calculateCorrectedDryDensity(maxDensity) : '';
+      const correctedMoistureContentValue = applyCorrectionFactor ? calculateCorrectedMoistureContent(optimumMoisture) : '';
+
       // QA: Debug logging to verify values before saving
       console.log('🔍 [QA] ProctorForm handleNext - Values before save:', {
         finalLiquidLimit: calculatedLL,
@@ -1000,6 +1070,9 @@ const ProctorForm: React.FC = () => {
         // Legacy fields (for backward compatibility)
         maximumDryDensityPcf: maxDensity || '',
         optimumMoisturePercent: optimumMoisture || '',
+        correctedDryDensityPcf: correctedDryDensityValue || '',
+        correctedMoistureContentPercent: correctedMoistureContentValue || '',
+        applyCorrectionFactor: applyCorrectionFactor,
         liquidLimitLL: calculatedLL || '', // Use recalculated value if original was empty
         plasticLimit: plasticLimit || '', // Add Plastic Limit
         // Calculate PI: PI = rounded(LL) - rounded(PL)
@@ -1043,10 +1116,13 @@ const ProctorForm: React.FC = () => {
         columns: formData.columns,
         atterbergLimits: formData.atterbergLimits,
         passing200: formData.passing200, // Add Passing #200 table
+        applyCorrectionFactor: applyCorrectionFactor,
         
         // Computed values (normalized keys for Page 2)
         maximumDryDensityPcf: maxDensity,
         optimumMoisturePercent: optimumMoisture,
+        correctedDryDensityPcf: correctedDryDensityValue,
+        correctedMoistureContentPercent: correctedMoistureContentValue,
         specificGravityG: formData.specificGravity.toString(),
         liquidLimitLL: calculatedLL, // Use recalculated value
         plasticLimit: plasticLimit || '', // Include Plastic Limit for PI calculation
@@ -1070,7 +1146,8 @@ const ProctorForm: React.FC = () => {
       // Update last saved snapshot
       lastSavedDataRef.current = JSON.stringify({
         formData,
-        soilClassification
+        soilClassification,
+        applyCorrectionFactor
       });
       setHasUnsavedChanges(false);
       
@@ -1216,6 +1293,7 @@ const ProctorForm: React.FC = () => {
           zavPoints={zavPoints}
           omc={omcValue}
           maxDryDensity={maxDensityValue}
+          correctedPoint={correctedPoint}
         />
 
         {/* Main table */}
@@ -1793,6 +1871,67 @@ const ProctorForm: React.FC = () => {
                 + Add Dish
               </button>
             )}
+          </div>
+
+          {/* Oversize Correction Factor Section */}
+          <div className="proctor-section">
+            <h3>Oversize Correction Factor</h3>
+            <div style={{ marginTop: '10px', marginBottom: '15px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span>Apply Correction Factor:</span>
+                <select
+                  value={applyCorrectionFactor ? 'yes' : 'no'}
+                  onChange={(e) => setApplyCorrectionFactor(e.target.value === 'yes')}
+                  disabled={!isEditable}
+                  className={!isEditable ? 'readonly' : ''}
+                  style={{ padding: '5px 10px', fontSize: '14px' }}
+                >
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </label>
+            </div>
+            {applyCorrectionFactor && (() => {
+              const { maxDensity, optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
+              const correctedDryDensity = calculateCorrectedDryDensity(maxDensity);
+              const correctedMoistureContent = calculateCorrectedMoistureContent(optimumMoisture);
+              return (
+                <table className="atterberg-table" style={{ marginTop: '10px' }}>
+                  <thead>
+                    <tr>
+                      <th>Field</th>
+                      <th>Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Corrected Dry Density (pcf)</td>
+                      <td>
+                        <input
+                          type="text"
+                          value={correctedDryDensity}
+                          readOnly
+                          className="calculated"
+                          title="Formula: (0.81*Maximum Density (PCF)+0.19*2.7*62.4)/(0.81+0.19)"
+                        />
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Corrected Moisture Content (%)</td>
+                      <td>
+                        <input
+                          type="text"
+                          value={correctedMoistureContent}
+                          readOnly
+                          className="calculated"
+                          title="Formula: 0.81*Optimum Moisture Content/(0.81+0.19)"
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              );
+            })()}
           </div>
 
           {/* Zero Air Voids (ZAV) Curve Data Table */}

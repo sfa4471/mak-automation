@@ -13,6 +13,9 @@ export interface ProctorReportData {
   // Legacy fields (for backward compatibility)
   maximumDryDensityPcf?: string;
   optimumMoisturePercent?: string;
+  correctedDryDensityPcf?: string;
+  correctedMoistureContentPercent?: string;
+  applyCorrectionFactor?: boolean;
   liquidLimitLL: string;
   plasticLimit?: string; // Plastic Limit for PI calculation
   plasticityIndex: string;

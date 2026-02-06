@@ -5,8 +5,8 @@ import './Admin.css';
 
 const SOIL_STRUCTURE_TYPES = [
   'Building Pad',
-  'Parking lot',
-  'Sidewalk',
+  'Parking Lot',
+  'Side Walk',
   'Approach',
   'Utilities',
   'Other'
@@ -16,7 +16,7 @@ const CONCRETE_STRUCTURE_TYPES = [
   'Slab',
   'Grade Beams',
   'Piers',
-  'Sidewalk',
+  'Side Walk',
   'Paving',
   'Curb',
   'Other'
@@ -83,20 +83,12 @@ const CreateProject: React.FC = () => {
   };
 
   const updateConcreteSpec = (structureType: string, field: string, value: any) => {
-    // Use functional update to ensure we have the latest state
-    setConcreteSpecs(prev => {
-      const updated = {
-        ...prev,
-        [structureType]: {
-          ...prev[structureType],
-          [field]: value
-        }
-      };
-      // Debug: Log state update
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`🔄 Updated concrete spec: ${structureType}.${field} = ${value}`, updated[structureType]);
+    setConcreteSpecs({
+      ...concreteSpecs,
+      [structureType]: {
+        ...concreteSpecs[structureType],
+        [field]: value
       }
-      return updated;
     });
   };
 
@@ -138,99 +130,12 @@ const CreateProject: React.FC = () => {
     setLoading(true);
 
     try {
-      // Debug: Log current state before filtering
-      console.log('🔍 Current state before filtering:', {
-        showSoilSpecs,
-        soilSpecsKeys: Object.keys(soilSpecs),
-        soilSpecs: JSON.parse(JSON.stringify(soilSpecs)), // Deep clone for accurate logging
-        showConcreteSpecs,
-        concreteSpecsKeys: Object.keys(concreteSpecs),
-        concreteSpecs: JSON.parse(JSON.stringify(concreteSpecs)) // Deep clone for accurate logging
-      });
-      
-      // Filter out empty structure entries but keep objects with values
-      const filteredSoilSpecs: SoilSpecs = {};
-      if (showSoilSpecs) {
-        Object.keys(soilSpecs).forEach(key => {
-          const spec = soilSpecs[key];
-          // Only include if it has at least one non-empty value
-          if (spec && (
-            (spec.densityPct && String(spec.densityPct).trim() !== '') ||
-            (spec.moistureRange && (
-              (spec.moistureRange.min && String(spec.moistureRange.min).trim() !== '') ||
-              (spec.moistureRange.max && String(spec.moistureRange.max).trim() !== '')
-            ))
-          )) {
-            filteredSoilSpecs[key] = spec;
-          }
-        });
-      }
-      
-      const filteredConcreteSpecs: ConcreteSpecs = {};
-      if (showConcreteSpecs) {
-        Object.keys(concreteSpecs).forEach(key => {
-          const spec = concreteSpecs[key];
-          // Only include if it has at least one non-empty value
-          if (spec && (
-            (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') ||
-            (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') ||
-            (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
-            (spec.slump && String(spec.slump).trim() !== '') ||
-            (spec.airContent && String(spec.airContent).trim() !== '')
-          )) {
-            filteredConcreteSpecs[key] = spec;
-          }
-        });
-      }
-      
-      // Debug: Log what we're sending
-      console.log('📤 Sending create data:', {
-        soilSpecsKeys: Object.keys(filteredSoilSpecs),
-        filteredSoilSpecs,
-        concreteSpecsKeys: Object.keys(filteredConcreteSpecs),
-        filteredConcreteSpecs
-      });
-      
-      // Always send specs objects (even if empty) to ensure they're saved
-      const createData: any = {
+      await projectsAPI.create({
         projectName,
-        customerEmails: validEmails
-      };
-      
-      // Always include specs - send empty object if no values, but don't send undefined
-      createData.soilSpecs = filteredSoilSpecs;
-      createData.concreteSpecs = filteredConcreteSpecs;
-      
-      console.log('📤 Final data being sent to API:', JSON.parse(JSON.stringify(createData)));
-      
-      const response = await projectsAPI.create(createData);
-      
-      // Check folder creation status
-      if (response.folderCreation) {
-        const folderStatus = response.folderCreation;
-        
-        if (folderStatus.success) {
-          // Show success message with path
-          let successMsg = `Project created successfully!\n\nFolder created at:\n${folderStatus.path}`;
-          if (folderStatus.warnings && folderStatus.warnings.length > 0) {
-            successMsg += '\n\nWarnings:\n' + folderStatus.warnings.join('\n');
-          }
-          if (folderStatus.onedriveResult?.success) {
-            successMsg += `\n\nOneDrive folder: ${folderStatus.onedriveResult.folderPath}`;
-          } else if (folderStatus.onedriveResult?.error && !folderStatus.onedriveResult.error.includes('not configured')) {
-            successMsg += `\n\nOneDrive warning: ${folderStatus.onedriveResult.error}`;
-          }
-          alert(successMsg);
-        } else {
-          // Show warning but don't block navigation
-          let warningMsg = `Project created successfully, but folder creation failed:\n\n${folderStatus.error}\n\nYou can retry folder creation from the project details page.`;
-          if (folderStatus.warnings && folderStatus.warnings.length > 0) {
-            warningMsg += '\n\nAdditional warnings:\n' + folderStatus.warnings.join('\n');
-          }
-          alert(warningMsg);
-        }
-      }
-      
+        customerEmails: validEmails,
+        soilSpecs: showSoilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : undefined,
+        concreteSpecs: showConcreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : undefined
+      });
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create project');
@@ -328,22 +233,6 @@ const CreateProject: React.FC = () => {
             <div style={{ display: 'flex', gap: '15px', marginBottom: '20px' }}>
               <button
                 type="button"
-                onClick={() => setShowConcreteSpecs(!showConcreteSpecs)}
-                style={{
-                  padding: '12px 24px',
-                  background: showConcreteSpecs ? '#007bff' : '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '600'
-                }}
-              >
-                {showConcreteSpecs ? '−' : '+'} Add Concrete Specs
-              </button>
-              <button
-                type="button"
                 onClick={() => setShowSoilSpecs(!showSoilSpecs)}
                 style={{
                   padding: '12px 24px',
@@ -356,9 +245,88 @@ const CreateProject: React.FC = () => {
                   fontWeight: '600'
                 }}
               >
-                {showSoilSpecs ? '−' : '+'} Add Soil Specs
+                {showSoilSpecs ? '−' : '+'} Add Concrete Specs
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowConcreteSpecs(!showConcreteSpecs)}
+                style={{
+                  padding: '12px 24px',
+                  background: showConcreteSpecs ? '#007bff' : '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600'
+                }}
+              >
+                {showConcreteSpecs ? '−' : '+'} Add Soil Specs
               </button>
             </div>
+
+            {showSoilSpecs && (
+              <div style={{ marginBottom: '30px' }}>
+                <h3 style={{ marginBottom: '15px', fontSize: '16px', fontWeight: '600' }}>Soil Specs</h3>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '15px' }}>
+                    <thead>
+                      <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Structure Type</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Dens. (%)</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Moist. (%) Range</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {SOIL_STRUCTURE_TYPES.map((structureType) => {
+                        const spec = soilSpecs[structureType] || {};
+                        const moistureRange = spec.moistureRange || {};
+                        return (
+                          <tr key={structureType}>
+                            <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500' }}>{structureType}</td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                              <input
+                                type="text"
+                                value={spec.densityPct || ''}
+                                onChange={(e) => updateSoilSpec(structureType, 'densityPct', e.target.value)}
+                                style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
+                              />
+                            </td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                <input
+                                  type="text"
+                                  value={moistureRange.min || ''}
+                                  onChange={(e) => {
+                                    const currentSpec = soilSpecs[structureType] || {};
+                                    const currentRange = currentSpec.moistureRange || {};
+                                    updateSoilSpec(structureType, 'moistureRange', { min: e.target.value, max: currentRange.max || '' });
+                                  }}
+                                  placeholder="Min"
+                                  style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
+                                />
+                                <span>-</span>
+                                <input
+                                  type="text"
+                                  value={moistureRange.max || ''}
+                                  onChange={(e) => {
+                                    const currentSpec = soilSpecs[structureType] || {};
+                                    const currentRange = currentSpec.moistureRange || {};
+                                    updateSoilSpec(structureType, 'moistureRange', { min: currentRange.min || '', max: e.target.value });
+                                  }}
+                                  placeholder="Max"
+                                  style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {showConcreteSpecs && (
               <div style={{ marginBottom: '30px' }}>
@@ -432,69 +400,6 @@ const CreateProject: React.FC = () => {
                                 onChange={(e) => updateConcreteSpec(structureType, 'airContent', e.target.value)}
                                 style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
                               />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {showSoilSpecs && (
-              <div style={{ marginBottom: '30px' }}>
-                <h3 style={{ marginBottom: '15px', fontSize: '16px', fontWeight: '600' }}>Soil Specs</h3>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '15px' }}>
-                    <thead>
-                      <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
-                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Structure Type</th>
-                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Dens. (%)</th>
-                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Moist. (%) Range</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {SOIL_STRUCTURE_TYPES.map((structureType) => {
-                        const spec = soilSpecs[structureType] || {};
-                        const moistureRange = spec.moistureRange || {};
-                        return (
-                          <tr key={structureType}>
-                            <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500' }}>{structureType}</td>
-                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
-                              <input
-                                type="text"
-                                value={spec.densityPct || ''}
-                                onChange={(e) => updateSoilSpec(structureType, 'densityPct', e.target.value)}
-                                style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
-                              />
-                            </td>
-                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
-                              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                                <input
-                                  type="text"
-                                  value={moistureRange.min || ''}
-                                  onChange={(e) => {
-                                    const currentSpec = soilSpecs[structureType] || {};
-                                    const currentRange = currentSpec.moistureRange || {};
-                                    updateSoilSpec(structureType, 'moistureRange', { min: e.target.value, max: currentRange.max || '' });
-                                  }}
-                                  placeholder="Min"
-                                  style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
-                                />
-                                <span>-</span>
-                                <input
-                                  type="text"
-                                  value={moistureRange.max || ''}
-                                  onChange={(e) => {
-                                    const currentSpec = soilSpecs[structureType] || {};
-                                    const currentRange = currentSpec.moistureRange || {};
-                                    updateSoilSpec(structureType, 'moistureRange', { min: currentRange.min || '', max: e.target.value });
-                                  }}
-                                  placeholder="Max"
-                                  style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
-                                />
-                              </div>
                             </td>
                           </tr>
                         );

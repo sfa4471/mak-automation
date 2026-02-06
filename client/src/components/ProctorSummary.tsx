@@ -16,6 +16,8 @@ interface ProctorSummaryData {
   soilClassification: string;
   maximumDryDensityPcf: string; // Normalized key
   optimumMoisturePercent: string; // Normalized key
+  correctedDryDensityPcf: string; // Corrected value if correction factor applied
+  correctedMoistureContentPercent: string; // Corrected value if correction factor applied
   liquidLimitLL: string; // Normalized key
   plasticLimit: string; // Plastic Limit for PI calculation
   plasticityIndex: string; // Auto-calculated: rounded LL - rounded PL
@@ -50,6 +52,8 @@ const ProctorSummary: React.FC = () => {
     soilClassification: '',
     maximumDryDensityPcf: '',
     optimumMoisturePercent: '',
+    correctedDryDensityPcf: '',
+    correctedMoistureContentPercent: '',
     liquidLimitLL: '',
     plasticLimit: '',
     plasticityIndex: '',
@@ -168,6 +172,8 @@ const ProctorSummary: React.FC = () => {
           soilClassification: savedData.soilClassification || '',
           maximumDryDensityPcf: savedData.maximumDryDensityPcf || '',
           optimumMoisturePercent: savedData.optimumMoisturePercent || '',
+          correctedDryDensityPcf: (savedData as any).correctedDryDensityPcf || '',
+          correctedMoistureContentPercent: (savedData as any).correctedMoistureContentPercent || '',
           liquidLimitLL: roundToWholeNumber(savedData.liquidLimitLL || ''), // Round on load
           plasticLimit: roundToWholeNumber(savedData.plasticLimit || ''), // Round on load
           plasticityIndex: '', // Always recalculate, don't use saved value
@@ -213,6 +219,8 @@ const ProctorSummary: React.FC = () => {
           soilClassification: '',
           maximumDryDensityPcf: '',
           optimumMoisturePercent: '',
+          correctedDryDensityPcf: '',
+          correctedMoistureContentPercent: '',
           liquidLimitLL: '',
           plasticLimit: '',
           plasticityIndex: '',
@@ -260,6 +268,12 @@ const ProctorSummary: React.FC = () => {
           
           initialData.optimumMoisturePercent = 
             data.optimumMoisturePercent ?? data.optimumMoisture ?? data.omc ?? data.optimumMoistureContent ?? '';
+          
+          initialData.correctedDryDensityPcf = 
+            data.correctedDryDensityPcf ?? '';
+          
+          initialData.correctedMoistureContentPercent = 
+            data.correctedMoistureContentPercent ?? '';
           
           initialData.specificGravityG = 
             data.specificGravityG ?? data.specificGravity ?? data.sg ?? data.specificGravityEstimated ?? '';
@@ -384,6 +398,8 @@ const ProctorSummary: React.FC = () => {
         soilClassification: summaryData.soilClassification,
         maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
         optimumMoisturePercent: summaryData.optimumMoisturePercent,
+        correctedDryDensityPcf: summaryData.correctedDryDensityPcf || '',
+        correctedMoistureContentPercent: summaryData.correctedMoistureContentPercent || '',
         liquidLimitLL: roundToWholeNumber(summaryData.liquidLimitLL), // Save rounded value
         plasticLimit: roundToWholeNumber(summaryData.plasticLimit), // Save rounded value
         plasticityIndex: summaryData.plasticityIndex,
@@ -430,6 +446,8 @@ const ProctorSummary: React.FC = () => {
         soilClassification: summaryData.soilClassification,
         maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
         optimumMoisturePercent: summaryData.optimumMoisturePercent,
+        correctedDryDensityPcf: summaryData.correctedDryDensityPcf || '',
+        correctedMoistureContentPercent: summaryData.correctedMoistureContentPercent || '',
         liquidLimitLL: roundToWholeNumber(summaryData.liquidLimitLL),
         plasticLimit: roundToWholeNumber(summaryData.plasticLimit),
         plasticityIndex: summaryData.plasticityIndex,
@@ -463,6 +481,8 @@ const ProctorSummary: React.FC = () => {
         soilClassification: summaryData.soilClassification,
         maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
         optimumMoisturePercent: summaryData.optimumMoisturePercent,
+        correctedDryDensityPcf: summaryData.correctedDryDensityPcf || '',
+        correctedMoistureContentPercent: summaryData.correctedMoistureContentPercent || '',
         liquidLimitLL: summaryData.liquidLimitLL,
         plasticLimit: summaryData.plasticLimit,
         plasticityIndex: summaryData.plasticityIndex,
@@ -646,9 +666,21 @@ const ProctorSummary: React.FC = () => {
 
   const isEditable = task.status !== 'APPROVED' && (isAdmin() || (task.assignedTechnicianId === user?.id && task.status !== 'READY_FOR_REVIEW'));
 
-  // Calculate OMC and Max Density values for chart (using normalized keys)
-  const omcValue = summaryData.optimumMoisturePercent ? parseFloat(summaryData.optimumMoisturePercent) : undefined;
-  const maxDensityValue = summaryData.maximumDryDensityPcf ? parseFloat(summaryData.maximumDryDensityPcf) : undefined;
+  // Calculate OMC and Max Density values for chart (using corrected values if available, otherwise original)
+  const omcValue = summaryData.correctedMoistureContentPercent 
+    ? parseFloat(summaryData.correctedMoistureContentPercent) 
+    : (summaryData.optimumMoisturePercent ? parseFloat(summaryData.optimumMoisturePercent) : undefined);
+  const maxDensityValue = summaryData.correctedDryDensityPcf 
+    ? parseFloat(summaryData.correctedDryDensityPcf) 
+    : (summaryData.maximumDryDensityPcf ? parseFloat(summaryData.maximumDryDensityPcf) : undefined);
+  
+  // Calculate corrected point for chart if corrected values exist
+  const correctedPoint: ProctorPoint | null = (summaryData.correctedMoistureContentPercent && summaryData.correctedDryDensityPcf) 
+    ? {
+        x: parseFloat(summaryData.correctedMoistureContentPercent),
+        y: parseFloat(summaryData.correctedDryDensityPcf)
+      }
+    : null;
 
   return (
     <div className="proctor-summary-container">
@@ -674,6 +706,8 @@ const ProctorSummary: React.FC = () => {
                     soilClassification: summaryData.soilClassification,
                     maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
                     optimumMoisturePercent: summaryData.optimumMoisturePercent,
+                    correctedDryDensityPcf: summaryData.correctedDryDensityPcf || '',
+                    correctedMoistureContentPercent: summaryData.correctedMoistureContentPercent || '',
                     liquidLimitLL: roundToWholeNumber(summaryData.liquidLimitLL),
                     plasticLimit: roundToWholeNumber(summaryData.plasticLimit),
                     plasticityIndex: summaryData.plasticityIndex,
@@ -811,12 +845,20 @@ const ProctorSummary: React.FC = () => {
               />
             </div>
             <div className="summary-field-row">
-              <label>Maximum Dry Density (pcf):</label>
-              <div className="summary-field-value">{summaryData.maximumDryDensityPcf}</div>
+              <label>
+                {summaryData.correctedDryDensityPcf ? 'Corrected Dry Density (pcf):' : 'Maximum Dry Density (pcf):'}
+              </label>
+              <div className="summary-field-value">
+                {summaryData.correctedDryDensityPcf || summaryData.maximumDryDensityPcf}
+              </div>
             </div>
             <div className="summary-field-row">
-              <label>Optimum Moisture (%):</label>
-              <div className="summary-field-value">{summaryData.optimumMoisturePercent}</div>
+              <label>
+                {summaryData.correctedMoistureContentPercent ? 'Corrected Moisture Content (%):' : 'Optimum Moisture (%):'}
+              </label>
+              <div className="summary-field-value">
+                {summaryData.correctedMoistureContentPercent || summaryData.optimumMoisturePercent}
+              </div>
             </div>
             <div className="summary-field-row">
               <label>Liquid Limit (LL):</label>
@@ -907,6 +949,7 @@ const ProctorSummary: React.FC = () => {
             zavPoints={summaryData.zavPoints || []}
             omc={omcValue}
             maxDryDensity={maxDensityValue}
+            correctedPoint={correctedPoint}
           />
         </div>
       </div>
