@@ -19,6 +19,7 @@
     "supabase:setup": "node setup-supabase-env.js",
     "supabase:verify-connection": "node verify-supabase.js",
     "supabase:execute-and-verify": "node scripts/execute-and-verify-migration.js",
+    "migrate:correction-factor": "node scripts/run-correction-factor-migration.js",
     "check-project-counters": "node scripts/check-project-counters.js",
     "validate-credentials": "node scripts/validate-supabase-credentials.js",
     "verify-render": "node scripts/verify-render-supabase-deployment.js",
