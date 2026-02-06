@@ -134,7 +134,10 @@ function toCamelCase(str) {
   // Special mappings for fields that should have consecutive uppercase letters
   const specialMappings = {
     'liquid_limit_ll': 'liquidLimitLL',
-    'passing200_summary_pct': 'passing200SummaryPct'
+    'passing200_summary_pct': 'passing200SummaryPct',
+    'corrected_dry_density_pcf': 'correctedDryDensityPcf',
+    'corrected_moisture_content_percent': 'correctedMoistureContentPercent',
+    'apply_correction_factor': 'applyCorrectionFactor'
   };
   
   if (specialMappings[str]) {

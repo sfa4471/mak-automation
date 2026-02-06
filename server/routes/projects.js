@@ -4,85 +4,57 @@ const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { ensureProjectDirectory } = require('../utils/pdfFileManager');
-const onedriveService = require('../services/onedriveService');
 
 const router = express.Router();
 
 // Helper function to parse JSON fields from project
-// Handles both snake_case (from Supabase before conversion) and camelCase (after conversion)
+// Handles both SQLite (JSON strings) and Supabase (JSONB objects)
 function parseProjectJSONFields(project) {
   if (!project) return project;
   
-  // Handle customerEmails (camelCase) or customer_emails (snake_case)
-  const customerEmailsField = project.customerEmails !== undefined ? 'customerEmails' : 
-                              project.customer_emails !== undefined ? 'customer_emails' : null;
-  
-  if (customerEmailsField) {
-    const value = project[customerEmailsField];
-    if (typeof value === 'string') {
+  // customerEmails: can be string (SQLite) or array/object (Supabase)
+  if (project.customerEmails !== null && project.customerEmails !== undefined) {
+    if (typeof project.customerEmails === 'string') {
       try {
-        project.customerEmails = JSON.parse(value);
+        project.customerEmails = JSON.parse(project.customerEmails);
       } catch (e) {
         project.customerEmails = [];
       }
-    } else if (Array.isArray(value)) {
-      project.customerEmails = value;
-    } else {
+    } else if (!Array.isArray(project.customerEmails)) {
+      // If it's not a string and not an array, default to empty array
       project.customerEmails = [];
-    }
-    // Remove snake_case version if it exists
-    if (customerEmailsField === 'customer_emails') {
-      delete project.customer_emails;
     }
   } else {
     project.customerEmails = [];
   }
   
-  // Handle soilSpecs (camelCase) or soil_specs (snake_case)
-  const soilSpecsField = project.soilSpecs !== undefined ? 'soilSpecs' : 
-                          project.soil_specs !== undefined ? 'soil_specs' : null;
-  
-  if (soilSpecsField) {
-    const value = project[soilSpecsField];
-    if (typeof value === 'string') {
+  // soilSpecs: can be string (SQLite) or object (Supabase)
+  if (project.soilSpecs !== null && project.soilSpecs !== undefined) {
+    if (typeof project.soilSpecs === 'string') {
       try {
-        project.soilSpecs = JSON.parse(value);
+        project.soilSpecs = JSON.parse(project.soilSpecs);
       } catch (e) {
         project.soilSpecs = {};
       }
-    } else if (typeof value === 'object' && value !== null) {
-      project.soilSpecs = value;
-    } else {
+    } else if (typeof project.soilSpecs !== 'object' || Array.isArray(project.soilSpecs)) {
+      // If it's not a string and not an object, default to empty object
       project.soilSpecs = {};
-    }
-    // Remove snake_case version if it exists
-    if (soilSpecsField === 'soil_specs') {
-      delete project.soil_specs;
     }
   } else {
     project.soilSpecs = {};
   }
   
-  // Handle concreteSpecs (camelCase) or concrete_specs (snake_case)
-  const concreteSpecsField = project.concreteSpecs !== undefined ? 'concreteSpecs' : 
-                              project.concrete_specs !== undefined ? 'concrete_specs' : null;
-  
-  if (concreteSpecsField) {
-    const value = project[concreteSpecsField];
-    if (typeof value === 'string') {
+  // concreteSpecs: can be string (SQLite) or object (Supabase)
+  if (project.concreteSpecs !== null && project.concreteSpecs !== undefined) {
+    if (typeof project.concreteSpecs === 'string') {
       try {
-        project.concreteSpecs = JSON.parse(value);
+        project.concreteSpecs = JSON.parse(project.concreteSpecs);
       } catch (e) {
         project.concreteSpecs = {};
       }
-    } else if (typeof value === 'object' && value !== null) {
-      project.concreteSpecs = value;
-    } else {
+    } else if (typeof project.concreteSpecs !== 'object' || Array.isArray(project.concreteSpecs)) {
+      // If it's not a string and not an object, default to empty object
       project.concreteSpecs = {};
-    }
-    // Remove snake_case version if it exists
-    if (concreteSpecsField === 'concrete_specs') {
-      delete project.concrete_specs;
     }
   } else {
     project.concreteSpecs = {};
@@ -93,158 +65,141 @@ function parseProjectJSONFields(project) {
 
 // Generate project number: 02-YYYY-NNNN (with year-based sequence)
 // Uses atomic counter to ensure uniqueness and handle concurrency
+// Includes retry logic to handle race conditions and out-of-sync counters
 async function generateProjectNumber() {
   const year = new Date().getFullYear();
   const baseStart = (year - 2022) * 1000 + 1;
+  const maxRetries = 20;
   
-  try {
-    if (db.isSupabase()) {
-      // Use Supabase with direct PostgreSQL operations
-      const { supabase } = require('../db/supabase');
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      let nextSeq;
       
-      // Try to get existing counter
-      let { data: counter, error: getError } = await supabase
-        .from('project_counters')
-        .select('*')
-        .eq('year', year)
-        .single();
-      
-      let currentSeq;
-      
-      if (getError && getError.code === 'PGRST116') {
-        // Counter doesn't exist - create it
-        currentSeq = baseStart;
-        const { data: inserted, error: insertError } = await supabase
+      if (db.isSupabase()) {
+        // Supabase: Get or create counter, then increment
+        const { data: existingCounter, error: selectError } = await supabase
           .from('project_counters')
-          .insert({
-            year: year,
-            next_seq: baseStart + 1,
-            updated_at: new Date().toISOString()
-          })
-          .select()
+          .select('next_seq')
+          .eq('year', year)
           .single();
         
-        if (insertError) {
-          // If insert fails (race condition - another request created it), fetch it
-          const { data: retryCounter, error: retryError } = await supabase
+        if (selectError && selectError.code !== 'PGRST116') {
+          throw selectError;
+        }
+        
+        if (!existingCounter) {
+          // First project for this year - try to insert
+          nextSeq = baseStart;
+          const { error: insertError } = await supabase
             .from('project_counters')
-            .select('*')
+            .insert({ year, next_seq: nextSeq + 1 });
+          
+          // If insert fails due to race condition, fetch existing counter
+          if (insertError) {
+            if (insertError.code === '23505' || insertError.message?.includes('duplicate')) {
+              // Someone else created it - fetch and use it
+              const { data: raceCounter, error: raceError } = await supabase
+                .from('project_counters')
+                .select('next_seq')
+                .eq('year', year)
+                .single();
+              
+              if (raceError) throw raceError;
+              nextSeq = raceCounter.next_seq;
+            } else {
+              throw insertError;
+            }
+          }
+        } else {
+          nextSeq = existingCounter.next_seq;
+        }
+        
+        // Atomically increment the counter
+        // Note: Supabase JS client doesn't support true atomic increment,
+        // so we use update and handle race conditions with retry logic
+        const { error: updateError } = await supabase
+          .from('project_counters')
+          .update({ next_seq: nextSeq + 1, updated_at: new Date().toISOString() })
+          .eq('year', year);
+        
+        if (updateError) {
+          // If update failed, check if counter was already incremented (race condition)
+          const { data: verifyCounter } = await supabase
+            .from('project_counters')
+            .select('next_seq')
             .eq('year', year)
             .single();
           
-          if (retryError) {
-            console.error('Error creating/retrieving project counter:', retryError);
-            throw new Error(`Failed to create project counter: ${retryError.message}`);
+          if (verifyCounter && verifyCounter.next_seq > nextSeq) {
+            // Counter was incremented by another request - use the new value for next iteration
+            // We'll retry in the next loop iteration
+            continue;
+          } else {
+            throw updateError;
           }
-          currentSeq = retryCounter.next_seq || baseStart;
         }
-      } else if (getError) {
-        console.error('Error getting project counter:', getError);
-        throw new Error(`Failed to get project counter: ${getError.message}`);
       } else {
-        // Counter exists
-        currentSeq = counter.next_seq || baseStart;
-      }
-      
-      // Increment atomically - use the current value, then update
-      const { data: updated, error: updateError } = await supabase
-        .from('project_counters')
-        .update({
-          next_seq: currentSeq + 1,
-          updated_at: new Date().toISOString()
-        })
-        .eq('year', year)
-        .select()
-        .single();
-      
-      if (updateError) {
-        console.error('Error updating project counter:', updateError);
-        throw new Error(`Failed to update project counter: ${updateError.message}`);
-      }
-      
-      const projectNumber = `02-${year}-${currentSeq.toString().padStart(4, '0')}`;
-      return projectNumber;
-    } else {
-      // SQLite fallback - ensure table exists first
-      const sqliteDb = require('../database');
-      
-      // Check if table exists, create if not
-      await new Promise((resolve, reject) => {
-        sqliteDb.run(`
-          CREATE TABLE IF NOT EXISTS project_counters (
-            year INTEGER PRIMARY KEY,
-            nextSeq INTEGER NOT NULL DEFAULT 1,
-            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-          )
-        `, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-      
-      // Get or create counter
-      let counter = await new Promise((resolve, reject) => {
-        sqliteDb.get(
-          'SELECT * FROM project_counters WHERE year = ?',
-          [year],
-          (err, row) => {
-            if (err) reject(err);
-            else resolve(row || null);
-          }
-        );
-      });
-      
-      if (!counter) {
-        // Create counter - use INSERT OR IGNORE to handle race conditions
-        await new Promise((resolve, reject) => {
-          sqliteDb.run(
-            'INSERT OR IGNORE INTO project_counters (year, nextSeq) VALUES (?, ?)',
-            [year, baseStart + 1],
-            (err) => {
-              if (err) reject(err);
-              else resolve();
-            }
-          );
-        });
-        
-        // Re-fetch to get the actual value
-        counter = await new Promise((resolve, reject) => {
-          sqliteDb.get(
-            'SELECT * FROM project_counters WHERE year = ?',
-            [year],
-            (err, row) => {
-              if (err) reject(err);
-              else resolve(row || null);
-            }
-          );
+        // SQLite: Use atomic increment
+        const sqliteDb = require('../database');
+        nextSeq = await new Promise((resolve, reject) => {
+          sqliteDb.serialize(() => {
+            // Ensure counter exists
+            sqliteDb.run(
+              'INSERT OR IGNORE INTO project_counters (year, nextSeq) VALUES (?, ?)',
+              [year, baseStart],
+              (insertErr) => {
+                if (insertErr) return reject(insertErr);
+                
+                // Atomically increment
+                sqliteDb.run(
+                  'UPDATE project_counters SET nextSeq = nextSeq + 1, updatedAt = CURRENT_TIMESTAMP WHERE year = ?',
+                  [year],
+                  (updateErr) => {
+                    if (updateErr) return reject(updateErr);
+                    
+                    // Get the incremented value
+                    sqliteDb.get(
+                      'SELECT nextSeq FROM project_counters WHERE year = ?',
+                      [year],
+                      (selectErr, row) => {
+                        if (selectErr) return reject(selectErr);
+                        const usedSeq = row.nextSeq - 1; // The value we used
+                        resolve(usedSeq);
+                      }
+                    );
+                  }
+                );
+              }
+            );
+          });
         });
       }
       
-      if (!counter) {
-        throw new Error('Failed to create or retrieve project counter');
+      // Generate project number
+      const projectNumber = `02-${year}-${nextSeq.toString().padStart(4, '0')}`;
+      
+      // Verify the project number doesn't already exist (handles out-of-sync counters)
+      const existingProject = await db.get('projects', { projectNumber });
+      if (!existingProject) {
+        return projectNumber;
       }
       
-      // Increment atomically
-      const currentSeq = counter.nextSeq || baseStart;
-      await new Promise((resolve, reject) => {
-        sqliteDb.run(
-          'UPDATE project_counters SET nextSeq = nextSeq + 1, updatedAt = CURRENT_TIMESTAMP WHERE year = ?',
-          [year],
-          (err) => {
-            if (err) reject(err);
-            else resolve();
-          }
-        );
-      });
-      
-      const projectNumber = `02-${year}-${currentSeq.toString().padStart(4, '0')}`;
-      return projectNumber;
+      // Project number exists - counter is out of sync
+      // The counter was already incremented above, so we just continue the loop
+      // to get the next number (which will read the incremented counter value)
+      console.warn(`Project number ${projectNumber} already exists (counter out of sync), retrying with next number...`);
+      // Continue to next iteration - counter is already incremented, so next iteration will use nextSeq + 1
+    } catch (error) {
+      console.error(`Error generating project number (attempt ${attempt + 1}/${maxRetries}):`, error);
+      if (attempt === maxRetries - 1) {
+        throw new Error(`Failed to generate unique project number after ${maxRetries} attempts: ${error.message}`);
+      }
+      // Retry with small delay
+      await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
     }
-  } catch (err) {
-    console.error('Error in generateProjectNumber:', err);
-    console.error('Stack:', err.stack);
-    throw new Error(`Failed to generate project number: ${err.message}`);
   }
+  
+  throw new Error('Failed to generate project number after maximum retries');
 }
 
 // Create project (Admin only)
@@ -281,151 +236,91 @@ router.post('/', authenticate, requireAdmin, [
       }
     }
 
+    // Check for duplicate project name (case-sensitive, trimmed)
+    const trimmedProjectName = projectName.trim();
+    
+    // Validate that project name is not empty after trimming
+    if (!trimmedProjectName || trimmedProjectName.length === 0) {
+      return res.status(400).json({ error: 'Project name cannot be empty' });
+    }
+    
+    // Check for duplicate project name before creating
+    const existingProjectByName = await db.get('projects', { projectName: trimmedProjectName });
+    if (existingProjectByName) {
+      console.log('Duplicate project name detected:', {
+        requestedName: trimmedProjectName,
+        existingId: existingProjectByName.id
+      });
+      return res.status(400).json({ error: 'Project name already exists' });
+    }
+
     // Generate project number using atomic counter
     let projectNumber;
     try {
       projectNumber = await generateProjectNumber();
-    } catch (err) {
-      console.error('Error generating project number:', err);
-      console.error('Error details:', {
-        message: err.message,
-        stack: err.stack,
-        isSupabase: db.isSupabase()
-      });
-      
-      // Provide more helpful error message
-      let errorMessage = 'Database error: Failed to generate project number';
-      if (err.message && err.message.includes('relation') && err.message.includes('does not exist')) {
-        errorMessage = 'Database error: project_counters table does not exist. Please run database migrations.';
-      } else if (err.message) {
-        errorMessage = `Database error: ${err.message}`;
-      }
-      
-      return res.status(500).json({ error: errorMessage });
+    } catch (genErr) {
+      console.error('Error generating project number:', genErr);
+      return res.status(500).json({ error: 'Database error: Failed to generate project number' });
     }
 
     if (!projectNumber) {
       return res.status(500).json({ error: 'Failed to generate project number' });
     }
 
-    // Check for duplicate (shouldn't happen with atomic counter, but safety check)
-    const existing = await db.get('projects', { projectNumber });
-    if (existing) {
-      // This should be extremely rare with atomic counter, but retry if it happens
-      console.warn('Project number collision detected, retrying...');
-      try {
-        projectNumber = await generateProjectNumber();
-      } catch (retryErr) {
-        return res.status(500).json({ error: 'Failed to generate unique project number' });
-      }
-    }
+    // Note: generateProjectNumber() already handles duplicate checking and retries
+    // so we don't need to check again here
 
     // Prepare data for insertion
-    // For Supabase, JSONB fields accept objects directly; for SQLite, we stringify
-    // Always include specs objects (even if empty) to ensure they're saved
+    // For SQLite, JSON fields need to be stringified; for Supabase, they should be objects/arrays
     const projectData = {
       projectNumber,
-      projectName,
-      customerEmails: customerEmails && customerEmails.length > 0 ? customerEmails : [],
-      soilSpecs: soilSpecs || {},
-      concreteSpecs: concreteSpecs || {}
+      projectName: trimmedProjectName
     };
     
-    // Debug: Log what we're saving
-    console.log('💾 Saving project data:', {
-      projectNumber,
-      projectName,
-      customerEmailsCount: projectData.customerEmails.length,
-      soilSpecsKeys: Object.keys(projectData.soilSpecs),
-      soilSpecs: projectData.soilSpecs,
-      concreteSpecsKeys: Object.keys(projectData.concreteSpecs),
-      concreteSpecs: projectData.concreteSpecs
-    });
+    if (db.isSupabase()) {
+      // Supabase: pass objects/arrays directly (will be stored as JSONB)
+      projectData.customerEmails = customerEmails && customerEmails.length > 0 ? customerEmails : null;
+      projectData.soilSpecs = soilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : null;
+      projectData.concreteSpecs = concreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : null;
+    } else {
+      // SQLite: stringify JSON fields
+      projectData.customerEmails = customerEmails && customerEmails.length > 0 ? JSON.stringify(customerEmails) : null;
+      projectData.soilSpecs = soilSpecs && Object.keys(soilSpecs).length > 0 ? JSON.stringify(soilSpecs) : null;
+      projectData.concreteSpecs = concreteSpecs && Object.keys(concreteSpecs).length > 0 ? JSON.stringify(concreteSpecs) : null;
+    }
 
     // Create project
     let project;
     try {
       project = await db.insert('projects', projectData);
-    } catch (err) {
-      console.error('Error creating project:', err);
-      if (err.message && (err.message.includes('UNIQUE') || err.message.includes('duplicate'))) {
-        return res.status(400).json({ error: 'Project number already exists' });
+    } catch (insertErr) {
+      console.error('Error creating project:', insertErr);
+      const errorMessage = insertErr.message || '';
+      if (errorMessage.includes('UNIQUE') || errorMessage.includes('duplicate')) {
+        if (errorMessage.toLowerCase().includes('project_name') || errorMessage.toLowerCase().includes('projectname')) {
+          return res.status(400).json({ error: 'Project name already exists' });
+        } else if (errorMessage.toLowerCase().includes('project_number') || errorMessage.toLowerCase().includes('projectnumber')) {
+          return res.status(400).json({ error: 'Project number already exists' });
+        }
+        return res.status(400).json({ error: 'A project with this information already exists' });
       }
-      return res.status(500).json({ error: 'Database error' });
+      return res.status(500).json({ error: 'Database error: ' + (insertErr.message || 'Unknown error') });
     }
 
-    // Create project folder structure for PDF storage
-    let folderCreationResult = {
-      success: false,
-      path: null,
-      error: null,
-      warnings: [],
-      onedriveResult: null
-    };
-
-    console.log(`📁 Creating project folder for: ${projectNumber}`);
+    // Create project folder structure for PDF storage (use project number, not ID)
     try {
-      const folderResult = await ensureProjectDirectory(projectNumber);
-      folderCreationResult = {
-        success: folderResult.success,
-        path: folderResult.path,
-        error: folderResult.error,
-        warnings: folderResult.warnings || []
-      };
-      
-      if (folderResult.success) {
-        console.log(`✅ Project folder created/verified: ${folderResult.path}`);
-        if (folderResult.warnings && folderResult.warnings.length > 0) {
-          console.warn('⚠️  Folder creation warnings:', folderResult.warnings);
-        }
-      } else {
-        console.error('❌ Error creating project folder:', folderResult.error);
-        console.error('Folder creation details:', folderResult.details);
-      }
+      await ensureProjectDirectory(projectNumber);
     } catch (folderError) {
-      folderCreationResult = {
-        success: false,
-        path: null,
-        error: folderError.message,
-        warnings: []
-      };
-      console.error('❌ Unexpected error creating project folder:', folderError);
-      console.error('Folder error stack:', folderError.stack);
-    }
-
-    // Also create OneDrive folder if OneDrive is configured
-    try {
-      console.log(`📁 Checking OneDrive configuration for project: ${projectNumber}`);
-      const onedriveResult = await onedriveService.ensureProjectFolder(projectNumber);
-      folderCreationResult.onedriveResult = onedriveResult;
-      
-      if (onedriveResult.success) {
-        console.log(`✅ Created OneDrive project folder: ${onedriveResult.folderPath}`);
-      } else if (onedriveResult.error) {
-        if (onedriveResult.error.includes('not configured')) {
-          console.log(`ℹ️  OneDrive not configured, skipping OneDrive folder creation`);
-        } else {
-          console.warn('⚠️  OneDrive folder creation warning:', onedriveResult.error);
-        }
-      }
-    } catch (onedriveError) {
-      folderCreationResult.onedriveResult = {
-        success: false,
-        error: onedriveError.message
-      };
-      console.error('❌ Error creating OneDrive project folder:', onedriveError);
-      console.error('OneDrive error stack:', onedriveError.stack);
+      console.error('Error creating project folder:', folderError);
+      // Continue even if folder creation fails
     }
 
     // Parse JSON fields for response
     parseProjectJSONFields(project);
-    res.status(201).json({
-      ...project,
-      folderCreation: folderCreationResult  // Include folder creation status
-    });
-  } catch (err) {
-    console.error('Error in create project:', err);
-    res.status(500).json({ error: 'Database error' });
+    res.status(201).json(project);
+  } catch (error) {
+    console.error('Unexpected error creating project:', error);
+    res.status(500).json({ error: 'Internal server error: ' + (error.message || 'Unknown error') });
   }
 });
 
@@ -434,38 +329,57 @@ router.get('/', authenticate, async (req, res) => {
   try {
     let projects;
     
-    if (req.user.role === 'ADMIN') {
-      if (db.isSupabase()) {
-        // Get all projects
+    if (db.isSupabase()) {
+      if (req.user.role === 'ADMIN') {
+        // Admin: get all projects
         const { data, error } = await supabase
           .from('projects')
           .select('*')
           .order('created_at', { ascending: false });
         
-        if (error) {
-          console.error('Error fetching projects from Supabase:', error);
-          throw error;
-        }
-        
-        // Convert snake_case to camelCase and get work package counts
-        projects = await Promise.all((data || []).map(async (project) => {
-          // Convert snake_case keys to camelCase
-          const camelProject = keysToCamelCase(project);
-          
-          // Get work package count
-          const { count } = await supabase
-            .from('workpackages')
-            .select('*', { count: 'exact', head: true })
-            .eq('project_id', project.id);
-          
-          return {
-            ...camelProject,
-            workPackageCount: count || 0
-          };
-        }));
+        if (error) throw error;
+        projects = (data || []).map(keysToCamelCase);
       } else {
-        // SQLite fallback - use raw query
-        const sqliteDb = require('../database');
+        // Technician: only projects with assigned tasks or work packages
+        // First, get projects with assigned tasks
+        const { data: tasksData, error: tasksError } = await supabase
+          .from('tasks')
+          .select('project_id')
+          .eq('assigned_technician_id', req.user.id);
+        
+        if (tasksError) throw tasksError;
+        
+        // Then, get projects with assigned work packages
+        const { data: wpData, error: wpError } = await supabase
+          .from('workpackages')
+          .select('project_id')
+          .eq('assigned_to', req.user.id);
+        
+        if (wpError) throw wpError;
+        
+        // Combine unique project IDs
+        const projectIds = [...new Set([
+          ...(tasksData || []).map(t => t.project_id),
+          ...(wpData || []).map(wp => wp.project_id)
+        ])];
+        
+        if (projectIds.length === 0) {
+          projects = [];
+        } else {
+          const { data, error } = await supabase
+            .from('projects')
+            .select('*')
+            .in('id', projectIds)
+            .order('created_at', { ascending: false });
+          
+          if (error) throw error;
+          projects = (data || []).map(keysToCamelCase);
+        }
+      }
+    } else {
+      // SQLite fallback
+      const sqliteDb = require('../database');
+      if (req.user.role === 'ADMIN') {
         projects = await new Promise((resolve, reject) => {
           sqliteDb.all(
             `SELECT p.*, 
@@ -473,52 +387,27 @@ router.get('/', authenticate, async (req, res) => {
              FROM projects p ORDER BY p.createdAt DESC`,
             [],
             (err, rows) => {
-              if (err) reject(err);
-              else resolve(rows || []);
+              if (err) return reject(err);
+              resolve(rows || []);
             }
           );
         });
-      }
-    } else {
-      // Technician: only projects with assigned work packages
-      if (db.isSupabase()) {
-        const { data, error } = await supabase
-          .from('projects')
-          .select('*, workpackages!inner(project_id, assigned_to)')
-          .eq('workpackages.assigned_to', req.user.id)
-          .order('created_at', { ascending: false });
-        
-        if (error) {
-          console.error('Error fetching technician projects from Supabase:', error);
-          throw error;
-        }
-        
-        // Get unique projects (Supabase might return duplicates with joins)
-        // Convert snake_case to camelCase
-        const projectMap = new Map();
-        (data || []).forEach(item => {
-          if (!projectMap.has(item.id)) {
-            const camelItem = keysToCamelCase(item);
-            // Remove workpackages from the project object
-            delete camelItem.workpackages;
-            projectMap.set(item.id, camelItem);
-          }
-        });
-        projects = Array.from(projectMap.values());
       } else {
-        // SQLite fallback
-        const sqliteDb = require('../database');
+        // Technician: only projects with assigned work packages or tasks
         projects = await new Promise((resolve, reject) => {
           sqliteDb.all(
             `SELECT DISTINCT p.* 
              FROM projects p
-             INNER JOIN workpackages wp ON wp.projectId = p.id
-             WHERE wp.assignedTo = ?
+             WHERE p.id IN (
+               SELECT DISTINCT projectId FROM workpackages WHERE assignedTo = ?
+               UNION
+               SELECT DISTINCT projectId FROM tasks WHERE assignedTechnicianId = ?
+             )
              ORDER BY p.createdAt DESC`,
-            [req.user.id],
+            [req.user.id, req.user.id],
             (err, rows) => {
-              if (err) reject(err);
-              else resolve(rows || []);
+              if (err) return reject(err);
+              resolve(rows || []);
             }
           );
         });
@@ -527,27 +416,10 @@ router.get('/', authenticate, async (req, res) => {
     
     // Parse JSON fields for each project
     const parsedProjects = projects.map(p => parseProjectJSONFields(p));
-    
-    // Log for debugging (remove in production if too verbose)
-    if (parsedProjects.length > 0) {
-      console.log(`✅ Successfully fetched ${parsedProjects.length} project(s) for ${req.user.role}`);
-    } else {
-      console.log(`ℹ️  No projects found for ${req.user.role} (this may be normal if no projects exist)`);
-    }
-    
     res.json(parsedProjects);
-  } catch (err) {
-    console.error('❌ Error fetching projects:', err);
-    console.error('Error details:', {
-      message: err.message,
-      stack: err.stack,
-      userRole: req.user?.role,
-      isSupabase: db.isSupabase()
-    });
-    res.status(500).json({ 
-      error: 'Database error',
-      message: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+  } catch (error) {
+    console.error('Error fetching projects:', error);
+    res.status(500).json({ error: 'Database error: ' + (error.message || 'Unknown error') });
   }
 });
 
@@ -556,6 +428,10 @@ router.get('/:id', authenticate, async (req, res) => {
   try {
     const projectId = parseInt(req.params.id);
     
+    if (isNaN(projectId)) {
+      return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
     const project = await db.get('projects', { id: projectId });
     
     if (!project) {
@@ -564,183 +440,66 @@ router.get('/:id', authenticate, async (req, res) => {
 
     // Check access: Admin can see all, Technician only assigned
     if (req.user.role === 'TECHNICIAN') {
-      const workPackages = await db.all('workpackages', {
-        projectId: projectId,
-        assignedTo: req.user.id
-      });
+      let hasAccess = false;
       
-      if (workPackages.length === 0) {
+      if (db.isSupabase()) {
+        // Check if technician has tasks or work packages assigned to this project
+        const [tasksResult, wpResult] = await Promise.all([
+          supabase
+            .from('tasks')
+            .select('id')
+            .eq('project_id', projectId)
+            .eq('assigned_technician_id', req.user.id)
+            .limit(1),
+          supabase
+            .from('workpackages')
+            .select('id')
+            .eq('project_id', projectId)
+            .eq('assigned_to', req.user.id)
+            .limit(1)
+        ]);
+        
+        hasAccess = (tasksResult.data && tasksResult.data.length > 0) || 
+                   (wpResult.data && wpResult.data.length > 0);
+      } else {
+        // SQLite fallback - check both workpackages and tasks
+        const sqliteDb = require('../database');
+        const [wpCount, taskCount] = await Promise.all([
+          new Promise((resolve, reject) => {
+            sqliteDb.get(
+              'SELECT COUNT(*) as count FROM workpackages WHERE projectId = ? AND assignedTo = ?',
+              [projectId, req.user.id],
+              (err, row) => {
+                if (err) return reject(err);
+                resolve(row ? row.count : 0);
+              }
+            );
+          }),
+          new Promise((resolve, reject) => {
+            sqliteDb.get(
+              'SELECT COUNT(*) as count FROM tasks WHERE projectId = ? AND assignedTechnicianId = ?',
+              [projectId, req.user.id],
+              (err, row) => {
+                if (err) return reject(err);
+                resolve(row ? row.count : 0);
+              }
+            );
+          })
+        ]);
+        
+        hasAccess = wpCount > 0 || taskCount > 0;
+      }
+      
+      if (!hasAccess) {
         return res.status(403).json({ error: 'Access denied' });
       }
     }
     
     parseProjectJSONFields(project);
     res.json(project);
-  } catch (err) {
-    console.error('Error fetching project:', err);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-
-// Diagnostic endpoint for folder creation testing (Admin only)
-router.get('/diagnostic/folder-creation', authenticate, requireAdmin, async (req, res) => {
-  const diagnostics = {
-    timestamp: new Date().toISOString(),
-    steps: [],
-    errors: [],
-    warnings: [],
-    finalResult: null
-  };
-
-  try {
-    // Step 1: Check database connection
-    diagnostics.steps.push({ step: 1, name: 'Database Connection', status: 'checking' });
-    const db = require('../db');
-    diagnostics.steps[0].isSupabase = db.isSupabase();
-    diagnostics.steps[0].status = 'success';
-    console.log('🔍 [DIAGNOSTIC ENDPOINT] Database connection:', diagnostics.steps[0]);
-
-    // Step 2: Get workflow path from database
-    diagnostics.steps.push({ step: 2, name: 'Get Workflow Path', status: 'checking' });
-    const { getWorkflowBasePath } = require('../utils/pdfFileManager');
-    const workflowPath = await getWorkflowBasePath();
-    diagnostics.steps[1].result = workflowPath;
-    diagnostics.steps[1].status = workflowPath ? 'success' : 'failed';
-    if (!workflowPath) {
-      diagnostics.errors.push('Workflow path not configured in database');
-    }
-    console.log('🔍 [DIAGNOSTIC ENDPOINT] Workflow path:', diagnostics.steps[1]);
-
-    // Step 3: Validate path
-    if (workflowPath) {
-      diagnostics.steps.push({ step: 3, name: 'Validate Path', status: 'checking' });
-      const { validatePath } = require('../utils/pdfFileManager');
-      const validation = validatePath(workflowPath);
-      diagnostics.steps[2].result = validation;
-      diagnostics.steps[2].status = validation.valid && validation.isWritable ? 'success' : 'failed';
-      if (!validation.valid || !validation.isWritable) {
-        diagnostics.errors.push(`Path validation failed: ${validation.error}`);
-      }
-      console.log('🔍 [DIAGNOSTIC ENDPOINT] Path validation:', diagnostics.steps[2]);
-    }
-
-    // Step 4: Test folder creation
-    if (workflowPath) {
-      diagnostics.steps.push({ step: 4, name: 'Test Folder Creation', status: 'checking' });
-      const fs = require('fs');
-      const path = require('path');
-      const testFolder = path.join(workflowPath, '.diagnostic_test_' + Date.now());
-      
-      try {
-        console.log('🔍 [DIAGNOSTIC ENDPOINT] Creating test folder:', testFolder);
-        fs.mkdirSync(testFolder, { recursive: true });
-        const exists = fs.existsSync(testFolder);
-        const stats = fs.statSync(testFolder);
-        const isDirectory = stats.isDirectory();
-        
-        // Test write
-        const testFile = path.join(testFolder, 'test.txt');
-        fs.writeFileSync(testFile, 'test');
-        fs.unlinkSync(testFile);
-        fs.rmdirSync(testFolder);
-        
-        diagnostics.steps[3].result = {
-          created: true,
-          exists: exists,
-          isDirectory: isDirectory,
-          writable: true
-        };
-        diagnostics.steps[3].status = 'success';
-        console.log('🔍 [DIAGNOSTIC ENDPOINT] Test folder creation:', diagnostics.steps[3]);
-      } catch (testError) {
-        diagnostics.steps[3].result = {
-          error: testError.message,
-          stack: testError.stack
-        };
-        diagnostics.steps[3].status = 'failed';
-        diagnostics.errors.push(`Folder creation test failed: ${testError.message}`);
-        console.error('🔍 [DIAGNOSTIC ENDPOINT] Test folder creation failed:', testError);
-      }
-    }
-
-    // Step 5: Test actual project folder creation
-    if (workflowPath) {
-      diagnostics.steps.push({ step: 5, name: 'Test Project Folder Creation', status: 'checking' });
-      const testProjectNumber = '02-2026-TEST';
-      const { ensureProjectDirectory } = require('../utils/pdfFileManager');
-      console.log('🔍 [DIAGNOSTIC ENDPOINT] Testing project folder creation with:', testProjectNumber);
-      const folderResult = await ensureProjectDirectory(testProjectNumber);
-      
-      diagnostics.steps[4].result = folderResult;
-      diagnostics.steps[4].status = folderResult.success ? 'success' : 'failed';
-      
-      if (!folderResult.success) {
-        diagnostics.errors.push(`Project folder creation failed: ${folderResult.error}`);
-      }
-      if (folderResult.warnings && folderResult.warnings.length > 0) {
-        diagnostics.warnings.push(...folderResult.warnings);
-      }
-      
-      diagnostics.finalResult = folderResult;
-      console.log('🔍 [DIAGNOSTIC ENDPOINT] Project folder creation result:', folderResult);
-    }
-
-    res.json({
-      success: diagnostics.errors.length === 0,
-      diagnostics: diagnostics
-    });
   } catch (error) {
-    diagnostics.errors.push(`Diagnostic failed: ${error.message}`);
-    diagnostics.finalResult = {
-      success: false,
-      error: error.message,
-      stack: error.stack
-    };
-    console.error('🔍 [DIAGNOSTIC ENDPOINT] Diagnostic error:', error);
-    res.status(500).json({
-      success: false,
-      diagnostics: diagnostics
-    });
-  }
-});
-
-// Retry folder creation for a project (Admin only)
-router.post('/:id/retry-folder', authenticate, requireAdmin, async (req, res) => {
-  try {
-    const projectId = parseInt(req.params.id);
-    const project = await db.get('projects', { id: projectId });
-    
-    if (!project) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-
-    // Attempt to create folder
-    const folderResult = await ensureProjectDirectory(project.projectNumber);
-    
-    // Also try OneDrive if configured
-    let onedriveResult = null;
-    try {
-      onedriveResult = await onedriveService.ensureProjectFolder(project.projectNumber);
-    } catch (onedriveError) {
-      onedriveResult = {
-        success: false,
-        error: onedriveError.message
-      };
-    }
-
-    res.json({
-      success: folderResult.success,
-      folderCreation: {
-        success: folderResult.success,
-        path: folderResult.path,
-        error: folderResult.error,
-        warnings: folderResult.warnings || [],
-        onedriveResult: onedriveResult
-      }
-    });
-  } catch (err) {
-    console.error('Error retrying folder creation:', err);
-    res.status(500).json({ error: 'Failed to retry folder creation' });
+    console.error('Error fetching project:', error);
+    res.status(500).json({ error: 'Database error: ' + (error.message || 'Unknown error') });
   }
 });
 
@@ -759,6 +518,11 @@ router.put('/:id', authenticate, requireAdmin, [
     }
 
     const projectId = parseInt(req.params.id);
+    
+    if (isNaN(projectId)) {
+      return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
     const { 
       projectName, 
       customerEmails,
@@ -777,54 +541,58 @@ router.put('/:id', authenticate, requireAdmin, [
       }
     }
 
+    // Build update data
+    // For SQLite, JSON fields need to be stringified; for Supabase, they should be objects/arrays
     const updateData = {};
     
     if (projectName !== undefined) {
-      updateData.projectName = projectName;
+      updateData.projectName = projectName.trim();
     }
     if (customerEmails !== undefined && customerEmails !== null) {
-      updateData.customerEmails = customerEmails;
+      if (db.isSupabase()) {
+        updateData.customerEmails = customerEmails;
+      } else {
+        updateData.customerEmails = JSON.stringify(customerEmails);
+      }
     }
-    // Always include specs if provided (even if empty object) to ensure they're saved/updated
     if (soilSpecs !== undefined && soilSpecs !== null) {
-      updateData.soilSpecs = soilSpecs;
+      if (db.isSupabase()) {
+        updateData.soilSpecs = soilSpecs;
+      } else {
+        updateData.soilSpecs = JSON.stringify(soilSpecs);
+      }
     }
     if (concreteSpecs !== undefined && concreteSpecs !== null) {
-      updateData.concreteSpecs = concreteSpecs;
+      if (db.isSupabase()) {
+        updateData.concreteSpecs = concreteSpecs;
+      } else {
+        updateData.concreteSpecs = JSON.stringify(concreteSpecs);
+      }
     }
-    
-    // Debug: Log what we're updating
-    console.log('💾 Updating project data:', {
-      projectId,
-      updateDataKeys: Object.keys(updateData),
-      soilSpecsKeys: updateData.soilSpecs ? Object.keys(updateData.soilSpecs) : [],
-      soilSpecs: updateData.soilSpecs,
-      concreteSpecsKeys: updateData.concreteSpecs ? Object.keys(updateData.concreteSpecs) : [],
-      concreteSpecs: updateData.concreteSpecs
-    });
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    updateData.updatedAt = new Date().toISOString();
-
+    // Update project
     const changes = await db.update('projects', updateData, { id: projectId });
     
     if (changes === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
+    // Fetch updated project
     const project = await db.get('projects', { id: projectId });
-    if (!project) {
-      return res.status(500).json({ error: 'Error fetching updated project' });
-    }
     
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
     parseProjectJSONFields(project);
     res.json(project);
-  } catch (err) {
-    console.error('Error updating project:', err);
-    res.status(500).json({ error: 'Database error: ' + err.message });
+  } catch (error) {
+    console.error('Error updating project:', error);
+    res.status(500).json({ error: 'Database error: ' + (error.message || 'Unknown error') });
   }
 });
 

@@ -891,6 +891,9 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         soilClassification: '',
         maximumDryDensityPcf: '',
         optimumMoisturePercent: '',
+        correctedDryDensityPcf: '',
+        correctedMoistureContentPercent: '',
+        applyCorrectionFactor: false,
         liquidLimitLL: '',
         plasticLimit: '',
         plasticityIndex: '',
@@ -1014,6 +1017,9 @@ router.post('/task/:taskId', authenticate, [
       soilClassification,
       maximumDryDensityPcf,
       optimumMoisturePercent,
+      correctedDryDensityPcf,
+      correctedMoistureContentPercent,
+      applyCorrectionFactor,
       // Canonical fields (preferred)
       optMoisturePct,
       maxDryDensityPcf,
@@ -1065,6 +1071,9 @@ router.post('/task/:taskId', authenticate, [
       description: null, // deprecated, set to NULL
       maximumDryDensityPcf: maximumDryDensityPcf || null, // Keep old field for backward compatibility
       optimumMoisturePercent: optimumMoisturePercent || null, // Keep old field for backward compatibility
+      correctedDryDensityPcf: correctedDryDensityPcf || null,
+      correctedMoistureContentPercent: correctedMoistureContentPercent || null,
+      applyCorrectionFactor: applyCorrectionFactor !== undefined ? applyCorrectionFactor : false,
       optMoisturePct: finalOptMoisture, // Canonical field
       maxDryDensityPcf: finalMaxDensity, // Canonical field
       liquidLimitLL: liquidLimitLL || null,

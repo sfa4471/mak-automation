@@ -326,6 +326,29 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
     // Check if record exists
     const existing = await db.get('density_reports', { taskId });
 
+    // Auto-populate technician info from task if not provided
+    // This ensures the technician name is always set correctly, even if admin updates the report
+    let finalTechName = techName;
+    let finalTechnicianId = technicianId || task.assignedTechnicianId;
+    
+    // If techName is not provided, get it from the assigned technician
+    if (!finalTechName && finalTechnicianId) {
+      const tech = await db.get('users', { id: finalTechnicianId });
+      if (tech) {
+        finalTechName = tech.name || tech.email || '';
+      }
+    }
+    
+    // If still no techName but we have an existing record, preserve the existing techName
+    // (Don't overwrite with null if admin is updating other fields)
+    if (!finalTechName && existing && existing.techName) {
+      finalTechName = existing.techName;
+      // Also preserve technicianId if it exists
+      if (!finalTechnicianId && existing.technicianId) {
+        finalTechnicianId = existing.technicianId;
+      }
+    }
+
     // Prepare data for insertion/update
     // For Supabase, JSONB fields accept arrays directly; for SQLite, we stringify
     const densityData = {
@@ -347,8 +370,8 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       methodD3017: methodD3017 ? 1 : 0,
       methodD698: methodD698 ? 1 : 0,
       remarks: remarks || null,
-      techName: techName || null,
-      technicianId: technicianId || null,
+      techName: finalTechName || null,
+      technicianId: finalTechnicianId || null,
       timeStr: timeStr || null,
       specDensityPct: specDensityPct || null,
       proctorTaskId: proctorTaskId || null,

@@ -1022,9 +1022,25 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       html = html.replace('{{METHOD_D3017}}', data.methodD3017 ? 'checked' : '');
       html = html.replace('{{METHOD_D698}}', data.methodD698 ? 'checked' : '');
 
+      // Get technician name - prioritize saved techName, then task's assigned technician
+      let technicianName = data.techName;
+      
+      // If techName is missing, try to get it from the task's assigned technician
+      if (!technicianName) {
+        if (task.assignedTechnicianName) {
+          technicianName = task.assignedTechnicianName;
+        } else if (task.assignedTechnicianId) {
+          // Fetch technician name from database
+          const tech = await db.get('users', { id: task.assignedTechnicianId });
+          if (tech) {
+            technicianName = tech.name || tech.email || '';
+          }
+        }
+      }
+      
       // Replace footer placeholders
       html = html.replace('{{REMARKS}}', escapeHtml(data.remarks || ''));
-      html = html.replace('{{TECH_NAME}}', escapeHtml(data.techName || task.assignedTechnicianName || ''));
+      html = html.replace('{{TECH_NAME}}', escapeHtml(technicianName || ''));
       html = html.replace('{{TIME}}', escapeHtml(data.timeStr || ''));
 
       // Generate PDF using Puppeteer
