@@ -7,6 +7,7 @@ import LoadingSpinner from './components/LoadingSpinner';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import TechnicianDashboard from './components/TechnicianDashboard';
+import ChangePassword from './components/ChangePassword';
 import './App.css';
 
 // Lazy load heavy components for code splitting
@@ -44,6 +45,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <TechnicianDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/technician/change-password"
+            element={
+              <ProtectedRoute requireTechnician>
+                <ChangePassword />
               </ProtectedRoute>
             }
           />

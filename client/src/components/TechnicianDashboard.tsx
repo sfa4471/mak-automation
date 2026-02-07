@@ -249,6 +249,12 @@ const TechnicianDashboard: React.FC = () => {
               </div>
             )}
           </div>
+          <button 
+            onClick={() => navigate('/technician/change-password')} 
+            className="change-password-button"
+          >
+            Change Password
+          </button>
           <button onClick={logout} className="logout-button">Logout</button>
         </div>
       </header>

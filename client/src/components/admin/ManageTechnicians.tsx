@@ -9,7 +9,10 @@ const ManageTechnicians: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ email: '', password: '', name: '' });
+  const [editingTech, setEditingTech] = useState<User | null>(null);
+  const [editFormData, setEditFormData] = useState({ email: '', password: '', name: '' });
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   useEffect(() => {
     loadTechnicians();
@@ -29,15 +32,82 @@ const ManageTechnicians: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
 
     try {
       await authAPI.createTechnician(formData.email, formData.password, formData.name);
       setFormData({ email: '', password: '', name: '' });
       setShowForm(false);
+      setSuccess('Technician created successfully');
       loadTechnicians();
+      setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create technician');
     }
+  };
+
+  const handleEdit = (tech: User) => {
+    setEditingTech(tech);
+    setEditFormData({
+      email: tech.email || '',
+      password: '',
+      name: tech.name || ''
+    });
+    setError('');
+    setSuccess('');
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTech) return;
+
+    setError('');
+    setSuccess('');
+
+    try {
+      const updateData: { email?: string; name?: string; password?: string } = {
+        email: editFormData.email,
+        name: editFormData.name
+      };
+
+      // Only include password if it's provided
+      if (editFormData.password) {
+        updateData.password = editFormData.password;
+      }
+
+      await authAPI.updateTechnician(editingTech.id, updateData);
+      setEditingTech(null);
+      setEditFormData({ email: '', password: '', name: '' });
+      setSuccess('Technician updated successfully');
+      loadTechnicians();
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to update technician');
+    }
+  };
+
+  const handleDelete = async (tech: User) => {
+    if (!window.confirm(`Are you sure you want to delete ${tech.name || tech.email}? This action cannot be undone.`)) {
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+
+    try {
+      await authAPI.deleteTechnician(tech.id);
+      setSuccess('Technician deleted successfully');
+      loadTechnicians();
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to delete technician');
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingTech(null);
+    setEditFormData({ email: '', password: '', name: '' });
+    setError('');
   };
 
   if (loading) {
@@ -55,6 +125,7 @@ const ManageTechnicians: React.FC = () => {
         </div>
 
         {error && <div className="error-message">{error}</div>}
+        {success && <div className="success-message">{success}</div>}
 
         <div className="technicians-list">
           {!showForm && (
@@ -106,6 +177,53 @@ const ManageTechnicians: React.FC = () => {
             </form>
           )}
 
+          {editingTech && (
+            <div className="edit-modal-overlay" onClick={cancelEdit}>
+              <div className="edit-modal" onClick={(e) => e.stopPropagation()}>
+                <h2>Edit Technician</h2>
+                <form onSubmit={handleEditSubmit} className="admin-form">
+                  <div className="form-group">
+                    <label htmlFor="edit-name">Name *</label>
+                    <input
+                      type="text"
+                      id="edit-name"
+                      value={editFormData.name}
+                      onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="edit-email">Email *</label>
+                    <input
+                      type="email"
+                      id="edit-email"
+                      value={editFormData.email}
+                      onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="edit-password">New Password (leave blank to keep current)</label>
+                    <input
+                      type="password"
+                      id="edit-password"
+                      value={editFormData.password}
+                      onChange={(e) => setEditFormData({ ...editFormData, password: e.target.value })}
+                      minLength={6}
+                    />
+                    <small>Only enter if you want to change the password</small>
+                  </div>
+                  <div className="form-actions">
+                    <button type="button" onClick={cancelEdit} className="cancel-button">
+                      Cancel
+                    </button>
+                    <button type="submit" className="submit-button">Save Changes</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
           <div className="technicians-table">
             <h2>Existing Technicians</h2>
             {technicians.length === 0 ? (
@@ -116,6 +234,7 @@ const ManageTechnicians: React.FC = () => {
                   <tr>
                     <th>Name</th>
                     <th>Email</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -123,6 +242,24 @@ const ManageTechnicians: React.FC = () => {
                     <tr key={tech.id}>
                       <td>{tech.name}</td>
                       <td>{tech.email}</td>
+                      <td>
+                        <div className="action-buttons">
+                          <button
+                            onClick={() => handleEdit(tech)}
+                            className="edit-button"
+                            title="Edit technician"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDelete(tech)}
+                            className="delete-button"
+                            title="Delete technician"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

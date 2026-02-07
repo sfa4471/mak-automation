@@ -32,5 +32,18 @@ export const authAPI = {
     const response = await api.get<User[]>('/auth/technicians');
     return response.data;
   },
+
+  changePassword: async (currentPassword: string, newPassword: string): Promise<void> => {
+    await api.put('/auth/me/password', { currentPassword, newPassword });
+  },
+
+  updateTechnician: async (id: number, data: { email?: string; name?: string; password?: string }): Promise<User> => {
+    const response = await api.put<User>(`/auth/technicians/${id}`, data);
+    return response.data;
+  },
+
+  deleteTechnician: async (id: number): Promise<void> => {
+    await api.delete(`/auth/technicians/${id}`);
+  },
 };
 
