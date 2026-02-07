@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db'); // Use new database abstraction layer
-const { authenticate, requireAdmin, JWT_SECRET } = require('../middleware/auth');
+const { authenticate, requireAdmin, requireTechnician, JWT_SECRET } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 
 const router = express.Router();
@@ -151,6 +151,206 @@ router.get('/technicians', authenticate, async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('List technicians error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Change own password (Technician only)
+router.put('/me/password', authenticate, requireTechnician, [
+  body('currentPassword').notEmpty().withMessage('Current password is required'),
+  body('newPassword').isLength({ min: 6 }).withMessage('New password must be at least 6 characters')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.id;
+
+    // Get current user with password
+    const user = await db.get('users', { id: userId });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Verify current password
+    if (!bcrypt.compareSync(currentPassword, user.password)) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    // Check if new password is different from current
+    if (bcrypt.compareSync(newPassword, user.password)) {
+      return res.status(400).json({ error: 'New password must be different from current password' });
+    }
+
+    // Hash new password
+    const hashedPassword = bcrypt.hashSync(newPassword, 10);
+
+    // Update password
+    await db.update('users', { password: hashedPassword }, { id: userId });
+
+    res.json({ message: 'Password changed successfully' });
+  } catch (err) {
+    console.error('Change password error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Update technician (Admin only)
+router.put('/technicians/:id', authenticate, requireAdmin, [
+  body('email').optional().isEmail().normalizeEmail(),
+  body('name').optional().notEmpty().trim(),
+  body('password').optional().isLength({ min: 6 })
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const technicianId = parseInt(req.params.id);
+    const { email, name, password } = req.body;
+
+    // Check if technician exists
+    const technician = await db.get('users', { id: technicianId });
+    if (!technician) {
+      return res.status(404).json({ error: 'Technician not found' });
+    }
+
+    // Verify it's a technician
+    if (technician.role !== 'TECHNICIAN') {
+      return res.status(400).json({ error: 'User is not a technician' });
+    }
+
+    const updateData = {};
+
+    // Update email if provided
+    if (email !== undefined) {
+      // Check email uniqueness (excluding current user)
+      const existing = await db.get('users', { email });
+      if (existing && existing.id !== technicianId) {
+        return res.status(400).json({ error: 'Email already exists' });
+      }
+      updateData.email = email;
+    }
+
+    // Update name if provided
+    if (name !== undefined) {
+      updateData.name = name;
+    }
+
+    // Update password if provided
+    if (password !== undefined) {
+      updateData.password = bcrypt.hashSync(password, 10);
+    }
+
+    // Only update if there's something to update
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    // Update the technician
+    await db.update('users', updateData, { id: technicianId });
+
+    // Get updated technician
+    const updatedTechnician = await db.get('users', { id: technicianId });
+
+    res.json({
+      id: updatedTechnician.id,
+      email: updatedTechnician.email,
+      role: updatedTechnician.role,
+      name: updatedTechnician.name
+    });
+  } catch (err) {
+    console.error('Update technician error:', err);
+    if (err.message && (err.message.includes('unique') || err.message.includes('duplicate'))) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Delete technician (Admin only)
+router.delete('/technicians/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const technicianId = parseInt(req.params.id);
+
+    // Check if technician exists
+    const technician = await db.get('users', { id: technicianId });
+    if (!technician) {
+      return res.status(404).json({ error: 'Technician not found' });
+    }
+
+    // Verify it's a technician
+    if (technician.role !== 'TECHNICIAN') {
+      return res.status(400).json({ error: 'User is not a technician' });
+    }
+
+    // Check for assigned workpackages
+    let workpackages = [];
+    if (db.isSupabase()) {
+      const { supabase } = require('../db/supabase');
+      const { data, error } = await supabase
+        .from('workpackages')
+        .select('id')
+        .eq('assigned_to', technicianId);
+      
+      if (error) throw error;
+      workpackages = data || [];
+    } else {
+      const sqliteDb = require('../database');
+      workpackages = await new Promise((resolve, reject) => {
+        sqliteDb.all(
+          'SELECT id FROM workpackages WHERE assignedTo = ?',
+          [technicianId],
+          (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+          }
+        );
+      });
+    }
+
+    // Check for assigned tasks
+    let tasks = [];
+    if (db.isSupabase()) {
+      const { supabase } = require('../db/supabase');
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('id')
+        .eq('assigned_technician_id', technicianId);
+      
+      if (error) throw error;
+      tasks = data || [];
+    } else {
+      const sqliteDb = require('../database');
+      tasks = await new Promise((resolve, reject) => {
+        sqliteDb.all(
+          'SELECT id FROM tasks WHERE assignedTechnicianId = ?',
+          [technicianId],
+          (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+          }
+        );
+      });
+    }
+
+    // If there are assignments, prevent deletion
+    if (workpackages.length > 0 || tasks.length > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete technician. Please reassign all active tasks assigned to this technician before deletion.' 
+      });
+    }
+
+    // Delete the technician
+    await db.delete('users', { id: technicianId });
+
+    res.json({ message: 'Technician deleted successfully' });
+  } catch (err) {
+    console.error('Delete technician error:', err);
     res.status(500).json({ error: 'Database error' });
   }
 });
