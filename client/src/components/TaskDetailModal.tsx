@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Task, taskTypeLabel } from '../api/tasks';
+import { projectsAPI, Project } from '../api/projects';
 import './TaskDetailModal.css';
 
 interface TaskDetailModalProps {
@@ -8,6 +9,28 @@ interface TaskDetailModalProps {
 }
 
 const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
+  const [project, setProject] = useState<Project | null>(null);
+  const [loadingProject, setLoadingProject] = useState(true);
+
+  useEffect(() => {
+    const loadProject = async () => {
+      try {
+        setLoadingProject(true);
+        const projectData = await projectsAPI.get(task.projectId);
+        setProject(projectData);
+      } catch (error) {
+        console.error('Error loading project:', error);
+      } finally {
+        setLoadingProject(false);
+      }
+    };
+
+    if (task.projectId) {
+      loadProject();
+    } else {
+      setLoadingProject(false);
+    }
+  }, [task.projectId]);
   const formatDate = (dateString?: string): string => {
     if (!dateString) return 'Not specified';
     const [year, month, day] = dateString.split('-').map(Number);
@@ -43,6 +66,98 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
   };
 
   const hasAdminInstructions = task.locationNotes || task.engagementNotes;
+
+  // Helper function to capitalize structure type names (title case)
+  const capitalizeStructureType = (type: string): string => {
+    if (!type) return type;
+    // Split by spaces and capitalize first letter of each word
+    return type
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  };
+
+  const renderConcreteSpecs = () => {
+    if (!project?.concreteSpecs || Object.keys(project.concreteSpecs).length === 0) {
+      return <p className="specs-empty">No concrete specifications available.</p>;
+    }
+
+    return (
+      <div className="specs-table-container">
+        <table className="specs-table">
+          <thead>
+            <tr>
+              <th>Structure Type</th>
+              <th>Strength (PSI)</th>
+              <th>Ambient Temp (°F)</th>
+              <th>Concrete Temp (°F)</th>
+              <th>Slump</th>
+              <th>Air Content</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(project.concreteSpecs).map(([structureType, spec]: [string, any]) => {
+              // Apply default values for temperature fields if they're empty/undefined
+              const ambientTemp = spec.ambientTempF && spec.ambientTempF.trim() !== '' 
+                ? spec.ambientTempF 
+                : '35-95';
+              const concreteTemp = spec.concreteTempF && spec.concreteTempF.trim() !== '' 
+                ? spec.concreteTempF 
+                : '45-95';
+              
+              return (
+                <tr key={structureType}>
+                  <td className="spec-structure-type">{capitalizeStructureType(structureType)}</td>
+                  <td>{spec.specStrengthPsi || 'N/A'}</td>
+                  <td>{ambientTemp}</td>
+                  <td>{concreteTemp}</td>
+                  <td>{spec.slump || 'N/A'}</td>
+                  <td>{spec.airContent || 'N/A'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  const renderSoilSpecs = () => {
+    if (!project?.soilSpecs || Object.keys(project.soilSpecs).length === 0) {
+      return <p className="specs-empty">No soil specifications available.</p>;
+    }
+
+    return (
+      <div className="specs-table-container">
+        <table className="specs-table">
+          <thead>
+            <tr>
+              <th>Structure Type</th>
+              <th>Density (%)</th>
+              <th>Moisture Range</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(project.soilSpecs).map(([structureType, spec]) => (
+              <tr key={structureType}>
+                <td className="spec-structure-type">{capitalizeStructureType(structureType)}</td>
+                <td>{spec.densityPct || 'N/A'}</td>
+                <td>
+                  {spec.moistureRange?.min && spec.moistureRange?.max
+                    ? `${spec.moistureRange.min}% - ${spec.moistureRange.max}%`
+                    : spec.moistureRange?.min
+                    ? `≥ ${spec.moistureRange.min}%`
+                    : spec.moistureRange?.max
+                    ? `≤ ${spec.moistureRange.max}%`
+                    : 'N/A'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -146,6 +261,28 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Specifications Section */}
+          <div className="specs-section">
+            <h3>Specifications</h3>
+            {loadingProject ? (
+              <div className="specs-loading">Loading specifications...</div>
+            ) : (
+              <>
+                {/* Concrete Specs */}
+                <div className="specs-subsection">
+                  <h4>Concrete Specifications</h4>
+                  {renderConcreteSpecs()}
+                </div>
+
+                {/* Soil Specs */}
+                <div className="specs-subsection">
+                  <h4>Soil Specifications</h4>
+                  {renderSoilSpecs()}
+                </div>
+              </>
+            )}
           </div>
         </div>
 

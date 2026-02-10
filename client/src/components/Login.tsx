@@ -29,8 +29,9 @@ const Login: React.FC = () => {
   return (
     <div className="login-container">
       <div className="login-box">
-        <h1>MAK Lone Star Consulting</h1>
-        <h2>Field Report Automation</h2>
+        <div className="logo-container">
+          <img src="/crestfield-logo.png" alt="CrestField Logo" className="login-logo" />
+        </div>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label htmlFor="email">Email</label>
@@ -65,9 +66,6 @@ const Login: React.FC = () => {
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
-        <div className="login-info">
-          <p>Default Admin: admin@maklonestar.com / admin123</p>
-        </div>
       </div>
     </div>
   );
