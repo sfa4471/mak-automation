@@ -2,7 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const os = require('os');
+// Load .env (main DB). Load .env.local (branch DB) only when USE_BRANCH_DB=1
 require('dotenv').config();
+const useBranchDb = process.env.USE_BRANCH_DB === '1' || process.env.USE_BRANCH_DB === 'true';
+if (useBranchDb) {
+  require('dotenv').config({ path: path.join(__dirname, '..', '.env.local'), override: true });
+}
 
 // ============================================================================
 // STARTUP CONFIGURATION VALIDATION
@@ -29,7 +34,13 @@ if (REQUIRE_SUPABASE) {
   console.log('🔍 Checking Supabase configuration (optional)...\n');
   const validation = validateConfiguration(false);
   if (validation.isValid) {
-    console.log('✅ Supabase configuration found\n');
+    const url = process.env.SUPABASE_URL || '';
+    const ref = url.match(/https?:\/\/([^.]+)\.supabase\.co/)?.[1] || '?';
+    const fromLocal = process.env.USE_BRANCH_DB === '1' || process.env.USE_BRANCH_DB === 'true';
+    console.log('✅ Supabase configuration found');
+    console.log('📍 Using Supabase:', url);
+    console.log('   Project ref:', ref, fromLocal ? '(from .env.local — branch DB)' : '(from .env — main DB)');
+    console.log('');
   } else {
     console.log('ℹ️  Supabase not configured - will use SQLite fallback\n');
   }
@@ -72,6 +83,7 @@ app.get('/', (req, res) => {
 
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/tenants', require('./routes/tenants'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/workpackages', require('./routes/workpackages'));
 app.use('/api/tasks', require('./routes/tasks'));

@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { ensureProjectDirectory } = require('../utils/pdfFileManager');
 
@@ -63,108 +64,135 @@ function parseProjectJSONFields(project) {
   return project;
 }
 
-// Generate project number: 02-YYYY-NNNN (with year-based sequence)
-// Uses atomic counter to ensure uniqueness and handle concurrency
-// Includes retry logic to handle race conditions and out-of-sync counters
-async function generateProjectNumber() {
+// Fallback: derive next sequence from existing project numbers when tenant_project_counters is missing.
+// Uses global max (all projects matching prefix-year) so the number is unique when DB has unique(project_number) only.
+async function generateProjectNumberFallback(tenantId, prefix, year) {
+  const pattern = `${prefix}-${year}-`;
+  let projects = [];
+  if (db.isSupabase()) {
+    const { data, error } = await supabase
+      .from('projects')
+      .select('project_number')
+      .like('project_number', `${pattern}%`);
+    if (error) throw error;
+    projects = data || [];
+  } else {
+    const sqliteDb = require('../database');
+    projects = await new Promise((resolve, reject) => {
+      sqliteDb.all(
+        'SELECT project_number as projectNumber FROM projects WHERE project_number LIKE ?',
+        [`${pattern}%`],
+        (err, rows) => { if (err) reject(err); else resolve(rows || []); }
+      );
+    });
+  }
+  let maxSeq = 0;
+  for (const row of projects) {
+    const pn = row.project_number || row.projectNumber || '';
+    const numPart = pn.substring(pattern.length);
+    const n = parseInt(numPart, 10);
+    if (!isNaN(n) && n > maxSeq) maxSeq = n;
+  }
+  return maxSeq + 1;
+}
+
+// Generate project number per tenant: PREFIX-YYYY-NNNN (uses tenant_project_counters and tenant prefix)
+async function generateProjectNumber(tenantId) {
   const year = new Date().getFullYear();
-  const baseStart = (year - 2022) * 1000 + 1;
   const maxRetries = 20;
-  
+
+  let tenant = null;
+  if (tenantId != null) {
+    try {
+      tenant = await db.get('tenants', { id: tenantId });
+    } catch (e) {
+      console.warn('Tenant lookup failed (tenants table may not exist), using default prefix:', e.message);
+    }
+  }
+  const prefix = (tenant && (tenant.project_number_prefix ?? tenant.projectNumberPrefix)) || '02';
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       let nextSeq;
-      
+
       if (db.isSupabase()) {
-        // Supabase: Get or create counter, then increment
-        const { data: existingCounter, error: selectError } = await supabase
-          .from('project_counters')
-          .select('next_seq')
-          .eq('year', year)
-          .single();
-        
-        if (selectError && selectError.code !== 'PGRST116') {
-          throw selectError;
-        }
-        
-        if (!existingCounter) {
-          // First project for this year - try to insert
-          nextSeq = baseStart;
-          const { error: insertError } = await supabase
-            .from('project_counters')
-            .insert({ year, next_seq: nextSeq + 1 });
-          
-          // If insert fails due to race condition, fetch existing counter
-          if (insertError) {
-            if (insertError.code === '23505' || insertError.message?.includes('duplicate')) {
-              // Someone else created it - fetch and use it
-              const { data: raceCounter, error: raceError } = await supabase
-                .from('project_counters')
-                .select('next_seq')
-                .eq('year', year)
-                .single();
-              
-              if (raceError) throw raceError;
-              nextSeq = raceCounter.next_seq;
-            } else {
-              throw insertError;
-            }
-          }
-        } else {
-          nextSeq = existingCounter.next_seq;
-        }
-        
-        // Atomically increment the counter
-        // Note: Supabase JS client doesn't support true atomic increment,
-        // so we use update and handle race conditions with retry logic
-        const { error: updateError } = await supabase
-          .from('project_counters')
-          .update({ next_seq: nextSeq + 1, updated_at: new Date().toISOString() })
-          .eq('year', year);
-        
-        if (updateError) {
-          // If update failed, check if counter was already incremented (race condition)
-          const { data: verifyCounter } = await supabase
-            .from('project_counters')
+        try {
+          const { data: existingCounter, error: selectError } = await supabase
+            .from('tenant_project_counters')
             .select('next_seq')
+            .eq('tenant_id', tenantId)
             .eq('year', year)
             .single();
-          
-          if (verifyCounter && verifyCounter.next_seq > nextSeq) {
-            // Counter was incremented by another request - use the new value for next iteration
-            // We'll retry in the next loop iteration
-            continue;
+
+          if (selectError && selectError.code !== 'PGRST116') {
+            throw selectError;
+          }
+
+          if (!existingCounter) {
+            nextSeq = 1;
+            const { error: insertError } = await supabase
+              .from('tenant_project_counters')
+              .insert({ tenant_id: tenantId, year, next_seq: 2 });
+
+            if (insertError) {
+              if (insertError.code === '23505' || insertError.message?.includes('duplicate')) {
+                const { data: raceCounter, error: raceError } = await supabase
+                  .from('tenant_project_counters')
+                  .select('next_seq')
+                  .eq('tenant_id', tenantId)
+                  .eq('year', year)
+                  .single();
+                if (raceError) throw raceError;
+                nextSeq = raceCounter.next_seq;
+              } else {
+                throw insertError;
+              }
+            }
           } else {
+            nextSeq = existingCounter.next_seq;
+          }
+
+          const { error: updateError } = await supabase
+            .from('tenant_project_counters')
+            .update({ next_seq: nextSeq + 1, updated_at: new Date().toISOString() })
+            .eq('tenant_id', tenantId)
+            .eq('year', year);
+
+          if (updateError) {
+            const { data: verifyCounter } = await supabase
+              .from('tenant_project_counters')
+              .select('next_seq')
+              .eq('tenant_id', tenantId)
+              .eq('year', year)
+              .single();
+            if (verifyCounter && verifyCounter.next_seq > nextSeq) continue;
             throw updateError;
           }
+        } catch (counterErr) {
+          // Table may not exist (e.g. multi-tenancy migration not run); use fallback from existing projects
+          console.warn('tenant_project_counters unavailable, using fallback:', counterErr.message);
+          nextSeq = await generateProjectNumberFallback(tenantId, prefix, year);
         }
       } else {
-        // SQLite: Use atomic increment
         const sqliteDb = require('../database');
         nextSeq = await new Promise((resolve, reject) => {
           sqliteDb.serialize(() => {
-            // Ensure counter exists
             sqliteDb.run(
-              'INSERT OR IGNORE INTO project_counters (year, nextSeq) VALUES (?, ?)',
-              [year, baseStart],
+              'INSERT OR IGNORE INTO tenant_project_counters (tenant_id, year, next_seq) VALUES (?, ?, 1)',
+              [tenantId, year],
               (insertErr) => {
                 if (insertErr) return reject(insertErr);
-                
-                // Atomically increment
                 sqliteDb.run(
-                  'UPDATE project_counters SET nextSeq = nextSeq + 1, updatedAt = CURRENT_TIMESTAMP WHERE year = ?',
-                  [year],
+                  'UPDATE tenant_project_counters SET next_seq = next_seq + 1, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ? AND year = ?',
+                  [tenantId, year],
                   (updateErr) => {
                     if (updateErr) return reject(updateErr);
-                    
-                    // Get the incremented value
                     sqliteDb.get(
-                      'SELECT nextSeq FROM project_counters WHERE year = ?',
-                      [year],
+                      'SELECT next_seq FROM tenant_project_counters WHERE tenant_id = ? AND year = ?',
+                      [tenantId, year],
                       (selectErr, row) => {
                         if (selectErr) return reject(selectErr);
-                        const usedSeq = row.nextSeq - 1; // The value we used
-                        resolve(usedSeq);
+                        resolve((row && row.next_seq ? row.next_seq : 1) - 1);
                       }
                     );
                   }
@@ -174,36 +202,26 @@ async function generateProjectNumber() {
           });
         });
       }
-      
-      // Generate project number
-      const projectNumber = `02-${year}-${nextSeq.toString().padStart(4, '0')}`;
-      
-      // Verify the project number doesn't already exist (handles out-of-sync counters)
-      const existingProject = await db.get('projects', { projectNumber });
+
+      const projectNumber = `${prefix}-${year}-${(nextSeq || 1).toString().padStart(4, '0')}`;
+      const existingProject = await db.get('projects', { projectNumber, tenantId });
       if (!existingProject) {
         return projectNumber;
       }
-      
-      // Project number exists - counter is out of sync
-      // The counter was already incremented above, so we just continue the loop
-      // to get the next number (which will read the incremented counter value)
-      console.warn(`Project number ${projectNumber} already exists (counter out of sync), retrying with next number...`);
-      // Continue to next iteration - counter is already incremented, so next iteration will use nextSeq + 1
+      console.warn(`Project number ${projectNumber} already exists for tenant ${tenantId}, retrying...`);
     } catch (error) {
       console.error(`Error generating project number (attempt ${attempt + 1}/${maxRetries}):`, error);
       if (attempt === maxRetries - 1) {
         throw new Error(`Failed to generate unique project number after ${maxRetries} attempts: ${error.message}`);
       }
-      // Retry with small delay
       await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
     }
   }
-  
   throw new Error('Failed to generate project number after maximum retries');
 }
 
-// Create project (Admin only)
-router.post('/', authenticate, requireAdmin, [
+// Create project (Admin only, tenant-scoped)
+router.post('/', authenticate, requireTenant, requireAdmin, [
   body('projectName').notEmpty().trim(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
@@ -244,8 +262,8 @@ router.post('/', authenticate, requireAdmin, [
       return res.status(400).json({ error: 'Project name cannot be empty' });
     }
     
-    // Check for duplicate project name before creating
-    const existingProjectByName = await db.get('projects', { projectName: trimmedProjectName });
+    const tenantId = req.tenantId;
+    const existingProjectByName = await db.get('projects', { projectName: trimmedProjectName, tenantId });
     if (existingProjectByName) {
       console.log('Duplicate project name detected:', {
         requestedName: trimmedProjectName,
@@ -254,10 +272,10 @@ router.post('/', authenticate, requireAdmin, [
       return res.status(400).json({ error: 'Project name already exists' });
     }
 
-    // Generate project number using atomic counter
+    // Generate project number using per-tenant counter
     let projectNumber;
     try {
-      projectNumber = await generateProjectNumber();
+      projectNumber = await generateProjectNumber(tenantId);
     } catch (genErr) {
       console.error('Error generating project number:', genErr);
       return res.status(500).json({ error: 'Database error: Failed to generate project number' });
@@ -270,11 +288,11 @@ router.post('/', authenticate, requireAdmin, [
     // Note: generateProjectNumber() already handles duplicate checking and retries
     // so we don't need to check again here
 
-    // Prepare data for insertion
-    // For SQLite, JSON fields need to be stringified; for Supabase, they should be objects/arrays
+    // Prepare data for insertion (include tenant_id)
     const projectData = {
       projectNumber,
-      projectName: trimmedProjectName
+      projectName: trimmedProjectName,
+      tenantId
     };
     
     if (db.isSupabase()) {
@@ -289,27 +307,46 @@ router.post('/', authenticate, requireAdmin, [
       projectData.concreteSpecs = concreteSpecs && Object.keys(concreteSpecs).length > 0 ? JSON.stringify(concreteSpecs) : null;
     }
 
-    // Create project
+    // Create project (retry with next project number if duplicate project_number, e.g. fallback race)
     let project;
-    try {
-      project = await db.insert('projects', projectData);
-    } catch (insertErr) {
-      console.error('Error creating project:', insertErr);
-      const errorMessage = insertErr.message || '';
-      if (errorMessage.includes('UNIQUE') || errorMessage.includes('duplicate')) {
-        if (errorMessage.toLowerCase().includes('project_name') || errorMessage.toLowerCase().includes('projectname')) {
-          return res.status(400).json({ error: 'Project name already exists' });
-        } else if (errorMessage.toLowerCase().includes('project_number') || errorMessage.toLowerCase().includes('projectnumber')) {
-          return res.status(400).json({ error: 'Project number already exists' });
+    const maxInsertRetries = 5;
+    for (let insertAttempt = 0; insertAttempt < maxInsertRetries; insertAttempt++) {
+      try {
+        project = await db.insert('projects', projectData);
+        break;
+      } catch (insertErr) {
+        const errorMessage = insertErr.message || '';
+        const isDuplicateProjectNumber = (errorMessage.includes('UNIQUE') || errorMessage.includes('duplicate')) &&
+          (errorMessage.includes('project_number') || errorMessage.includes('projectnumber'));
+        if (isDuplicateProjectNumber && insertAttempt < maxInsertRetries - 1) {
+          const match = projectData.projectNumber.match(/^(.+-)(\d+)$/);
+          if (match) {
+            const prefixPart = match[1];
+            const nextSeq = parseInt(match[2], 10) + 1;
+            projectData.projectNumber = `${prefixPart}${nextSeq.toString().padStart(4, '0')}`;
+            continue;
+          }
         }
-        return res.status(400).json({ error: 'A project with this information already exists' });
+        console.error('Error creating project:', insertErr);
+        if (errorMessage.includes('UNIQUE') || errorMessage.includes('duplicate')) {
+          if (errorMessage.toLowerCase().includes('project_name') || errorMessage.toLowerCase().includes('projectname')) {
+            return res.status(400).json({ error: 'Project name already exists' });
+          }
+          if (errorMessage.toLowerCase().includes('project_number') || errorMessage.toLowerCase().includes('projectnumber')) {
+            return res.status(400).json({ error: 'Project number already exists' });
+          }
+          return res.status(400).json({ error: 'A project with this information already exists' });
+        }
+        return res.status(500).json({ error: 'Database error: ' + (insertErr.message || 'Unknown error') });
       }
-      return res.status(500).json({ error: 'Database error: ' + (insertErr.message || 'Unknown error') });
+    }
+    if (!project) {
+      return res.status(500).json({ error: 'Failed to create project after retries' });
     }
 
     // Create project folder structure for PDF storage (use project number, not ID)
     try {
-      await ensureProjectDirectory(projectNumber);
+      await ensureProjectDirectory(project.projectNumber || projectData.projectNumber);
     } catch (folderError) {
       console.error('Error creating project folder:', folderError);
       // Continue even if folder creation fails
@@ -324,68 +361,56 @@ router.post('/', authenticate, requireAdmin, [
   }
 });
 
-// Get all projects (Admin sees all, Technician sees assigned only)
-router.get('/', authenticate, async (req, res) => {
+// Get all projects (tenant-scoped: Admin sees all for tenant, Technician sees assigned only; legacy DB: no tenant filter)
+router.get('/', authenticate, requireTenant, async (req, res) => {
   try {
+    const tenantId = req.tenantId;
+    const legacyDb = req.legacyDb;
     let projects;
-    
+
     if (db.isSupabase()) {
       if (req.user.role === 'ADMIN') {
-        // Admin: get all projects
-        const { data, error } = await supabase
-          .from('projects')
-          .select('*')
-          .order('created_at', { ascending: false });
-        
+        let query = supabase.from('projects').select('*').order('created_at', { ascending: false });
+        if (!legacyDb) query = query.eq('tenant_id', tenantId);
+        const { data, error } = await query;
         if (error) throw error;
         projects = (data || []).map(keysToCamelCase);
       } else {
-        // Technician: only projects with assigned tasks or work packages
-        // First, get projects with assigned tasks
-        const { data: tasksData, error: tasksError } = await supabase
-          .from('tasks')
-          .select('project_id')
-          .eq('assigned_technician_id', req.user.id);
-        
+        // Technician: only projects with assigned tasks/work packages
+        let tasksQuery = supabase.from('tasks').select('project_id').eq('assigned_technician_id', req.user.id);
+        let wpQuery = supabase.from('workpackages').select('project_id').eq('assigned_to', req.user.id);
+        if (!legacyDb) {
+          tasksQuery = tasksQuery.eq('tenant_id', tenantId);
+          wpQuery = wpQuery.eq('tenant_id', tenantId);
+        }
+        const { data: tasksData, error: tasksError } = await tasksQuery;
         if (tasksError) throw tasksError;
-        
-        // Then, get projects with assigned work packages
-        const { data: wpData, error: wpError } = await supabase
-          .from('workpackages')
-          .select('project_id')
-          .eq('assigned_to', req.user.id);
-        
+        const { data: wpData, error: wpError } = await wpQuery;
         if (wpError) throw wpError;
-        
-        // Combine unique project IDs
+
         const projectIds = [...new Set([
           ...(tasksData || []).map(t => t.project_id),
           ...(wpData || []).map(wp => wp.project_id)
         ])];
-        
         if (projectIds.length === 0) {
           projects = [];
         } else {
-          const { data, error } = await supabase
-            .from('projects')
-            .select('*')
-            .in('id', projectIds)
-            .order('created_at', { ascending: false });
-          
+          let listQuery = supabase.from('projects').select('*').in('id', projectIds).order('created_at', { ascending: false });
+          if (!legacyDb) listQuery = listQuery.eq('tenant_id', tenantId);
+          const { data, error } = await listQuery;
           if (error) throw error;
           projects = (data || []).map(keysToCamelCase);
         }
       }
     } else {
-      // SQLite fallback
       const sqliteDb = require('../database');
       if (req.user.role === 'ADMIN') {
         projects = await new Promise((resolve, reject) => {
           sqliteDb.all(
             `SELECT p.*, 
              (SELECT COUNT(*) FROM workpackages WHERE projectId = p.id) as workPackageCount
-             FROM projects p ORDER BY p.createdAt DESC`,
-            [],
+             FROM projects p WHERE p.tenantId = ? ORDER BY p.createdAt DESC`,
+            [tenantId],
             (err, rows) => {
               if (err) return reject(err);
               resolve(rows || []);
@@ -393,18 +418,16 @@ router.get('/', authenticate, async (req, res) => {
           );
         });
       } else {
-        // Technician: only projects with assigned work packages or tasks
         projects = await new Promise((resolve, reject) => {
           sqliteDb.all(
-            `SELECT DISTINCT p.* 
-             FROM projects p
-             WHERE p.id IN (
-               SELECT DISTINCT projectId FROM workpackages WHERE assignedTo = ?
+            `SELECT DISTINCT p.* FROM projects p
+             WHERE p.tenantId = ? AND p.id IN (
+               SELECT DISTINCT projectId FROM workpackages WHERE assignedTo = ? AND tenantId = ?
                UNION
-               SELECT DISTINCT projectId FROM tasks WHERE assignedTechnicianId = ?
+               SELECT DISTINCT projectId FROM tasks WHERE assignedTechnicianId = ? AND tenantId = ?
              )
              ORDER BY p.createdAt DESC`,
-            [req.user.id, req.user.id],
+            [tenantId, req.user.id, tenantId, req.user.id, tenantId],
             (err, rows) => {
               if (err) return reject(err);
               resolve(rows || []);
@@ -423,22 +446,25 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// Get single project
-router.get('/:id', authenticate, async (req, res) => {
+// Get single project (tenant-scoped)
+router.get('/:id', authenticate, requireTenant, async (req, res) => {
   try {
     const projectId = parseInt(req.params.id);
-    
+    const tenantId = req.tenantId;
+
     if (isNaN(projectId)) {
       return res.status(400).json({ error: 'Invalid project ID' });
     }
 
     const project = await db.get('projects', { id: projectId });
-    
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
+    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
-    // Check access: Admin can see all, Technician only assigned
+    // Check access: Admin can see all in tenant, Technician only assigned
     if (req.user.role === 'TECHNICIAN') {
       let hasAccess = false;
       
@@ -503,8 +529,8 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
-// Update project (Admin only)
-router.put('/:id', authenticate, requireAdmin, [
+// Update project (Admin only, same tenant)
+router.put('/:id', authenticate, requireTenant, requireAdmin, [
   body('projectName').optional().notEmpty(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
@@ -518,9 +544,18 @@ router.put('/:id', authenticate, requireAdmin, [
     }
 
     const projectId = parseInt(req.params.id);
-    
+    const tenantId = req.tenantId;
+
     if (isNaN(projectId)) {
       return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
+    const existingProject = await db.get('projects', { id: projectId });
+    if (!existingProject) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if ((existingProject.tenant_id ?? existingProject.tenantId) !== tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     const { 

@@ -72,6 +72,17 @@ function validatePath(pathToValidate) {
     return { valid: false, isWritable: false, error: 'Path cannot be empty' };
   }
 
+  // When backend runs in the cloud (e.g. Render/Linux), Windows paths like C:\Users\... never exist on the server.
+  // Return a clear message so the UI can explain instead of "folder does not exist" / "ensure OneDrive is synced".
+  const isWindowsAbsolutePath = /^[A-Za-z]:[\\/]/.test(trimmedPath);
+  if (isWindowsAbsolutePath && process.platform !== 'win32') {
+    return {
+      valid: false,
+      isWritable: false,
+      error: 'This path is on your Windows PC. The app is currently using a cloud server that cannot access your computer. To use this folder, run the app locally (npm run dev) on your PC, or configure a path that exists on the server.'
+    };
+  }
+
   // Windows-specific: Check for invalid characters
   // Note: Colon (:) is valid in drive letters (C:\), so we check for it in the wrong places
   if (process.platform === 'win32') {

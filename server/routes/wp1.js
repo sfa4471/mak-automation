@@ -2,12 +2,13 @@ const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
 const { authenticate } = require('../middleware/auth');
+const { requireTenant } = require('../middleware/tenant');
 const { logTaskHistory } = require('./tasks');
 
 const router = express.Router();
 
-// Get WP1 data by taskId
-router.get('/task/:taskId', authenticate, async (req, res) => {
+// Get WP1 data by taskId (tenant-scoped)
+router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
   try {
     const taskId = parseInt(req.params.taskId);
 
@@ -67,7 +68,9 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       });
     }
 
-    // Check access
+    if (!req.legacyDb && req.tenantId != null && (task.tenant_id ?? task.tenantId) !== req.tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -132,7 +135,7 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
 });
 
 // Save WP1 data by taskId
-router.post('/task/:taskId', authenticate, async (req, res) => {
+router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
   try {
     const taskId = parseInt(req.params.taskId);
 
@@ -153,11 +156,14 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       });
     }
 
-    // Check access
+    if (!req.legacyDb && req.tenantId != null && (task.tenant_id ?? task.tenantId) !== req.tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const tenantId = task.tenant_id ?? task.tenantId ?? req.tenantId;
     const {
       technician, weather, placementDate, specStrength, specStrengthDays,
       structure, sampleLocation, supplier, timeBatched, classMixId, timeSampled,
@@ -171,7 +177,7 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       assignedTechnicianId // Optional: technician ID to assign to task
     } = req.body;
 
-    // Prepare data for insertion/update
+    // Prepare data for insertion/update (omit tenantId when legacy DB has no tenant_id column)
     // For Supabase, JSONB fields accept arrays directly; for SQLite, we stringify
     const wp1Data = {
       taskId,
@@ -214,18 +220,35 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       lastEditedByUserId: req.user.id,
       updatedAt: new Date().toISOString()
     };
+    if (!req.legacyDb) wp1Data.tenantId = tenantId;
 
     // Check if record exists
     const existing = await db.get('wp1_data', { taskId });
 
+    const isTenantIdError = (e) => e && e.message && /tenant_id/.test(e.message);
+
     let data;
     if (existing) {
       // Update
-      await db.update('wp1_data', wp1Data, { taskId });
+      try {
+        await db.update('wp1_data', wp1Data, { taskId });
+      } catch (e) {
+        if (isTenantIdError(e) && wp1Data.tenantId != null) {
+          delete wp1Data.tenantId;
+          await db.update('wp1_data', wp1Data, { taskId });
+        } else throw e;
+      }
       data = await db.get('wp1_data', { taskId });
     } else {
-      // Insert
-      data = await db.insert('wp1_data', wp1Data);
+      // Insert (retry without tenantId if DB has no tenant_id column)
+      try {
+        data = await db.insert('wp1_data', wp1Data);
+      } catch (e) {
+        if (isTenantIdError(e) && wp1Data.tenantId != null) {
+          delete wp1Data.tenantId;
+          data = await db.insert('wp1_data', wp1Data);
+        } else throw e;
+      }
     }
 
     // Update task status if provided
@@ -271,9 +294,10 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
     
     res.json(data);
   } catch (err) {
+    const taskIdForLog = req.params.taskId != null ? req.params.taskId : 'unknown';
     console.error('Error saving WP1 data:', err);
     console.error('Error details:', {
-      taskId,
+      taskId: taskIdForLog,
       errorMessage: err.message,
       errorStack: err.stack,
       requestBody: req.body

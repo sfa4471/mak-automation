@@ -10,6 +10,7 @@
 const express = require('express');
 const fs = require('fs');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const onedriveService = require('../services/onedriveService');
 const db = require('../db');
@@ -21,7 +22,7 @@ const router = express.Router();
  * GET /api/settings/onedrive-path
  * Get the current OneDrive base path (Admin only)
  */
-router.get('/onedrive-path', authenticate, requireAdmin, async (req, res) => {
+router.get('/onedrive-path', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
     const basePath = await onedriveService.getBasePath();
     
@@ -45,7 +46,7 @@ router.get('/onedrive-path', authenticate, requireAdmin, async (req, res) => {
  * Body:
  *   - path: string | null - The OneDrive base path (null or empty to clear)
  */
-router.post('/onedrive-path', authenticate, requireAdmin, [
+router.post('/onedrive-path', authenticate, requireTenant, requireAdmin, [
   body('path')
     .optional()
     .custom((value) => {
@@ -112,7 +113,7 @@ router.post('/onedrive-path', authenticate, requireAdmin, [
  * GET /api/settings/onedrive-status
  * Get the status of the OneDrive path (configured, valid, writable)
  */
-router.get('/onedrive-status', authenticate, requireAdmin, async (req, res) => {
+router.get('/onedrive-status', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
     const status = await onedriveService.getPathStatus();
     
@@ -136,7 +137,7 @@ router.get('/onedrive-status', authenticate, requireAdmin, async (req, res) => {
  * Body:
  *   - path: string - The path to test
  */
-router.post('/onedrive-test', authenticate, requireAdmin, [
+router.post('/onedrive-test', authenticate, requireTenant, requireAdmin, [
   body('path')
     .notEmpty()
     .withMessage('Path is required')
@@ -179,9 +180,9 @@ router.post('/onedrive-test', authenticate, requireAdmin, [
  * GET /api/settings/workflow/path
  * Get the current workflow base path (Admin only)
  */
-router.get('/workflow/path', authenticate, requireAdmin, async (req, res) => {
+router.get('/workflow/path', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
-    const setting = await db.get('app_settings', { key: 'workflow_base_path' });
+    const setting = await db.get('app_settings', { key: 'workflow_base_path', tenantId: req.tenantId });
     
     res.json({
       success: true,
@@ -203,7 +204,7 @@ router.get('/workflow/path', authenticate, requireAdmin, async (req, res) => {
  * Body:
  *   - path: string | null - The workflow base path (null or empty to clear)
  */
-router.post('/workflow/path', authenticate, requireAdmin, [
+router.post('/workflow/path', authenticate, requireTenant, requireAdmin, [
   body('path')
     .optional()
     .custom((value) => {
@@ -288,21 +289,20 @@ router.post('/workflow/path', authenticate, requireAdmin, [
       }
     }
 
-    // Get existing setting
-    const existing = await db.get('app_settings', { key: 'workflow_base_path' });
-    
+    const tenantId = req.tenantId;
+    const existing = await db.get('app_settings', { key: 'workflow_base_path', tenantId });
+
     const settingData = {
       key: 'workflow_base_path',
+      tenantId,
       value: pathToSet && pathToSet.trim() !== '' ? pathToSet.trim() : null,
       updated_by_user_id: userId,
       updated_at: new Date().toISOString()
     };
 
     if (existing) {
-      // Update existing setting
-      await db.update('app_settings', settingData, { key: 'workflow_base_path' });
+      await db.update('app_settings', settingData, { key: 'workflow_base_path', tenantId });
     } else {
-      // Insert new setting
       await db.insert('app_settings', {
         ...settingData,
         description: 'Base folder path for project folders and PDFs. Leave empty to use OneDrive or default location.'
@@ -330,7 +330,7 @@ router.post('/workflow/path', authenticate, requireAdmin, [
  * Body:
  *   - path: string - The path to test
  */
-router.post('/workflow/path/test', authenticate, requireAdmin, [
+router.post('/workflow/path/test', authenticate, requireTenant, requireAdmin, [
   body('path')
     .notEmpty()
     .withMessage('Path is required')
@@ -371,10 +371,16 @@ router.post('/workflow/path/test', authenticate, requireAdmin, [
  * GET /api/settings/workflow/status
  * Get the status of the workflow path (configured, valid, writable)
  */
-router.get('/workflow/status', authenticate, requireAdmin, async (req, res) => {
+router.get('/workflow/status', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
-    const setting = await db.get('app_settings', { key: 'workflow_base_path' });
-    const configured = !!(setting && setting.value && setting.value.trim() !== '');
+    let setting = null;
+    try {
+      setting = await db.get('app_settings', { key: 'workflow_base_path', tenantId: req.tenantId });
+    } catch (e) {
+      // app_settings may not have tenant_id (e.g. migration not run); fallback to key-only
+      setting = await db.get('app_settings', { key: 'workflow_base_path' });
+    }
+    const configured = !!(setting && setting.value && String(setting.value).trim() !== '');
     
     if (!configured) {
       return res.json({
@@ -386,7 +392,7 @@ router.get('/workflow/status', authenticate, requireAdmin, async (req, res) => {
       });
     }
     
-    const workflowPath = setting.value.trim();
+    const workflowPath = String(setting.value).trim();
     const validation = validatePath(workflowPath);
     
     res.json({

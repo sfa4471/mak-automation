@@ -10,25 +10,51 @@ const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Logo configuration - reusable across all reports
 const LOGO_CONFIG = {
   path: path.join(__dirname, '..', 'public', 'MAK logo_consulting.jpg'),
-  fallback: null // Will be set if logo exists
+  fallback: null
 };
 
-// Helper function to get logo as base64 data URI (for embedding in HTML/PDF)
-function getLogoBase64() {
+// Get tenant record by id (for PDF branding)
+async function getTenant(tenantId) {
+  if (tenantId == null) return null;
+  return db.get('tenants', { id: tenantId });
+}
+
+// Formatted company address string for PDFs
+function getTenantAddress(tenant) {
+  if (!tenant) return '';
+  const a = tenant.company_address ?? tenant.companyAddress ?? '';
+  const city = tenant.company_city ?? tenant.companyCity ?? '';
+  const state = tenant.company_state ?? tenant.companyState ?? '';
+  const zip = tenant.company_zip ?? tenant.companyZip ?? '';
+  const parts = [a, [city, state, zip].filter(Boolean).join(', ')].filter(Boolean);
+  return parts.join('\n') || '';
+}
+
+// Get logo as base64 data URI; optional tenantId to use tenant's logo_path
+async function getLogoBase64(tenantId) {
+  let logoPath = LOGO_CONFIG.path;
+  if (tenantId != null) {
+    const tenant = await getTenant(tenantId);
+    const tenantLogo = tenant?.logo_path ?? tenant?.logoPath;
+    if (tenantLogo && typeof tenantLogo === 'string') {
+      const fullPath = path.isAbsolute(tenantLogo) ? tenantLogo : path.join(__dirname, '..', 'public', tenantLogo);
+      if (fs.existsSync(fullPath)) logoPath = fullPath;
+    }
+  }
   try {
-    if (fs.existsSync(LOGO_CONFIG.path)) {
-      const imageBuffer = fs.readFileSync(LOGO_CONFIG.path);
+    if (fs.existsSync(logoPath)) {
+      const imageBuffer = fs.readFileSync(logoPath);
+      const ext = path.extname(logoPath).toLowerCase();
+      const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
       const base64 = imageBuffer.toString('base64');
-      const mimeType = 'image/jpeg'; // Assuming JPG
       return `data:${mimeType};base64,${base64}`;
     }
   } catch (err) {
     console.warn('Error loading logo:', err.message);
   }
-  return null; // Return null if logo not found
+  return null;
 }
 
 // Generate PDF for WP1 (supports both workPackageId and taskId)
@@ -178,7 +204,10 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     }
 
     if (!wp1Data) {
-      return res.status(404).json({ error: 'No data found. Please save the form first.' });
+      return res.status(404).json({
+        error: 'No data found. Please save the form first.',
+        code: 'WP1_REPORT_NOT_SAVED'
+      });
     }
 
     // Parse cylinders
@@ -267,14 +296,13 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
       }
     };
 
-    // Get logo as base64 data URI and replace placeholder
-    const logoBase64 = getLogoBase64();
+    const pdfTenantId = taskOrWp.tenant_id ?? taskOrWp.tenantId ?? null;
+    const logoBase64 = await getLogoBase64(pdfTenantId);
     const logoHtml = logoBase64 
-      ? `<img src="${logoBase64}" alt="MAK Lone Star Consulting Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
+      ? `<img src="${logoBase64}" alt="Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
       : '<div class="logo-placeholder">MAK</div>';
     html = html.replace('{{LOGO_IMAGE}}', logoHtml);
 
-    // Replace basic placeholders
     html = html.replace('{{PROJECT_NAME}}', escapeHtml(taskOrWp.projectName || ''));
     html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(taskOrWp.projectNumber || ''));
     html = html.replace('{{TECHNICIAN}}', escapeHtml(wp1Data.technician || taskOrWp.technicianName || ''));
@@ -808,7 +836,10 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
 // Generate PDF for Density Report using HTML template + Puppeteer
 router.get('/density/:taskId', authenticate, async (req, res) => {
   try {
-    const taskId = parseInt(req.params.taskId);
+    const taskId = parseInt(req.params.taskId, 10);
+    if (isNaN(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: 'Invalid task ID' });
+    }
 
     // Get task and project info
     let task;
@@ -863,10 +894,13 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get density report data
+    // Get density report data (must exist in DB — client should save form before requesting PDF)
     const data = await db.get('density_reports', { taskId });
     if (!data) {
-      return res.status(404).json({ error: 'No report data found. Please save the form first.' });
+      return res.status(404).json({
+        error: 'No report data found. Please save the form first.',
+        code: 'DENSITY_REPORT_NOT_SAVED'
+      });
     }
 
     try {
@@ -925,10 +959,10 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         ? new Date(data.datePerformed).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
         : '';
 
-      // Get logo as base64 data URI and replace placeholder
-      const logoBase64 = getLogoBase64();
+      const pdfTenantId = task?.tenant_id ?? task?.tenantId ?? project?.tenant_id ?? project?.tenantId ?? null;
+      const logoBase64 = await getLogoBase64(pdfTenantId);
       const logoHtml = logoBase64 
-        ? `<img src="${logoBase64}" alt="MAK Lone Star Consulting Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
+        ? `<img src="${logoBase64}" alt="Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
         : '<div class="logo-placeholder">MAK</div>';
       html = html.replace('{{LOGO_IMAGE}}', logoHtml);
 
@@ -1187,70 +1221,68 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
   }
 });
 
-// Generate PDF for Rebar Report
+// Helper: fetch task for rebar PDF (shared by GET and POST)
+async function getRebarTask(taskId) {
+  const id = parseInt(taskId, 10);
+  if (isNaN(id) || id <= 0) return null;
+  if (db.isSupabase()) {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select(`
+        *,
+        projects:project_id(project_name, project_number),
+        users:assigned_technician_id(name)
+      `)
+      .eq('id', id)
+      .eq('task_type', 'REBAR')
+      .single();
+    if (error || !data) return null;
+    return {
+      ...data,
+      projectName: data.projects?.project_name,
+      projectNumber: data.projects?.project_number,
+      assignedTechnicianName: data.users?.name,
+      projects: undefined,
+      users: undefined
+    };
+  }
+  const sqliteDb = require('../database');
+  return new Promise((resolve, reject) => {
+    sqliteDb.get(
+      `SELECT t.*, p.projectName, p.projectNumber,
+       u.name as assignedTechnicianName
+       FROM tasks t
+       INNER JOIN projects p ON t.projectId = p.id
+       LEFT JOIN users u ON t.assignedTechnicianId = u.id
+       WHERE t.id = ? AND t.taskType = 'REBAR'`,
+      [id],
+      (err, row) => { if (err) reject(err); else resolve(row || null); }
+    );
+  });
+}
+
+// Generate PDF for Rebar Report (GET: load report from DB; POST: use report from body when DB has no row)
 router.get('/rebar/:taskId', authenticate, async (req, res) => {
   try {
-    const taskId = parseInt(req.params.taskId);
-
-    // Get task and project info
-    let task;
-    if (db.isSupabase()) {
-      const { data, error } = await supabase
-        .from('tasks')
-        .select(`
-          *,
-          projects:project_id(project_name, project_number),
-          users:assigned_technician_id(name)
-        `)
-        .eq('id', taskId)
-        .eq('task_type', 'REBAR')
-        .single();
-      
-      if (error || !data) {
-        return res.status(404).json({ error: 'Task not found' });
-      }
-      
-      task = {
-        ...data,
-        projectName: data.projects?.project_name,
-        projectNumber: data.projects?.project_number,
-        assignedTechnicianName: data.users?.name,
-        projects: undefined,
-        users: undefined
-      };
-    } else {
-      const sqliteDb = require('../database');
-      task = await new Promise((resolve, reject) => {
-        sqliteDb.get(
-          `SELECT t.*, p.projectName, p.projectNumber,
-           u.name as assignedTechnicianName
-           FROM tasks t
-           INNER JOIN projects p ON t.projectId = p.id
-           LEFT JOIN users u ON t.assignedTechnicianId = u.id
-           WHERE t.id = ? AND t.taskType = 'REBAR'`,
-          [taskId],
-          (err, row) => {
-            if (err) reject(err);
-            else resolve(row || null);
-          }
-        );
-      });
+    const taskId = parseInt(req.params.taskId, 10);
+    if (isNaN(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: 'Invalid task ID' });
     }
 
+    const task = await getRebarTask(taskId);
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
-
-    // Check access
     if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get rebar report data
-    const data = await db.get('rebar_reports', { taskId });
-    
+    let data = await db.get('rebar_reports', { taskId });
     if (!data) {
-      return res.status(404).json({ error: 'No report data found. Please save the form first.' });
+      return res.status(404).json({
+        error: 'No report data found. Please save the form first.',
+        code: 'REBAR_REPORT_NOT_SAVED'
+      });
     }
 
     try {
@@ -1284,10 +1316,10 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
           }
         };
 
-        // Get logo as base64 data URI and replace placeholder
-        const logoBase64 = getLogoBase64();
+        const pdfTenantId = task?.tenant_id ?? task?.tenantId ?? project?.tenant_id ?? project?.tenantId ?? null;
+        const logoBase64 = await getLogoBase64(pdfTenantId);
         const logoHtml = logoBase64 
-          ? `<img src="${logoBase64}" alt="MAK Lone Star Consulting Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
+          ? `<img src="${logoBase64}" alt="Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
           : '<div class="logo-placeholder">MAK</div>';
         html = html.replace('{{LOGO_IMAGE}}', logoHtml);
 
@@ -1426,6 +1458,112 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
       res.status(500).json({ error: 'Failed to generate PDF: ' + (err.message || String(err)) });
     } else {
       res.end();
+    }
+  }
+});
+
+// POST /api/pdf/rebar — generate PDF from report data in body (fallback when DB has no row)
+router.post('/rebar', authenticate, async (req, res) => {
+  try {
+    const taskId = parseInt(req.body?.taskId, 10);
+    const reportData = req.body?.reportData;
+    if (isNaN(taskId) || taskId <= 0 || !reportData || typeof reportData !== 'object') {
+      return res.status(400).json({ error: 'Body must include taskId (number) and reportData (object)' });
+    }
+    const task = await getRebarTask(taskId);
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    const data = {
+      ...reportData,
+      taskId,
+      projectName: reportData.projectName ?? task.projectName,
+      projectNumber: reportData.projectNumber ?? task.projectNumber,
+      clientName: reportData.clientName ?? '',
+      reportDate: reportData.reportDate ?? '',
+      inspectionDate: reportData.inspectionDate ?? '',
+      generalContractor: reportData.generalContractor ?? '',
+      locationDetail: reportData.locationDetail ?? '',
+      wireMeshSpec: reportData.wireMeshSpec ?? '',
+      drawings: reportData.drawings ?? '',
+      techName: reportData.techName ?? task.assignedTechnicianName ?? ''
+    };
+    // Reuse same PDF generation as GET (inline to avoid refactor)
+    const templatePath = path.join(__dirname, '..', 'templates', 'rebar-report.html');
+    if (!fs.existsSync(templatePath)) {
+      return res.status(500).json({ error: 'Template file not found' });
+    }
+    let html = fs.readFileSync(templatePath, 'utf8');
+    const escapeHtml = (text) => {
+      if (!text) return '&nbsp;';
+      return String(text)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    };
+    const formatDate = (dateStr) => {
+      if (!dateStr) return '';
+      try {
+        return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+      } catch (e) {
+        return dateStr;
+      }
+    };
+    const pdfTenantId = task?.tenant_id ?? task?.tenantId ?? null;
+    const logoBase64 = await getLogoBase64(pdfTenantId);
+    const logoHtml = logoBase64
+      ? `<img src="${logoBase64}" alt="Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
+      : '<div class="logo-placeholder">MAK</div>';
+    html = html.replace('{{LOGO_IMAGE}}', logoHtml)
+      .replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''))
+      .replace('{{REPORT_DATE}}', escapeHtml(formatDate(data.reportDate)))
+      .replace('{{PROJECT_NAME}}', escapeHtml(task.projectName || ''))
+      .replace('{{PROJECT_NUMBER}}', escapeHtml(task.projectNumber || ''))
+      .replace('{{INSPECTION_DATE}}', escapeHtml(formatDate(data.inspectionDate)))
+      .replace('{{GENERAL_CONTRACTOR}}', escapeHtml(data.generalContractor || ''))
+      .replace('{{LOCATION_DETAIL}}', escapeHtml(data.locationDetail || ''))
+      .replace('{{WIRE_MESH_SPEC}}', escapeHtml(data.wireMeshSpec || ''))
+      .replace('{{DRAWINGS}}', escapeHtml(data.drawings || ''))
+      .replace('{{TECHNICIAN_NAME}}', escapeHtml(data.techName || task.assignedTechnicianName || ''));
+    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 1 });
+      await page.setContent(html, { waitUntil: 'load' });
+      await new Promise(r => setTimeout(r, 1000));
+      const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' }, preferCSSPageSize: false });
+      await browser.close();
+      const pdfBuffer = Buffer.from(pdf);
+      const fieldDate = task.scheduledStartDate || data.inspectionDate || new Date().toISOString().split('T')[0];
+      let saveInfo = null;
+      let saveError = null;
+      try {
+        saveInfo = await saveReportPDF(task.projectNumber, 'REBAR', fieldDate, pdfBuffer, false);
+      } catch (saveErr) {
+        saveError = saveErr.message;
+      }
+      res.status(200).json({
+        success: true,
+        saved: saveInfo ? saveInfo.saved : false,
+        savedPath: saveInfo ? saveInfo.savedPath : null,
+        fileName: saveInfo ? saveInfo.fileName : null,
+        sequence: saveInfo ? saveInfo.sequence : null,
+        isRevision: saveInfo ? saveInfo.isRevision : false,
+        revisionNumber: saveInfo ? saveInfo.revisionNumber : null,
+        downloadUrl: `/api/pdf/rebar/${taskId}/download?token=${encodeURIComponent(req.headers.authorization || '')}`,
+        saveError: saveError || (saveInfo && saveInfo.saveError) || null,
+        pdfBase64: pdfBuffer.toString('base64')
+      });
+    } catch (puppeteerErr) {
+      await browser.close();
+      throw puppeteerErr;
+    }
+  } catch (err) {
+    console.error('Error in POST /api/pdf/rebar:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate PDF: ' + (err.message || String(err)) });
     }
   }
 });

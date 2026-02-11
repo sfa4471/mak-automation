@@ -6,6 +6,7 @@ const fs = require('fs');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
 const { authenticate } = require('../middleware/auth');
+const { requireTenant } = require('../middleware/tenant');
 const { getPDFSavePath, savePDFToFile } = require('../utils/pdfFileManager');
 const { body, validationResult } = require('express-validator');
 
@@ -769,8 +770,8 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
   }
 });
 
-// Get Proctor data by taskId
-router.get('/task/:taskId', authenticate, async (req, res) => {
+// Get Proctor data by taskId (tenant-scoped)
+router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
   try {
     const taskId = parseInt(req.params.taskId);
 
@@ -817,13 +818,13 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
-
-    // Check access
+    if (req.tenantId != null && (task.tenant_id ?? task.tenantId) !== req.tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get Proctor data
     const data = await db.get('proctor_data', { taskId });
 
     if (data) {
@@ -915,8 +916,8 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
   }
 });
 
-// Save Proctor data
-router.post('/task/:taskId', authenticate, [
+// Save Proctor data (tenant-scoped)
+router.post('/task/:taskId', authenticate, requireTenant, [
   body('projectName').optional().trim(),
   body('projectNumber').optional().trim(),
   body('sampledBy').optional().trim(),
@@ -1003,11 +1004,14 @@ router.post('/task/:taskId', authenticate, [
       }
     }
 
-    // Check access
+    if (req.tenantId != null && (task.tenant_id ?? task.tenantId) !== req.tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const tenantId = task.tenant_id ?? task.tenantId ?? req.tenantId;
     const {
       projectName,
       projectNumber,
@@ -1065,6 +1069,7 @@ router.post('/task/:taskId', authenticate, [
       projectName: projectName || null,
       projectNumber: projectNumber || null,
       sampledBy: sampledBy || null,
+      ...(tenantId != null ? { tenantId } : {}),
       testMethod: testMethod || null,
       client: client || null,
       soilClassification: soilClassification || null,
@@ -1091,14 +1096,27 @@ router.post('/task/:taskId', authenticate, [
       zavPoints: zavPointsJson
     };
 
+    const isTenantIdError = (e) => e && e.message && /tenant_id/.test(e.message);
     let result;
     if (existing) {
-      // Update
-      await db.update('proctor_data', proctorData, { taskId: parseInt(taskId) });
+      try {
+        await db.update('proctor_data', proctorData, { taskId: parseInt(taskId) });
+      } catch (e) {
+        if (isTenantIdError(e) && proctorData.tenantId != null) {
+          delete proctorData.tenantId;
+          await db.update('proctor_data', proctorData, { taskId: parseInt(taskId) });
+        } else throw e;
+      }
       result = await db.get('proctor_data', { taskId: parseInt(taskId) });
     } else {
-      // Insert
-      result = await db.insert('proctor_data', proctorData);
+      try {
+        result = await db.insert('proctor_data', proctorData);
+      } catch (e) {
+        if (isTenantIdError(e) && proctorData.tenantId != null) {
+          delete proctorData.tenantId;
+          result = await db.insert('proctor_data', proctorData);
+        } else throw e;
+      }
     }
 
     // Parse JSON fields

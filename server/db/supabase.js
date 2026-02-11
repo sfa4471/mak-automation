@@ -10,6 +10,11 @@
  */
 
 require('dotenv').config();
+// Only load .env.local (branch DB) when USE_BRANCH_DB=1 — otherwise use .env (main DB)
+const useBranchDb = process.env.USE_BRANCH_DB === '1' || process.env.USE_BRANCH_DB === 'true';
+if (useBranchDb) {
+  require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env.local'), override: true });
+}
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;

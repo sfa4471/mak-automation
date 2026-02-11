@@ -2,11 +2,12 @@ const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
 const { authenticate } = require('../middleware/auth');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
 
-// Get density report by taskId
-router.get('/task/:taskId', authenticate, async (req, res) => {
+// Get density report by taskId (tenant-scoped)
+router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
   try {
     const taskId = parseInt(req.params.taskId);
 
@@ -55,8 +56,9 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
-
-    // Check access
+    if (!req.legacyDb && req.tenantId != null && (task.tenant_id ?? task.tenantId) !== req.tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -230,7 +232,7 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
 });
 
 // Save density report by taskId
-router.post('/task/:taskId', authenticate, async (req, res) => {
+router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
   try {
     const taskId = parseInt(req.params.taskId);
     
@@ -317,11 +319,14 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
-
-    // Check access
+    if (!req.legacyDb && req.tenantId != null && (task.tenant_id ?? task.tenantId) !== req.tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
+
+    const tenantId = task.tenant_id ?? task.tenantId ?? req.tenantId;
 
     // Check if record exists
     const existing = await db.get('density_reports', { taskId });
@@ -349,7 +354,7 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       }
     }
 
-    // Prepare data for insertion/update
+    // Prepare data for insertion/update (omit tenantId when legacy DB has no tenant_id column)
     // For Supabase, JSONB fields accept arrays directly; for SQLite, we stringify
     const densityData = {
       taskId,
@@ -384,22 +389,34 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       lastEditedByUserId: req.user.id,
       updatedAt: new Date().toISOString()
     };
+    if (!req.legacyDb) densityData.tenantId = tenantId;
+
+    const isTenantIdError = (err) => (err && err.message && /tenant_id/.test(err.message));
 
     let result;
-    if (existing) {
-      // Update
-      await db.update('density_reports', densityData, { taskId });
-      
-      // Debug: Log what was saved
-      console.log('Density report updated - Header fields saved:', {
-        clientName: clientName || null,
-        datePerformed: datePerformed || null,
-        structure: structure || null,
-        structureType: structureType || null
-      });
-    } else {
-      // Insert
-      result = await db.insert('density_reports', densityData);
+    try {
+      if (existing) {
+        await db.update('density_reports', densityData, { taskId });
+        console.log('Density report updated - Header fields saved:', {
+          clientName: clientName || null,
+          datePerformed: datePerformed || null,
+          structure: structure || null,
+          structureType: structureType || null
+        });
+      } else {
+        result = await db.insert('density_reports', densityData);
+      }
+    } catch (err) {
+      if (isTenantIdError(err) && densityData.tenantId != null) {
+        delete densityData.tenantId;
+        if (existing) {
+          await db.update('density_reports', densityData, { taskId });
+        } else {
+          result = await db.insert('density_reports', densityData);
+        }
+      } else {
+        throw err;
+      }
     }
 
     // Update task status if provided

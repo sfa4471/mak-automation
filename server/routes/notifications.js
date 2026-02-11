@@ -114,19 +114,31 @@ router.put('/mark-all-read', authenticate, async (req, res) => {
   }
 });
 
-// Create notification (internal helper function, can be called from other routes)
-async function createNotification(userId, message, type = 'info', relatedWorkPackageId = null, relatedProjectId = null, relatedTaskId = null) {
+// Create notification (internal helper; pass tenantId when available for multi-tenant)
+async function createNotification(userId, message, type = 'info', relatedWorkPackageId = null, relatedProjectId = null, relatedTaskId = null, tenantId = null) {
+  const payload = {
+    userId,
+    message,
+    type,
+    relatedWorkPackageId,
+    relatedProjectId,
+    relatedTaskId
+  };
+  if (tenantId != null) payload.tenantId = tenantId;
   try {
-    const notification = await db.insert('notifications', {
-      userId,
-      message,
-      type,
-      relatedWorkPackageId,
-      relatedProjectId,
-      relatedTaskId
-    });
+    const notification = await db.insert('notifications', payload);
     return notification.id;
   } catch (err) {
+    if (tenantId != null && err.message && /tenant_id/.test(err.message)) {
+      delete payload.tenantId;
+      try {
+        const notification = await db.insert('notifications', payload);
+        return notification.id;
+      } catch (retryErr) {
+        console.error('Create notification error:', retryErr);
+        throw retryErr;
+      }
+    }
     console.error('Create notification error:', err);
     throw err;
   }

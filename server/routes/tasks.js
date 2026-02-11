@@ -2,16 +2,18 @@ const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { createNotification } = require('./notifications');
 
 const router = express.Router();
 
 // Helper function to log task history
-async function logTaskHistory(taskId, actorRole, actorName, actorUserId, actionType, note) {
+async function logTaskHistory(taskId, tenantId, actorRole, actorName, actorUserId, actionType, note) {
   try {
     await db.insert('task_history', {
       taskId,
+      tenantId: tenantId ?? null,
       actorRole,
       actorName,
       actorUserId: actorUserId || null,
@@ -136,14 +138,16 @@ async function fetchTasksWithJoins(conditions = {}, orderBy = 'created_at DESC')
   }
 }
 
-// Get all tasks (filtered by role)
-router.get('/', authenticate, async (req, res) => {
+// Get all tasks (tenant-scoped, filtered by role; legacy DB: no tenant filter)
+router.get('/', authenticate, requireTenant, async (req, res) => {
   try {
+    const tenantId = req.tenantId;
+    const legacyDb = req.legacyDb;
     let tasks;
-    
+
     if (db.isSupabase()) {
       if (req.user.role === 'ADMIN') {
-        const { data, error } = await supabase
+        let query = supabase
           .from('tasks')
           .select(`
             *,
@@ -151,9 +155,9 @@ router.get('/', authenticate, async (req, res) => {
             projects:project_id(project_number, project_name)
           `)
           .order('created_at', { ascending: false });
-        
+        if (!legacyDb) query = query.eq('tenant_id', tenantId);
+        const { data, error } = await query;
         if (error) throw error;
-        
         tasks = (data || []).map(task => ({
           ...task,
           assignedTechnicianName: task.users?.name || null,
@@ -164,7 +168,7 @@ router.get('/', authenticate, async (req, res) => {
           projects: undefined
         }));
       } else {
-        const { data, error } = await supabase
+        let query = supabase
           .from('tasks')
           .select(`
             *,
@@ -173,9 +177,9 @@ router.get('/', authenticate, async (req, res) => {
           `)
           .eq('assigned_technician_id', req.user.id)
           .order('created_at', { ascending: false });
-        
+        if (!legacyDb) query = query.eq('tenant_id', tenantId);
+        const { data, error } = await query;
         if (error) throw error;
-        
         tasks = (data || []).map(task => ({
           ...task,
           assignedTechnicianName: task.users?.name || null,
@@ -191,26 +195,17 @@ router.get('/', authenticate, async (req, res) => {
       const sqliteDb = require('../database');
       let query;
       let params;
-
       if (req.user.role === 'ADMIN') {
-        query = `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
-                 p.projectNumber, p.projectName
-                 FROM tasks t
-                 LEFT JOIN users u ON t.assignedTechnicianId = u.id
-                 INNER JOIN projects p ON t.projectId = p.id
-                 ORDER BY t.createdAt DESC`;
-        params = [];
+        query = legacyDb
+          ? `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail, p.projectNumber, p.projectName FROM tasks t LEFT JOIN users u ON t.assignedTechnicianId = u.id INNER JOIN projects p ON t.projectId = p.id ORDER BY t.createdAt DESC`
+          : `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail, p.projectNumber, p.projectName FROM tasks t LEFT JOIN users u ON t.assignedTechnicianId = u.id INNER JOIN projects p ON t.projectId = p.id WHERE t.tenantId = ? ORDER BY t.createdAt DESC`;
+        params = legacyDb ? [] : [tenantId];
       } else {
-        query = `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
-                 p.projectNumber, p.projectName
-                 FROM tasks t
-                 LEFT JOIN users u ON t.assignedTechnicianId = u.id
-                 INNER JOIN projects p ON t.projectId = p.id
-                 WHERE t.assignedTechnicianId = ?
-                 ORDER BY t.createdAt DESC`;
-        params = [req.user.id];
+        query = legacyDb
+          ? `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail, p.projectNumber, p.projectName FROM tasks t LEFT JOIN users u ON t.assignedTechnicianId = u.id INNER JOIN projects p ON t.projectId = p.id WHERE t.assignedTechnicianId = ? ORDER BY t.createdAt DESC`
+          : `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail, p.projectNumber, p.projectName FROM tasks t LEFT JOIN users u ON t.assignedTechnicianId = u.id INNER JOIN projects p ON t.projectId = p.id WHERE t.assignedTechnicianId = ? AND t.tenantId = ? ORDER BY t.createdAt DESC`;
+        params = legacyDb ? [req.user.id] : [req.user.id, tenantId];
       }
-
       tasks = await new Promise((resolve, reject) => {
         sqliteDb.all(query, params, (err, rows) => {
           if (err) reject(err);
@@ -218,7 +213,6 @@ router.get('/', authenticate, async (req, res) => {
         });
       });
     }
-    
     res.json(tasks);
   } catch (err) {
     console.error('Error fetching tasks:', err);
@@ -226,15 +220,18 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// Get tasks for a project
-router.get('/project/:projectId', authenticate, async (req, res) => {
+// Get tasks for a project (tenant-scoped)
+router.get('/project/:projectId', authenticate, requireTenant, async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
+    const tenantId = req.tenantId;
 
-    // Check project access
     const project = await db.get('projects', { id: projectId });
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
+    }
+    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     let tasks;
@@ -433,10 +430,11 @@ router.get('/project/:projectId/proctors', authenticate, async (req, res) => {
   }
 });
 
-// Get single task
-router.get('/:id', authenticate, async (req, res) => {
+// Get single task (tenant-scoped)
+router.get('/:id', authenticate, requireTenant, async (req, res) => {
   try {
     const taskId = parseInt(req.params.id);
+    const tenantId = req.tenantId;
 
     let task;
     if (db.isSupabase()) {
@@ -506,8 +504,13 @@ router.get('/:id', authenticate, async (req, res) => {
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
+    if (!req.legacyDb) {
+      const taskTenantId = task.tenant_id ?? task.tenantId;
+      if (taskTenantId != null && taskTenantId !== tenantId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
 
-    // Check access
     if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -645,7 +648,7 @@ router.put('/:id', authenticate, [
       
       // Log history: Task reassigned
       const adminName = req.user.name || req.user.email || 'Admin';
-      await logTaskHistory(taskId, req.user.role, adminName, req.user.id, 'REASSIGNED', `Task reassigned from ${oldTechName} to ${newTechName}`);
+      await logTaskHistory(taskId, req.tenantId, req.user.role, adminName, req.user.id, 'REASSIGNED', `Task reassigned from ${oldTechName} to ${newTechName}`);
       
       const project = await db.get('projects', { id: projectId });
       if (project) {
@@ -704,8 +707,8 @@ router.put('/:id', authenticate, [
   }
 });
 
-// Create task (Admin only)
-router.post('/', authenticate, requireAdmin, [
+// Create task (Admin only, tenant-scoped)
+router.post('/', authenticate, requireTenant, requireAdmin, [
   body('projectId').isInt(),
   body('taskType').isIn(['DENSITY_MEASUREMENT', 'PROCTOR', 'REBAR', 'COMPRESSIVE_STRENGTH', 'CYLINDER_PICKUP']),
   body('assignedTechnicianId').optional().isInt(),
@@ -734,15 +737,20 @@ router.post('/', authenticate, requireAdmin, [
       engagementNotes
     } = req.body;
 
-    // Verify project exists
+    const tenantId = req.tenantId;
+
     const project = await db.get('projects', { id: projectId });
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
+    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
-    // Verify technician exists if provided
     if (assignedTechnicianId) {
-      const tech = await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN' });
+      const tech = req.legacyDb
+        ? await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN' })
+        : await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN', tenant_id: tenantId });
       if (!tech) {
         return res.status(404).json({ error: 'Technician not found' });
       }
@@ -794,9 +802,9 @@ router.post('/', authenticate, requireAdmin, [
       }
     }
 
-    // Create task
     const taskData = {
       projectId,
+      tenantId,
       taskType,
       status: 'ASSIGNED',
       assignedTechnicianId: assignedTechnicianId || null,
@@ -814,15 +822,26 @@ router.post('/', authenticate, requireAdmin, [
 
     // If this is a COMPRESSIVE_STRENGTH, create wp1_data entry
     if (taskType === 'COMPRESSIVE_STRENGTH') {
+      const wp1Initial = {
+        taskId,
+        workPackageId: null,
+        cylinders: []
+      };
+      if (tenantId != null) wp1Initial.tenantId = tenantId;
       try {
-        await db.insert('wp1_data', {
-          taskId,
-          workPackageId: null,
-          cylinders: []
-        });
+        await db.insert('wp1_data', wp1Initial);
       } catch (err) {
-        console.error('Error creating wp1_data:', err);
-        // Continue anyway, wp1_data can be created later
+        if (tenantId != null && err.message && /tenant_id/.test(err.message)) {
+          delete wp1Initial.tenantId;
+          try {
+            await db.insert('wp1_data', wp1Initial);
+          } catch (retryErr) {
+            console.error('Error creating wp1_data:', retryErr);
+          }
+        } else {
+          console.error('Error creating wp1_data:', err);
+        }
+        // Continue anyway, wp1_data can be created later when user saves the form
       }
     }
 
@@ -837,7 +856,7 @@ router.post('/', authenticate, requireAdmin, [
       };
       const taskLabel = taskTypeLabels[taskType] || taskType;
       const message = `Admin assigned ${taskLabel} for Project ${project.projectNumber}`;
-      createNotification(assignedTechnicianId, message, 'info', taskId, projectId).catch(console.error);
+      createNotification(assignedTechnicianId, message, 'info', null, projectId, taskId, tenantId).catch(console.error);
     }
 
     // Return created task with joins
@@ -897,8 +916,8 @@ router.post('/', authenticate, requireAdmin, [
   }
 });
 
-// Update task (Admin only - allows editing all task fields)
-router.put('/:id', authenticate, requireAdmin, [
+// Update task (Admin only - allows editing all task fields, tenant-scoped)
+router.put('/:id', authenticate, requireTenant, requireAdmin, [
   body('assignedTechnicianId').optional().isInt().withMessage('assignedTechnicianId must be an integer'),
   body('dueDate').optional().matches(/^\d{4}-\d{2}-\d{2}$|^$/).withMessage('dueDate must be in YYYY-MM-DD format'),
   body('scheduledStartDate').optional().matches(/^\d{4}-\d{2}-\d{2}$|^$/).withMessage('scheduledStartDate must be in YYYY-MM-DD format'),
@@ -942,7 +961,9 @@ router.put('/:id', authenticate, requireAdmin, [
       if (error || !data) {
         return res.status(404).json({ error: 'Task not found' });
       }
-      
+      if (!req.legacyDb && (data.tenant_id ?? data.tenantId) != null && (data.tenant_id ?? data.tenantId) !== req.tenantId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
       oldTask = {
         ...data,
         assignedTechnicianName: data.users?.name || null,
@@ -1079,7 +1100,7 @@ router.put('/:id', authenticate, requireAdmin, [
     // Log activity for each change
     if (changes.length > 0) {
       const changeNote = changes.join('; ');
-      await logTaskHistory(taskId, req.user.role, adminName, req.user.id, 'STATUS_CHANGED', changeNote);
+      await logTaskHistory(taskId, req.tenantId, req.user.role, adminName, req.user.id, 'STATUS_CHANGED', changeNote);
     }
 
     // Send notification to new technician if reassigned
@@ -1149,7 +1170,7 @@ router.put('/:id', authenticate, requireAdmin, [
 });
 
 // Update task status
-router.put('/:id/status', authenticate, [
+router.put('/:id/status', authenticate, requireTenant, [
   body('status').isIn(['ASSIGNED', 'IN_PROGRESS_TECH', 'READY_FOR_REVIEW', 'APPROVED', 'REJECTED_NEEDS_FIX'])
 ], async (req, res) => {
   try {
@@ -1241,7 +1262,7 @@ router.put('/:id/status', authenticate, [
       const technicianName = technician?.name || technician?.email || 'Technician';
       
       // Log history: Technician submitted report
-      await logTaskHistory(taskId, req.user.role, technicianName, req.user.id, 'SUBMITTED', null);
+      await logTaskHistory(taskId, req.tenantId, req.user.role, technicianName, req.user.id, 'SUBMITTED', null);
       
       const taskTypeLabels = {
         'COMPRESSIVE_STRENGTH': 'Compressive Strength',
@@ -1315,7 +1336,7 @@ router.put('/:id/status', authenticate, [
 });
 
 // Approve task (Admin only)
-router.post('/:id/approve', authenticate, requireAdmin, async (req, res) => {
+router.post('/:id/approve', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
     const taskId = parseInt(req.params.id);
 
@@ -1338,7 +1359,7 @@ router.post('/:id/approve', authenticate, requireAdmin, async (req, res) => {
     await db.update('tasks', updateData, { id: taskId });
 
     // Log history: Admin approved
-    await logTaskHistory(taskId, req.user.role, adminName, req.user.id, 'APPROVED', null);
+    await logTaskHistory(taskId, req.tenantId, req.user.role, adminName, req.user.id, 'APPROVED', null);
 
     // Return updated task
     let updatedTask;
@@ -1391,7 +1412,7 @@ router.post('/:id/approve', authenticate, requireAdmin, async (req, res) => {
 });
 
 // Reject task (Admin only)
-router.post('/:id/reject', authenticate, requireAdmin, [
+router.post('/:id/reject', authenticate, requireTenant, requireAdmin, [
   body('rejectionRemarks').notEmpty().trim(),
   body('resubmissionDueDate').notEmpty()
 ], async (req, res) => {
@@ -1424,7 +1445,7 @@ router.post('/:id/reject', authenticate, requireAdmin, [
     await db.update('tasks', updateData, { id: taskId });
 
     // Log history: Admin rejected
-    await logTaskHistory(taskId, req.user.role, adminName, req.user.id, 'REJECTED', rejectionRemarks);
+    await logTaskHistory(taskId, req.tenantId, req.user.role, adminName, req.user.id, 'REJECTED', rejectionRemarks);
 
     // Create notification for technician
     const assignedId = db.isSupabase() ? task.assigned_technician_id : task.assignedTechnicianId;
@@ -2210,7 +2231,7 @@ router.get('/dashboard/technician/open-reports', authenticate, async (req, res) 
 });
 
 // Mark field work as complete
-router.post('/:id/mark-field-complete', authenticate, async (req, res) => {
+router.post('/:id/mark-field-complete', authenticate, requireTenant, async (req, res) => {
   try {
     const taskId = parseInt(req.params.id);
 
@@ -2237,7 +2258,7 @@ router.post('/:id/mark-field-complete', authenticate, async (req, res) => {
 
     // Log history
     const actorName = req.user.name || req.user.email || 'User';
-    await logTaskHistory(taskId, req.user.role, actorName, req.user.id, 'STATUS_CHANGED', 'Field work marked as complete');
+    await logTaskHistory(taskId, req.tenantId, req.user.role, actorName, req.user.id, 'STATUS_CHANGED', 'Field work marked as complete');
 
     // Return updated task
     let updatedTask;

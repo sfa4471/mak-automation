@@ -2,20 +2,24 @@ const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { createNotification } = require('./notifications');
 
 const router = express.Router();
 
-// Get work packages for a project
-router.get('/project/:projectId', authenticate, async (req, res) => {
+// Get work packages for a project (tenant-scoped)
+router.get('/project/:projectId', authenticate, requireTenant, async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
+    const tenantId = req.tenantId;
 
-    // Check project access
     const project = await db.get('projects', { id: projectId });
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
+    }
+    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     let workPackages;
@@ -80,10 +84,11 @@ router.get('/project/:projectId', authenticate, async (req, res) => {
   }
 });
 
-// Get single work package
-router.get('/:id', authenticate, async (req, res) => {
+// Get single work package (tenant-scoped via project)
+router.get('/:id', authenticate, requireTenant, async (req, res) => {
   try {
     const workPackageId = parseInt(req.params.id);
+    const tenantId = req.tenantId;
 
     let workPackage;
     
@@ -138,8 +143,13 @@ router.get('/:id', authenticate, async (req, res) => {
     if (!workPackage) {
       return res.status(404).json({ error: 'Work package not found' });
     }
+    if (!req.legacyDb) {
+      const wpTenantId = workPackage.tenant_id ?? workPackage.tenantId;
+      if (wpTenantId != null && wpTenantId !== tenantId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
 
-    // Check access
     if (req.user.role === 'TECHNICIAN' && workPackage.assignedTo !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -151,8 +161,8 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
-// Assign work package to technician (Admin only)
-router.put('/:id/assign', authenticate, requireAdmin, [
+// Assign work package to technician (Admin only, tenant-scoped)
+router.put('/:id/assign', authenticate, requireTenant, requireAdmin, [
   body('technicianId').isInt()
 ], async (req, res) => {
   try {
@@ -273,7 +283,7 @@ router.put('/:id/assign', authenticate, requireAdmin, [
 });
 
 // Update work package status
-router.put('/:id/status', authenticate, [
+router.put('/:id/status', authenticate, requireTenant, [
   body('status').isIn(['Draft', 'Assigned', 'In Progress', 'Submitted', 'Approved', 'IN_PROGRESS_TECH', 'READY_FOR_REVIEW'])
 ], async (req, res) => {
   try {
@@ -382,7 +392,7 @@ router.put('/:id/status', authenticate, [
 });
 
 // Get WP1 data
-router.get('/:id/wp1', authenticate, async (req, res) => {
+router.get('/:id/wp1', authenticate, requireTenant, async (req, res) => {
   try {
     const workPackageId = parseInt(req.params.id);
 
@@ -485,7 +495,7 @@ router.get('/:id/wp1', authenticate, async (req, res) => {
 });
 
 // Save WP1 data
-router.post('/:id/wp1', authenticate, async (req, res) => {
+router.post('/:id/wp1', authenticate, requireTenant, async (req, res) => {
   try {
     const workPackageId = parseInt(req.params.id);
 
