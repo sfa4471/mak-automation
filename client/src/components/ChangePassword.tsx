@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../api/auth';
+import { useAuth } from '../context/AuthContext';
 import './ChangePassword.css';
 
 const ChangePassword: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     currentPassword: '',
     newPassword: '',
@@ -59,18 +61,21 @@ const ChangePassword: React.FC = () => {
     }
   };
 
+  const dashboardPath = user?.role === 'ADMIN' ? '/dashboard' : '/technician/dashboard';
+
   return (
-    <div className="change-password-container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h2>Change Password</h2>
-        <button 
-          onClick={() => navigate('/technician/dashboard')} 
-          className="back-button"
-          style={{ padding: '8px 16px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-        >
-          Back to Dashboard
-        </button>
-      </div>
+    <div className="change-password-page">
+      <div className="change-password-container">
+        <div className="change-password-header">
+          <h2>Change Password</h2>
+          <button
+            type="button"
+            onClick={() => navigate(dashboardPath)}
+            className="back-button"
+          >
+            Back to Dashboard
+          </button>
+        </div>
       <form onSubmit={handleSubmit} className="change-password-form">
         {error && <div className="error-message">{error}</div>}
         {success && <div className="success-message">Password changed successfully!</div>}
@@ -120,6 +125,7 @@ const ChangePassword: React.FC = () => {
           </button>
         </div>
       </form>
+      </div>
     </div>
   );
 };

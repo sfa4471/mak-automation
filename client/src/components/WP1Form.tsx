@@ -844,11 +844,45 @@ const WP1Form: React.FC = () => {
   const isLocked = isTechnician && (status === 'READY_FOR_REVIEW' || status === 'APPROVED');
 
   const handleGeneratePDF = async () => {
+    if (!formData) {
+      setError('No form data. Please wait for the form to load.');
+      alert('No form data. Please wait for the form to load, then try again.');
+      return;
+    }
     setLastSavedPath(null); // Clear previous saved path
+    setError('');
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Authentication required. Please log in again.');
+        return;
+      }
+      // Ensure report is persisted so the PDF server can find it (server looks up wp1_data by taskId/workPackageId)
+      if (typeof formData.id === 'undefined' || formData.id === null) {
+        try {
+          if (isTaskRoute) {
+            let saveData = formData;
+            if (formData.technician && isAdmin()) {
+              const selectedTech = technicians.find(t => (t.name || t.email) === formData.technician);
+              if (selectedTech) saveData = { ...formData, assignedTechnicianId: selectedTech.id };
+            }
+            const saved = await wp1API.saveByTask(parseInt(id!), saveData);
+            setFormData(saved);
+          } else {
+            const saved = await workPackagesAPI.saveWP1(parseInt(id!), formData);
+            setFormData(saved);
+          }
+          setSaveStatus('saved');
+          setLastSaved(new Date());
+        } catch (saveErr: any) {
+          const saveMsg = saveErr.response?.data?.error || saveErr.message || 'Save failed';
+          setError(saveMsg);
+          alert(`Cannot generate PDF until the form is saved.\n\nPlease save the form first, then try Generate PDF again.\n\nError: ${saveMsg}`);
+          return;
+        }
+      }
+
       const baseUrl = getApiBaseUrl();
-      
       // Use task or workpackage route for PDF
       const pdfRoute = id;
       const pdfUrl = isTaskRoute 
@@ -879,8 +913,7 @@ const WP1Form: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
-          alert(message);
+          alert('PDF created.');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
@@ -889,10 +922,12 @@ const WP1Form: React.FC = () => {
         if (result.pdfBase64) {
           const pdfBytes = Uint8Array.from(atob(result.pdfBase64), c => c.charCodeAt(0));
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-          const url = window.URL.createObjectURL(blob);
           const projectNumber = currentItem?.projectNumber || 'report';
           const filename = result.fileName || `compressive-strength-report-${projectNumber}.pdf`;
+          const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+          await saveFileToChosenFolder(filename, blob, projectNumber);
 
+          const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
           link.download = filename;
@@ -906,11 +941,15 @@ const WP1Form: React.FC = () => {
 
       // Legacy support: Handle PDF response (if backend still returns PDF directly)
       const blob = await response.blob();
+      const projectNumber = currentItem?.projectNumber || 'report';
+      const filename = `compressive-strength-report-${projectNumber}.pdf`;
+      const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+      await saveFileToChosenFolder(filename, blob, projectNumber);
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const projectNumber = currentItem?.projectNumber || 'report';
-      a.download = `compressive-strength-report-${projectNumber}.pdf`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -999,7 +1038,7 @@ const WP1Form: React.FC = () => {
               </button>
               {lastSavedPath && (
                 <div className="pdf-saved-confirmation" style={{ marginTop: '10px', padding: '10px', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px', color: '#155724' }}>
-                  PDF saved to: <strong>{lastSavedPath}</strong>
+                  PDF saved.
                 </div>
               )}
             </>

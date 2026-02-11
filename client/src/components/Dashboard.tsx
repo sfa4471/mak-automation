@@ -1,19 +1,19 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTenant } from '../context/TenantContext';
 import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
-import LoadingSpinner from './LoadingSpinner';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
   const { user, isAdmin, logout } = useAuth();
+  const { tenant } = useTenant();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_workPackages, setWorkPackages] = useState<{ [projectId: number]: WorkPackage[] }>({});
+  const [workPackages, setWorkPackages] = useState<{ [projectId: number]: WorkPackage[] }>({});
   const [tasks, setTasks] = useState<{ [projectId: number]: Task[] }>({});
   const [expandedProjects, setExpandedProjects] = useState<Set<number>>(new Set());
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -21,7 +21,16 @@ const Dashboard: React.FC = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const loadData = useCallback(async () => {
+  useEffect(() => {
+    // Redirect technicians to their dashboard
+    if (user && !isAdmin()) {
+      navigate('/technician/dashboard');
+      return;
+    }
+    loadData();
+  }, [user, isAdmin, navigate]);
+
+  const loadData = async () => {
     try {
       const projectsData = await projectsAPI.list();
       setProjects(projectsData);
@@ -60,18 +69,9 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  };
 
-  useEffect(() => {
-    // Redirect technicians to their dashboard
-    if (user && !isAdmin()) {
-      navigate('/technician/dashboard');
-      return;
-    }
-    loadData();
-  }, [user, isAdmin, navigate, loadData]);
-
-  const getStatusLabel = useCallback((status: string): string => {
+  const getStatusLabel = (status: string): string => {
     const statusMap: { [key: string]: string } = {
       'Draft': 'Draft',
       'ASSIGNED': 'Assigned',
@@ -85,9 +85,9 @@ const Dashboard: React.FC = () => {
       'REJECTED_NEEDS_FIX': 'Rejected'
     };
     return statusMap[status] || status;
-  }, []);
+  };
 
-  const getStatusClass = useCallback((status: string): string => {
+  const getStatusClass = (status: string): string => {
     const classMap: { [key: string]: string } = {
       'Draft': 'status-draft',
       'ASSIGNED': 'status-assigned',
@@ -101,9 +101,9 @@ const Dashboard: React.FC = () => {
       'REJECTED_NEEDS_FIX': 'status-rejected'
     };
     return classMap[status] || 'status-default';
-  }, []);
+  };
 
-  const getTaskSummary = useCallback((projectId: number): string => {
+  const getTaskSummary = (projectId: number): string => {
     const projectTasks = tasks[projectId] || [];
     const totalTasks = projectTasks.length;
     const readyForReview = projectTasks.filter(t => t.status === 'READY_FOR_REVIEW').length;
@@ -113,9 +113,9 @@ const Dashboard: React.FC = () => {
       return `${totalTasks} task${totalTasks !== 1 ? 's' : ''} · ${readyForReview} ready for review`;
     }
     return `${totalTasks} task${totalTasks !== 1 ? 's' : ''}`;
-  }, [tasks]);
+  };
 
-  const toggleProject = useCallback((projectId: number) => {
+  const toggleProject = (projectId: number) => {
     setExpandedProjects(prev => {
       const newSet = new Set(prev);
       if (newSet.has(projectId)) {
@@ -125,18 +125,17 @@ const Dashboard: React.FC = () => {
       }
       return newSet;
     });
-  }, []);
+  };
 
-  // Keep for potential future use
-  // const handleWorkPackageClick = useCallback((wp: WorkPackage) => {
-  //   if (wp.type === 'WP1') {
-  //     navigate(`/workpackage/${wp.id}/wp1`);
-  //   } else {
-  //     alert('This work package is not yet implemented');
-  //   }
-  // }, [navigate]);
+  const handleWorkPackageClick = (wp: WorkPackage) => {
+    if (wp.type === 'WP1') {
+      navigate(`/workpackage/${wp.id}/wp1`);
+    } else {
+      alert('This work package is not yet implemented');
+    }
+  };
 
-  const handleTaskClick = useCallback((task: Task) => {
+  const handleTaskClick = (task: Task) => {
     if (task.taskType === 'COMPRESSIVE_STRENGTH') {
       navigate(`/task/${task.id}/wp1`);
     } else if (task.taskType === 'DENSITY_MEASUREMENT') {
@@ -148,9 +147,9 @@ const Dashboard: React.FC = () => {
     } else {
       alert('This task type is not yet implemented');
     }
-  }, [navigate]);
+  };
 
-  const handleClearAllNotifications = useCallback(async () => {
+  const handleClearAllNotifications = async () => {
     if (!window.confirm('Clear all notifications? This will mark them all as read.')) {
       return;
     }
@@ -162,38 +161,46 @@ const Dashboard: React.FC = () => {
       console.error('Error clearing notifications:', error);
       alert('Failed to clear notifications. Please try again.');
     }
-  }, []);
+  };
 
   if (loading) {
-    return <LoadingSpinner fullScreen message="Loading dashboard..." />;
+    return <div className="dashboard-loading">Loading...</div>;
   }
 
   return (
     <div className="dashboard">
       <header className="dashboard-header">
         <div className="header-logo">
-          <img 
-            src={encodeURI('/MAK logo_consulting.jpg')}
-            alt="MAK Lone Star Consulting" 
-            className="company-logo"
-            loading="lazy"
-            decoding="async"
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.style.display = 'none';
-              const h1 = target.parentElement?.querySelector('h1');
-              if (h1) {
-                h1.style.display = 'block';
-              }
-            }}
-            onLoad={() => {
-              const h1 = document.querySelector('.dashboard-header .header-logo h1');
-              if (h1) {
-                (h1 as HTMLElement).style.display = 'none';
-              }
-            }}
-          />
-          <h1>MAK Lone Star Consulting</h1>
+          {tenant?.logoPath ? (
+            <img
+              src={tenant.logoPath}
+              alt={tenant.name}
+              className="company-logo"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+                const h1 = target.parentElement?.querySelector('h1');
+                if (h1) (h1 as HTMLElement).style.display = 'block';
+              }}
+            />
+          ) : (
+            <img
+              src={encodeURI('/MAK logo_consulting.jpg')}
+              alt=""
+              className="company-logo"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+                const h1 = target.parentElement?.querySelector('h1');
+                if (h1) (h1 as HTMLElement).style.display = 'block';
+              }}
+              onLoad={() => {
+                const h1 = document.querySelector('.dashboard-header .header-logo h1');
+                if (h1) (h1 as HTMLElement).style.display = 'none';
+              }}
+            />
+          )}
+          <h1>{tenant?.name ?? user?.tenantName ?? 'Dashboard'}</h1>
         </div>
         <div className="header-actions">
           {isAdmin() && (
@@ -316,6 +323,13 @@ const Dashboard: React.FC = () => {
           )}
           <span className="user-info">{user?.name || user?.email}</span>
           <span className="user-role">({user?.role})</span>
+          <button
+            onClick={() => navigate('/admin/change-password')}
+            className="change-password-header-btn"
+            style={{ marginRight: '10px', padding: '8px 16px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '14px' }}
+          >
+            Change Password
+          </button>
           <button onClick={logout} className="logout-button">Logout</button>
         </div>
       </header>
@@ -367,37 +381,10 @@ const Dashboard: React.FC = () => {
                   <div 
                     className="project-header-collapsed"
                     onClick={() => toggleProject(project.id)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        toggleProject(project.id);
-                      }
-                    }}
-                    aria-expanded={isExpanded}
-                    aria-controls={`project-content-${project.id}`}
                   >
                     <div className="project-header-content">
                       <div className="project-identifier">
-                        <span className="project-number-primary">
-                          {project.projectNumber}
-                          {project.folderCreation && (
-                            <span 
-                              title={project.folderCreation.success 
-                                ? `Folder: ${project.folderCreation.path || 'N/A'}` 
-                                : `Error: ${project.folderCreation.error || 'Unknown error'}`}
-                              style={{
-                                color: project.folderCreation.success ? '#28a745' : '#dc3545',
-                                marginLeft: '8px',
-                                fontSize: '16px',
-                                cursor: 'help'
-                              }}
-                            >
-                              {project.folderCreation.success ? '📁' : '⚠️'}
-                            </span>
-                          )}
-                        </span>
+                        <span className="project-number-primary">{project.projectNumber}</span>
                         <span className="project-name-secondary">{project.projectName}</span>
                       </div>
                       <span className="project-summary">{taskSummary}</span>
@@ -406,30 +393,6 @@ const Dashboard: React.FC = () => {
                       <span className="accordion-toggle">{isExpanded ? '▼' : '▶'}</span>
                       {isAdmin() && (
                         <>
-                          {project.folderCreation && !project.folderCreation.success && (
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                try {
-                                  const result = await projectsAPI.retryFolderCreation(project.id);
-                                  if (result.success) {
-                                    alert(`Folder created successfully!\n\nPath: ${result.folderCreation.path}`);
-                                    // Reload projects to update status
-                                    loadData();
-                                  } else {
-                                    alert(`Failed to create folder:\n\n${result.folderCreation.error}`);
-                                  }
-                                } catch (err: any) {
-                                  alert(`Error: ${err.response?.data?.error || 'Failed to retry folder creation'}`);
-                                }
-                              }}
-                              className="project-details-button"
-                              style={{ marginRight: '10px', fontSize: '12px', padding: '6px 12px' }}
-                              title="Retry folder creation"
-                            >
-                              🔄 Retry Folder
-                            </button>
-                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -455,7 +418,7 @@ const Dashboard: React.FC = () => {
                   </div>
                   
                   {isExpanded && (
-                    <div className="project-content" id={`project-content-${project.id}`}>
+                    <div className="project-content">
                       {projectTasks.length > 0 ? (
                         <div className="tasks-list">
                           {projectTasks.map((task) => (
@@ -463,15 +426,6 @@ const Dashboard: React.FC = () => {
                               key={task.id}
                               className="task-item"
                               onClick={() => handleTaskClick(task)}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  handleTaskClick(task);
-                                }
-                              }}
-                              aria-label={`Task: ${taskTypeLabel(task)}`}
                             >
                               <div className="task-status-badge-container">
                                 <span className={`task-status-badge ${getStatusClass(task.status)}`}>

@@ -292,14 +292,16 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortedProctorPoints, zavFilteredForRender]);
 
-  // Custom hollow triangle marker for Proctor points
+  // Custom hollow triangle marker for Proctor points (guard against NaN from missing/invalid data)
   const HollowTriangleMarker = (props: any) => {
     const { cx, cy } = props;
-    if (cx === null || cy === null) return null;
+    const x = Number(cx);
+    const y = Number(cy);
+    if (cx == null || cy == null || !Number.isFinite(x) || !Number.isFinite(y)) return null;
     return (
       <g>
         <path
-          d={`M ${cx} ${cy - 4} L ${cx - 4} ${cy + 4} L ${cx + 4} ${cy + 4} Z`}
+          d={`M ${x} ${y - 4} L ${x - 4} ${y + 4} L ${x + 4} ${y + 4} Z`}
           fill="white"
           stroke="#000"
           strokeWidth={1.5}
@@ -521,11 +523,13 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
               stroke="none"
               dot={(props: any) => {
                 const { cx, cy } = props;
-                if (cx === null || cy === null) return null;
+                const x = Number(cx);
+                const y = Number(cy);
+                if (cx == null || cy == null || !Number.isFinite(x) || !Number.isFinite(y)) return null;
                 return (
                   <g>
                     <path
-                      d={`M ${cx} ${cy - 3} L ${cx - 3} ${cy + 3} L ${cx + 3} ${cy + 3} Z`}
+                      d={`M ${x} ${y - 3} L ${x - 3} ${y + 3} L ${x + 3} ${y + 3} Z`}
                       fill="#000"
                       stroke="#000"
                       strokeWidth={1}
@@ -550,12 +554,14 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
               stroke="none"
               dot={(props: any) => {
                 const { cx, cy } = props;
-                if (cx === null || cy === null) return null;
+                const x = Number(cx);
+                const y = Number(cy);
+                if (cx == null || cy == null || !Number.isFinite(x) || !Number.isFinite(y)) return null;
                 return (
                   <g>
                     <circle
-                      cx={cx}
-                      cy={cy}
+                      cx={x}
+                      cy={y}
                       r={4}
                       fill="#000"
                       stroke="#000"

@@ -5,11 +5,17 @@ export interface User {
   email: string;
   role: 'ADMIN' | 'TECHNICIAN';
   name?: string;
+  tenantId?: number;
+  tenantName?: string;
+  tenantSubdomain?: string | null;
+  /** Set when tenant has own backend (e.g. client's PC); frontend uses this for API base URL */
+  apiBaseUrl?: string | null;
 }
 
 export interface LoginResponse {
   token: string;
   user: User;
+  tenant?: { tenantId: number; tenantName: string; tenantSubdomain?: string | null; apiBaseUrl?: string | null };
 }
 
 export const authAPI = {

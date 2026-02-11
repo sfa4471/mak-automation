@@ -4,6 +4,7 @@ import { rebarAPI, RebarReport } from '../api/rebar';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
+import { getApiBaseUrl } from '../api/api';
 import ProjectHomeButton from './ProjectHomeButton';
 import './RebarForm.css';
 
@@ -49,7 +50,10 @@ const RebarForm: React.FC = () => {
       if (reportData && taskData && typeof reportData.id === 'undefined') {
         try {
           const saved = await rebarAPI.saveByTask(taskId, reportData);
-          setFormData(saved);
+          const savedId = saved && typeof (saved as { id?: number }).id === 'number' ? (saved as { id: number }).id : undefined;
+          if (savedId !== undefined) {
+            setFormData(prev => prev ? { ...prev, id: savedId } : { ...reportData, id: savedId } as RebarReport);
+          }
         } catch (err) {
           console.error('Error auto-saving initial data:', err);
         }
@@ -110,7 +114,7 @@ const RebarForm: React.FC = () => {
     try {
       setSaving(true);
       setSaveStatus('saving');
-      await rebarAPI.saveByTask(
+      const res = await rebarAPI.saveByTask(
         task.id,
         data,
         updateStatus ? status : undefined,
@@ -119,6 +123,9 @@ const RebarForm: React.FC = () => {
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
+      if (res && typeof (res as { id?: number }).id === 'number') {
+        setFormData(prev => prev ? { ...prev, id: (res as { id: number }).id } : null);
+      }
     } catch (err: any) {
       console.error('Error saving:', err);
       setError(err.response?.data?.error || 'Failed to save report.');
@@ -152,12 +159,14 @@ const RebarForm: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
-      await rebarAPI.saveByTask(task.id, formData);
-      // Update last saved snapshot
+      const res = await rebarAPI.saveByTask(task.id, formData);
       lastSavedDataRef.current = JSON.stringify(formData);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
+      if (res && typeof (res as { id?: number }).id === 'number') {
+        setFormData(prev => prev ? { ...prev, id: (res as { id: number }).id } : null);
+      }
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save');
       setSaveStatus('idle');
@@ -171,13 +180,15 @@ const RebarForm: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
-      await rebarAPI.saveByTask(task.id, formData, 'IN_PROGRESS_TECH');
+      const res = await rebarAPI.saveByTask(task.id, formData, 'IN_PROGRESS_TECH');
       await tasksAPI.updateStatus(task.id, 'IN_PROGRESS_TECH');
-      // Update last saved snapshot
       lastSavedDataRef.current = JSON.stringify(formData);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
+      if (res && typeof (res as { id?: number }).id === 'number') {
+        setFormData(prev => prev ? { ...prev, id: (res as { id: number }).id } : null);
+      }
       alert('Update saved! Status set to "In Progress"');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save update');
@@ -250,25 +261,47 @@ const RebarForm: React.FC = () => {
 
   const handleDownloadPdf = async () => {
     if (!task) return;
+    if (!formData) {
+      setError('No form data. Please wait for the form to load.');
+      alert('No form data. Please wait for the form to load, then try again.');
+      return;
+    }
     setLastSavedPath(null); // Clear previous saved path
+    setError('');
     try {
       const token = localStorage.getItem('token');
       if (!token) {
         alert('Authentication required. Please log in again.');
         return;
       }
-      const { getApiBaseUrl } = require('../utils/apiUrl');
+      // Always save first so the PDF server has a row to read (server looks up rebar_reports by taskId)
+      let saved: RebarReport;
+      try {
+        saved = await rebarAPI.saveByTask(task.id, formData);
+        setFormData((prev) => (prev ? { ...prev, ...saved, id: saved?.id ?? prev?.id } : saved));
+      } catch (saveErr: any) {
+        const saveMsg = saveErr.response?.data?.error || saveErr.message || 'Save failed';
+        setError(saveMsg);
+        alert(`Cannot generate PDF until the form is saved.\n\nPlease save the form first, then try again.\n\nError: ${saveMsg}`);
+        return;
+      }
+
+      // Use same base URL as API (including tenant override) so save and PDF hit the same backend
       const baseUrl = getApiBaseUrl();
-      // Ensure baseUrl doesn't already end with /api to avoid double /api/api/
       const cleanBaseUrl = baseUrl.replace(/\/api\/?$/, '');
-      const pdfUrl = `${cleanBaseUrl}/api/pdf/rebar/${task.id}`;
-      
-      const response = await fetch(pdfUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      const pdfBase = `${cleanBaseUrl}/api/pdf/rebar`;
+      const headers: HeadersInit = { 'Authorization': `Bearer ${token}` };
+
+      let response = await fetch(`${pdfBase}/${task.id}`, { method: 'GET', headers });
+
+      // If GET 404 (no row in DB), retry with POST and report data so PDF can still be generated
+      if (response.status === 404) {
+        response = await fetch(pdfBase, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId: task.id, reportData: saved })
+        });
+      }
 
       if (!response.ok) {
         let errorMessage = 'Failed to generate PDF';
@@ -294,8 +327,7 @@ const RebarForm: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
-          alert(message);
+          alert('PDF created.');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
@@ -304,9 +336,11 @@ const RebarForm: React.FC = () => {
         if (result.pdfBase64) {
           const pdfBytes = Uint8Array.from(atob(result.pdfBase64), c => c.charCodeAt(0));
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-          const url = window.URL.createObjectURL(blob);
           const filename = result.fileName || `Rebar-Inspection-${formData?.inspectionDate || 'report'}.pdf`;
+          const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+          await saveFileToChosenFolder(filename, blob, task?.projectNumber);
 
+          const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
           link.download = filename;
@@ -320,10 +354,14 @@ const RebarForm: React.FC = () => {
 
       // Legacy support: Handle PDF response (if backend still returns PDF directly)
       const blob = await response.blob();
+      const filename = `Rebar-Inspection-${formData?.inspectionDate || 'report'}.pdf`;
+      const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+      await saveFileToChosenFolder(filename, blob, task?.projectNumber);
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Rebar-Inspection-${formData?.inspectionDate || 'report'}.pdf`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -387,12 +425,23 @@ const RebarForm: React.FC = () => {
               </button>
             </>
           )}
-          <button type="button" onClick={handleDownloadPdf} className="btn-primary">
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            className="btn-primary"
+            disabled={!formData?.id}
+            title={formData?.id ? 'Generate PDF' : 'Save the form first to generate a PDF'}
+          >
             Create PDF
           </button>
+          {!formData?.id && (
+            <span className="form-help" style={{ marginLeft: '8px', color: '#856404' }}>
+              Save the form first to generate a PDF.
+            </span>
+          )}
           {lastSavedPath && (
             <div className="pdf-saved-confirmation" style={{ marginTop: '10px', padding: '10px', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px', color: '#155724' }}>
-              PDF saved to: <strong>{lastSavedPath}</strong>
+              PDF saved.
             </div>
           )}
         </div>

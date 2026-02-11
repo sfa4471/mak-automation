@@ -550,9 +550,7 @@ const ProctorSummary: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError(''); // Clear any previous errors
-          // Show success message with saved path
-          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
-          alert(message);
+          alert('PDF created.');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
@@ -562,9 +560,11 @@ const ProctorSummary: React.FC = () => {
         if (result.pdfBase64) {
           const pdfBytes = Uint8Array.from(atob(result.pdfBase64), c => c.charCodeAt(0));
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-          const url = window.URL.createObjectURL(blob);
           const filename = result.fileName || `proctor-report-${task.id}.pdf`;
-          
+          const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+          await saveFileToChosenFolder(filename, blob, task?.projectNumber);
+
+          const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
           link.download = filename;
@@ -627,6 +627,9 @@ const ProctorSummary: React.FC = () => {
       
       // Valid PDF - create blob with explicit PDF MIME type
       const pdfBlob = new Blob([blob], { type: 'application/pdf' });
+      const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+      await saveFileToChosenFolder(filename, pdfBlob, task?.projectNumber);
+
       const url = window.URL.createObjectURL(pdfBlob);
       
       // Create download link with explicit filename to force PDF type recognition
@@ -766,10 +769,7 @@ const ProctorSummary: React.FC = () => {
           marginBottom: '15px',
           color: '#155724'
         }}>
-          <strong>✓ PDF Saved Successfully</strong>
-          <div style={{ marginTop: '5px', fontSize: '13px', wordBreak: 'break-all' }}>
-            <strong>Location:</strong> {lastSavedPath}
-          </div>
+          <strong>✓ PDF saved.</strong>
         </div>
       )}
 

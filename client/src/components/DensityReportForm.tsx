@@ -852,19 +852,40 @@ const DensityReportForm: React.FC = () => {
 
   const handleDownloadPdf = async () => {
     if (!task) return;
+    if (!formData) {
+      setError('No form data. Please wait for the form to load.');
+      alert('No form data. Please wait for the form to load, then try again.');
+      return;
+    }
     setLastSavedPath(null); // Clear previous saved path
+    setError('');
     try {
       const token = localStorage.getItem('token');
       if (!token) {
         alert('Authentication required. Please log in again.');
         return;
       }
+      // Ensure report is persisted so the PDF server can find it (server looks up by taskId in density_reports)
+      if (typeof formData.id === 'undefined' || formData.id === null) {
+        try {
+          const saved = await densityAPI.saveByTask(task.id, formData);
+          setFormData(saved);
+          setSaveStatus('saved');
+          setLastSaved(new Date());
+        } catch (saveErr: any) {
+          const saveMsg = saveErr.response?.data?.error || saveErr.message || 'Save failed';
+          setError(saveMsg);
+          alert(`Cannot generate PDF until the form is saved.\n\nPlease save the form first, then try Download PDF again.\n\nError: ${saveMsg}`);
+          return;
+        }
+      }
+
       const { getApiBaseUrl } = require('../utils/apiUrl');
       const baseUrl = getApiBaseUrl();
       // Ensure baseUrl doesn't already end with /api to avoid double /api/api/
       const cleanBaseUrl = baseUrl.replace(/\/api\/?$/, '');
       const pdfUrl = `${cleanBaseUrl}/api/pdf/density/${task.id}`;
-      
+
       const response = await fetch(pdfUrl, {
         method: 'GET',
         headers: {
@@ -896,8 +917,7 @@ const DensityReportForm: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
-          alert(message);
+          alert('PDF created.');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
@@ -906,9 +926,12 @@ const DensityReportForm: React.FC = () => {
         if (result.pdfBase64) {
           const pdfBytes = Uint8Array.from(atob(result.pdfBase64), c => c.charCodeAt(0));
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-          const url = window.URL.createObjectURL(blob);
           const filename = result.fileName || `density-report-${task.projectNumber}-${task.id}.pdf`;
+          const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+          const savedToFolder = await saveFileToChosenFolder(filename, blob, task.projectNumber);
+          if (savedToFolder) setLastSavedPath(`(saved to chosen folder)`);
 
+          const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
           link.download = filename;
@@ -922,10 +945,14 @@ const DensityReportForm: React.FC = () => {
 
       // Legacy support: Handle PDF response (if backend still returns PDF directly)
       const blob = await response.blob();
+      const filename = `density-report-${task.projectNumber}-${task.id}.pdf`;
+      const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+      await saveFileToChosenFolder(filename, blob, task.projectNumber);
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `density-report-${task.projectNumber}-${task.id}.pdf`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -975,7 +1002,7 @@ const DensityReportForm: React.FC = () => {
           <button onClick={handleDownloadPdf} className="pdf-button">Download PDF</button>
           {lastSavedPath && (
             <div className="pdf-saved-confirmation" style={{ marginTop: '10px', padding: '10px', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px', color: '#155724' }}>
-              PDF saved to: <strong>{lastSavedPath}</strong>
+              PDF saved.
             </div>
           )}
           {canEdit && (

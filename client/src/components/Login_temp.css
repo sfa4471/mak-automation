@@ -21,14 +21,14 @@
   justify-content: center;
   align-items: center;
   margin-bottom: 30px;
-  width: 100%;
 }
 
-.login-logo {
-  width: 100%;
-  max-width: 280px;
-  height: auto;
-  object-fit: contain;
+.login-box h2 {
+  margin: 0 0 30px 0;
+  color: #666;
+  align-items: center;
+  font-size: 16px;
+  font-weight: normal;
 }
 
 .form-group {
@@ -38,7 +38,7 @@
 .form-group label {
   display: block;
   margin-bottom: 8px;
-  color: #333;
+  justify-content: center;
   font-weight: 500;
 }
 
@@ -87,19 +87,11 @@
   font-size: 14px;
 }
 
-.login-help-text {
-  margin-top: 16px;
-  text-align: center;
-  font-size: 13px;
-  color: #666;
-  line-height: 1.4;
-}
-
 .login-info {
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid #eee;
-  text-align: center;
+  align-items: center;
   font-size: 12px;
   color: #999;
 }
@@ -113,8 +105,12 @@
     padding: 30px 20px;
   }
 
-  .login-logo {
-    max-width: 240px;
+  .logo-container {
+    font-size: 20px;
+  }
+
+  .login-box h2 {
+    font-size: 14px;
   }
 
   .form-group input,

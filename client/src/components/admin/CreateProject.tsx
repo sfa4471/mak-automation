@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { projectsAPI, SoilSpecs, ConcreteSpecs } from '../../api/projects';
+import { ensureProjectFolderInBrowser } from '../../utils/browserFolder';
 import './Admin.css';
 
 const SOIL_STRUCTURE_TYPES = [
@@ -130,12 +131,15 @@ const CreateProject: React.FC = () => {
     setLoading(true);
 
     try {
-      await projectsAPI.create({
+      const project = await projectsAPI.create({
         projectName,
         customerEmails: validEmails,
         soilSpecs: showSoilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : undefined,
         concreteSpecs: showConcreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : undefined
       });
+      if (project?.projectNumber) {
+        ensureProjectFolderInBrowser(project.projectNumber).catch(() => {});
+      }
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create project');

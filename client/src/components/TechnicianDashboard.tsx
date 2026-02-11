@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTenant } from '../context/TenantContext';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
 import TaskDetailModal from './TaskDetailModal';
@@ -8,6 +9,7 @@ import './TechnicianDashboard.css';
 
 const TechnicianDashboard: React.FC = () => {
   const { user, logout } = useAuth();
+  const { tenant } = useTenant();
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tomorrowTasks, setTomorrowTasks] = useState<Task[]>([]);
@@ -200,6 +202,7 @@ const TechnicianDashboard: React.FC = () => {
       <header className="technician-dashboard-header">
         <div className="header-left">
           <h1>My Tasks</h1>
+          {tenant?.name && <span className="tenant-info">{tenant.name}</span>}
           <span className="user-info">{user?.name || user?.email}</span>
         </div>
         <div className="header-right">

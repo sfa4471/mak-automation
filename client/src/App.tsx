@@ -1,6 +1,7 @@
 import React, { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { TenantProvider } from './context/TenantContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoadingSpinner from './components/LoadingSpinner';
@@ -29,6 +30,7 @@ function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
+        <TenantProvider>
         <Router>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -52,6 +54,14 @@ function App() {
             path="/technician/change-password"
             element={
               <ProtectedRoute requireTechnician>
+                <ChangePassword />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/change-password"
+            element={
+              <ProtectedRoute requireAdmin>
                 <ChangePassword />
               </ProtectedRoute>
             }
@@ -209,6 +219,7 @@ function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         </Router>
+        </TenantProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

@@ -65,6 +65,9 @@ const Login: React.FC = () => {
           <button type="submit" disabled={loading} className="login-button" aria-busy={loading}>
             {loading ? 'Logging in...' : 'Login'}
           </button>
+          <p className="login-help-text">
+            Forgot your password? Contact your system administrator to reset it.
+          </p>
         </form>
       </div>
     </div>
