@@ -880,9 +880,8 @@ const DensityReportForm: React.FC = () => {
         }
       }
 
-      const { getApiBaseUrlForFetch } = require('../api/api');
-      const baseUrl = getApiBaseUrlForFetch();
-      const pdfUrl = baseUrl ? `${baseUrl}/api/pdf/density/${task.id}` : `/api/pdf/density/${task.id}`;
+      const { getApiPathPrefix } = require('../api/api');
+      const pdfUrl = getApiPathPrefix() + `/pdf/density/${task.id}`;
 
       const response = await fetch(pdfUrl, {
         method: 'GET',

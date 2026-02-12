@@ -43,9 +43,8 @@ const TaskDetails: React.FC = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const { getApiBaseUrlForFetch } = require('../../api/api');
-      const baseUrl = getApiBaseUrlForFetch();
-      const apiPrefix = baseUrl ? `${baseUrl}/api` : '/api';
+      const { getApiPathPrefix } = require('../../api/api');
+      const apiPrefix = getApiPathPrefix();
 
       let url: string;
       let filename: string;

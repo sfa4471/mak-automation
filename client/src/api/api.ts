@@ -37,7 +37,38 @@ export function getApiBaseUrl(): string {
 export function getApiBaseUrlForFetch(): string {
   const base = getApiBaseUrl();
   if (!base) return '';
-  return base.replace(/\/api\/?$/, '');
+  const trimmed = base.trim();
+  try {
+    const u = new URL(trimmed);
+    if (u.pathname === '/api' || u.pathname === '/api/' || u.pathname === '' || u.pathname === '/') {
+      return u.origin;
+    }
+  } catch {
+    // not a full URL, fall through to regex
+  }
+  return trimmed.replace(/\/api\/?$/, '');
+}
+
+/**
+ * Returns the full API path prefix for fetch() so there is never double /api.
+ * - Same-origin: returns '/api'
+ * - Remote: returns 'https://origin.com/api'
+ * Use: fetch(getApiPathPrefix() + '/proctor/49/pdf') or getApiPathPrefix() + '/pdf/density/123'
+ */
+export function getApiPathPrefix(): string {
+  const base = getApiBaseUrl();
+  if (!base || base === '') return '/api';
+  const trimmed = base.trim();
+  try {
+    const u = new URL(trimmed);
+    if (u.pathname === '/api' || u.pathname === '/api/' || u.pathname === '' || u.pathname === '/') {
+      return u.origin + '/api';
+    }
+  } catch {
+    // fall through
+  }
+  const withoutApi = trimmed.replace(/\/api\/?$/, '');
+  return withoutApi ? withoutApi + '/api' : '/api';
 }
 
 const api = axios.create({

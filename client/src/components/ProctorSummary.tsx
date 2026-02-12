@@ -499,9 +499,8 @@ const ProctorSummary: React.FC = () => {
       
       // Use same approach as WP1Form - direct fetch (bypassing API helper)
       const token = localStorage.getItem('token');
-      const { getApiBaseUrlForFetch } = require('../api/api');
-      const baseUrl = getApiBaseUrlForFetch();
-      const pdfUrl = baseUrl ? `${baseUrl}/api/proctor/${task.id}/pdf` : `/api/proctor/${task.id}/pdf`;
+      const { getApiPathPrefix } = require('../api/api');
+      const pdfUrl = getApiPathPrefix() + `/proctor/${task.id}/pdf`;
       
       console.log('Fetching PDF from:', pdfUrl);
       

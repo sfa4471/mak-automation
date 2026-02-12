@@ -56,9 +56,8 @@ export const proctorAPI = {
   generatePDF: async (taskId: number, reportData: ProctorReportData): Promise<Blob> => {
     try {
       const token = localStorage.getItem('token');
-      const { getApiBaseUrlForFetch } = require('./api');
-      const baseUrl = getApiBaseUrlForFetch();
-      const pdfUrl = baseUrl ? `${baseUrl}/api/proctor/${taskId}/pdf` : `/api/proctor/${taskId}/pdf`;
+      const { getApiPathPrefix } = require('./api');
+      const pdfUrl = getApiPathPrefix() + `/proctor/${taskId}/pdf`;
       
       console.log('Starting PDF generation request to:', pdfUrl);
       
