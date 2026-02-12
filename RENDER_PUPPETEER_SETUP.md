@@ -16,7 +16,13 @@ So at **build** and **runtime** Puppeteer uses the project folder `.puppeteer-ca
 
 ### 2. Build command
 
-Set **Build Command** to:
+Set **Build Command** to (use one of these):
+
+```bash
+npm run build:render
+```
+
+or the full form:
 
 ```bash
 npm install && npm run install-chrome && npm run build

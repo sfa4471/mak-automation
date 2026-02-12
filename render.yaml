@@ -1,0 +1,11 @@
+# Render Blueprint: build command is set here so PDF generation (Puppeteer/Chrome) works.
+# If you already have a Web Service: Dashboard → New → Blueprint → connect this repo,
+# then ensure the service name below matches your existing service so Render applies this config.
+# See: https://docs.render.com/blueprint-spec
+
+services:
+  - type: web
+    name: mak-automation
+    runtime: node
+    buildCommand: npm run build:render
+    startCommand: node server/index.js

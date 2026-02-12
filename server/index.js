@@ -9,6 +9,14 @@ if (useBranchDb) {
   require('dotenv').config({ path: path.join(__dirname, '..', '.env.local'), override: true });
 }
 
+// On Render, point Puppeteer at project-local Chrome (installed during build).
+// Without this, Puppeteer looks in /opt/render/.cache/puppeteer where Chrome is not present.
+if (process.env.RENDER === 'true' && !process.env.PUPPETEER_CACHE_DIR) {
+  const puppeteerCache = path.join(process.cwd(), '.puppeteer-cache');
+  process.env.PUPPETEER_CACHE_DIR = puppeteerCache;
+  console.log('Puppeteer cache (Render):', puppeteerCache);
+}
+
 // ============================================================================
 // STARTUP CONFIGURATION VALIDATION
 // ============================================================================
