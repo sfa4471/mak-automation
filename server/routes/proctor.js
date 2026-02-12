@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const puppeteer = require('puppeteer');
+const { getPuppeteerLaunchOptions } = require('../utils/puppeteerLaunch');
 const path = require('path');
 const fs = require('fs');
 const db = require('../db');
@@ -638,16 +639,7 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
     // Launch Puppeteer and generate PDF
     let browser;
     try {
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox', 
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--disable-gpu'
-        ]
-      });
+      browser = await puppeteer.launch(getPuppeteerLaunchOptions());
       const page = await browser.newPage();
       
       // Step 4: Puppeteer generation - wait for all assets + avoid partial renders

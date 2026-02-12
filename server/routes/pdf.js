@@ -6,6 +6,7 @@ const path = require('path');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
 const { saveReportPDF } = require('../utils/pdfFileManager');
+const { getPuppeteerLaunchOptions } = require('../utils/puppeteerLaunch');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
@@ -501,10 +502,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
 
     // Generate PDF using Puppeteer
     console.log('Launching Puppeteer for WP1 PDF generation...');
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
     
     try {
       const page = await browser.newPage();
@@ -1079,10 +1077,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
 
       // Generate PDF using Puppeteer
       console.log('Launching Puppeteer for density PDF generation...');
-      const browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-      });
+      const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
       
       try {
         const page = await browser.newPage();
@@ -1337,10 +1332,7 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
 
         // Generate PDF using Puppeteer
         console.log('Launching Puppeteer for rebar PDF generation...');
-        const browser = await puppeteer.launch({
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
+        const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
         
         try {
           const page = await browser.newPage();
@@ -1527,7 +1519,7 @@ router.post('/rebar', authenticate, async (req, res) => {
       .replace('{{WIRE_MESH_SPEC}}', escapeHtml(data.wireMeshSpec || ''))
       .replace('{{DRAWINGS}}', escapeHtml(data.drawings || ''))
       .replace('{{TECHNICIAN_NAME}}', escapeHtml(data.techName || task.assignedTechnicianName || ''));
-    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
     try {
       const page = await browser.newPage();
       await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 1 });
