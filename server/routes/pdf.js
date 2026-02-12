@@ -11,6 +11,16 @@ const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
+/** Close browser without throwing if already disconnected (avoids "Target closed" noise). */
+async function safeCloseBrowser(browser) {
+  if (!browser) return;
+  try {
+    await browser.close();
+  } catch (e) {
+    // Ignore; browser may already be closed or disconnected
+  }
+}
+
 const LOGO_CONFIG = {
   path: path.join(__dirname, '..', 'public', 'MAK logo_consulting.jpg'),
   fallback: null
@@ -568,7 +578,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         `
       });
 
-      await browser.close();
+      await safeCloseBrowser(browser);
 
       if (!pdf || pdf.length === 0) {
         console.error('PDF buffer is empty');
@@ -632,7 +642,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         pdfBase64: pdfBuffer.toString('base64')
       });
     } catch (puppeteerError) {
-      await browser.close();
+      await safeCloseBrowser(browser);
       console.error('Puppeteer error:', puppeteerError);
       throw puppeteerError;
     }
@@ -1121,7 +1131,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
           preferCSSPageSize: false
         });
 
-        await browser.close();
+        await safeCloseBrowser(browser);
 
         if (!pdf || pdf.length === 0) {
           console.error('PDF buffer is empty');
@@ -1194,7 +1204,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
           pdfBase64: pdfBuffer.toString('base64')
         });
       } catch (puppeteerError) {
-        await browser.close();
+        await safeCloseBrowser(browser);
         console.error('Puppeteer error:', puppeteerError);
         throw puppeteerError;
       }
@@ -1376,7 +1386,7 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
             preferCSSPageSize: false
           });
           
-          await browser.close();
+          await safeCloseBrowser(browser);
           
           // Convert to Node.js Buffer
           const pdfBuffer = Buffer.from(pdf);
@@ -1432,7 +1442,7 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
             pdfBase64: pdfBuffer.toString('base64')
           });
         } catch (puppeteerError) {
-          await browser.close();
+          await safeCloseBrowser(browser);
           console.error('Puppeteer error:', puppeteerError);
           throw puppeteerError;
         }
@@ -1526,7 +1536,7 @@ router.post('/rebar', authenticate, async (req, res) => {
       await page.setContent(html, { waitUntil: 'load' });
       await new Promise(r => setTimeout(r, 1000));
       const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' }, preferCSSPageSize: false });
-      await browser.close();
+      await safeCloseBrowser(browser);
       const pdfBuffer = Buffer.from(pdf);
       const fieldDate = task.scheduledStartDate || data.inspectionDate || new Date().toISOString().split('T')[0];
       let saveInfo = null;
@@ -1549,7 +1559,7 @@ router.post('/rebar', authenticate, async (req, res) => {
         pdfBase64: pdfBuffer.toString('base64')
       });
     } catch (puppeteerErr) {
-      await browser.close();
+      await safeCloseBrowser(browser);
       throw puppeteerErr;
     }
   } catch (err) {

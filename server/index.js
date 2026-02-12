@@ -10,9 +10,10 @@ if (useBranchDb) {
 }
 
 // On Render, point Puppeteer at project-local Chrome (installed during build).
-// Without this, Puppeteer looks in /opt/render/.cache/puppeteer where Chrome is not present.
+// Use project root (parent of server/), not process.cwd(), since Render may run with CWD = server/.
 if (process.env.RENDER === 'true' && !process.env.PUPPETEER_CACHE_DIR) {
-  const puppeteerCache = path.join(process.cwd(), '.puppeteer-cache');
+  const projectRoot = path.join(__dirname, '..');
+  const puppeteerCache = path.join(projectRoot, '.puppeteer-cache');
   process.env.PUPPETEER_CACHE_DIR = puppeteerCache;
   console.log('Puppeteer cache (Render):', puppeteerCache);
 }

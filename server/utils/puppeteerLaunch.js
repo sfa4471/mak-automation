@@ -7,8 +7,8 @@
 const path = require('path');
 const fs = require('fs');
 
-/** Standard args for headless Chrome in Docker/Render (no GPU, no sandbox). */
-const HEADLESS_ARGS = [
+/** Args for headless Chrome in Docker/Render (no GPU, no sandbox). */
+const HEADLESS_ARGS_RENDER = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
   '--disable-dev-shm-usage',
@@ -18,6 +18,17 @@ const HEADLESS_ARGS = [
   '--no-zygote',
   '--disable-features=VizDisplayCompositor'
 ];
+
+/** Minimal args for local/dev (avoids "Target closed" on Windows). */
+const HEADLESS_ARGS_LOCAL = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu'
+];
+
+/** Use Render args only on Render; otherwise minimal args to avoid local crashes. */
+const HEADLESS_ARGS = process.env.RENDER === 'true' ? HEADLESS_ARGS_RENDER : HEADLESS_ARGS_LOCAL;
 
 /** Cached path to Chrome in .puppeteer-cache (resolved once per process). */
 let cachedProjectChromePath = null;
@@ -73,14 +84,14 @@ function getPuppeteerLaunchOptions(extraArgs = []) {
     return options;
   }
 
-  // On Render, Puppeteer may still resolve to /opt/render/.cache/puppeteer.
-  // Explicitly use Chrome from project .puppeteer-cache if present.
+  // On Render, Puppeteer may resolve cache to server/.puppeteer-cache (wrong). Use project root.
   if (process.env.RENDER === 'true') {
     if (cachedProjectChromePath !== null) {
       if (cachedProjectChromePath) options.executablePath = cachedProjectChromePath;
       return options;
     }
-    const projectCache = path.join(process.cwd(), '.puppeteer-cache');
+    const projectRoot = path.join(__dirname, '..', '..');
+    const projectCache = path.join(projectRoot, '.puppeteer-cache');
     cachedProjectChromePath = findChromeInCacheDir(projectCache) || false;
     if (cachedProjectChromePath) {
       console.log('Using Chrome from project cache:', cachedProjectChromePath);

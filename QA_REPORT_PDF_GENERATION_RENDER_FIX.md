@@ -17,13 +17,23 @@ Could not find Chrome (ver. 143.0.7499.169). This can occur if either
 ### 1. Server startup (Render)
 
 - **File:** `server/index.js`
-- On Render (`RENDER=true`), if `PUPPETEER_CACHE_DIR` is not set, it is set to `./.puppeteer-cache` (project root) so Puppeteer looks for Chrome in the same place it’s installed during build.
+- On Render (`RENDER=true`), if `PUPPETEER_CACHE_DIR` is not set, it is set to **project root** `.puppeteer-cache` using `path.join(__dirname, '..', '.puppeteer-cache')` so the path is correct even when Render runs with CWD = `server/` (which otherwise produced `/opt/render/project/src/server/.puppeteer-cache` and “Could not find Chrome”).
 
 ### 2. Launch fallback (explicit Chrome path)
 
 - **File:** `server/utils/puppeteerLaunch.js`
-- When `RENDER=true` and `PUPPETEER_EXECUTABLE_PATH` is not set, the server scans `./.puppeteer-cache` for the Chrome binary (e.g. `chrome` or `chromium`) and, if found, sets `executablePath` so Puppeteer uses that binary regardless of env cache path.
-- Result is resilient to Render’s default cache path and works as long as Chrome is present in `.puppeteer-cache` after build.
+- When `RENDER=true` and `PUPPETEER_EXECUTABLE_PATH` is not set, the server looks for Chrome in **project root** `.puppeteer-cache` using `path.join(__dirname, '..', '..')` (from `server/utils/`), not `process.cwd()`, so the binary is found regardless of working directory.
+- Result is resilient to Render’s default cache path and to CWD being `server/`.
+
+### 2b. Local “Target closed” fix
+
+- **File:** `server/utils/puppeteerLaunch.js`
+- On non-Render (local/dev), Chrome is launched with **minimal** args (`--no-sandbox`, `--disable-setuid-sandbox`, `--disable-dev-shm-usage`, `--disable-gpu`) instead of `--single-process` / `--no-zygote`, which can cause “Protocol error (Target.setDiscoverTargets): Target closed” on Windows.
+
+### 2c. Safe browser close (all PDF routes)
+
+- **File:** `server/routes/pdf.js`
+- Added `safeCloseBrowser(browser)` that catches close errors so a disconnected browser doesn’t throw. All PDF handlers (density, WP1, rebar, etc.) use it instead of raw `browser.close()`.
 
 ### 3. Single Render build script
 
