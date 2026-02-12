@@ -4,7 +4,7 @@ import { rebarAPI, RebarReport } from '../api/rebar';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
-import { getApiBaseUrl } from '../api/api';
+import { getApiBaseUrlForFetch } from '../api/api';
 import ProjectHomeButton from './ProjectHomeButton';
 import './RebarForm.css';
 
@@ -287,9 +287,9 @@ const RebarForm: React.FC = () => {
       }
 
       // Use same base URL as API (including tenant override) so save and PDF hit the same backend
-      const baseUrl = getApiBaseUrl();
-      const cleanBaseUrl = baseUrl.replace(/\/api\/?$/, '');
-      const pdfBase = `${cleanBaseUrl}/api/pdf/rebar`;
+      const baseUrl = getApiBaseUrlForFetch();
+      const apiPrefix = baseUrl ? `${baseUrl}/api` : '/api';
+      const pdfBase = `${apiPrefix}/pdf/rebar`;
       const headers: HeadersInit = { 'Authorization': `Bearer ${token}` };
 
       let response = await fetch(`${pdfBase}/${task.id}`, { method: 'GET', headers });

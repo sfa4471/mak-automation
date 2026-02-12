@@ -43,29 +43,28 @@ const TaskDetails: React.FC = () => {
 
     try {
       const token = localStorage.getItem('token');
-      // Get base URL (without /api)
-      const { getApiBaseUrl } = require('../../utils/apiUrl');
-      const baseUrl = getApiBaseUrl();
-      
-      // Route to correct PDF endpoint based on task type
+      const { getApiBaseUrlForFetch } = require('../../api/api');
+      const baseUrl = getApiBaseUrlForFetch();
+      const apiPrefix = baseUrl ? `${baseUrl}/api` : '/api';
+
       let url: string;
       let filename: string;
-      
+
       switch (task.taskType) {
         case 'COMPRESSIVE_STRENGTH':
-          url = `${baseUrl}/api/pdf/wp1/${id}?type=task`;
+          url = `${apiPrefix}/pdf/wp1/${id}?type=task`;
           filename = `compressive-strength-${task.projectNumber || id}.pdf`;
           break;
         case 'PROCTOR':
-          url = `${baseUrl}/api/proctor/${id}/pdf`;
+          url = `${apiPrefix}/proctor/${id}/pdf`;
           filename = `proctor-${task.projectNumber || id}.pdf`;
           break;
         case 'DENSITY_MEASUREMENT':
-          url = `${baseUrl}/api/pdf/density/${id}`;
+          url = `${apiPrefix}/pdf/density/${id}`;
           filename = `density-${task.projectNumber || id}.pdf`;
           break;
         case 'REBAR':
-          url = `${baseUrl}/api/pdf/rebar/${id}`;
+          url = `${apiPrefix}/pdf/rebar/${id}`;
           filename = `rebar-${task.projectNumber || id}.pdf`;
           break;
         default:

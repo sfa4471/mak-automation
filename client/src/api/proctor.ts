@@ -56,11 +56,9 @@ export const proctorAPI = {
   generatePDF: async (taskId: number, reportData: ProctorReportData): Promise<Blob> => {
     try {
       const token = localStorage.getItem('token');
-      // Use centralized API URL utility
-      const { getApiBaseUrl } = require('../utils/apiUrl');
-      const baseUrl = getApiBaseUrl();
-      
-      const pdfUrl = `${baseUrl}/api/proctor/${taskId}/pdf`;
+      const { getApiBaseUrlForFetch } = require('./api');
+      const baseUrl = getApiBaseUrlForFetch();
+      const pdfUrl = baseUrl ? `${baseUrl}/api/proctor/${taskId}/pdf` : `/api/proctor/${taskId}/pdf`;
       
       console.log('Starting PDF generation request to:', pdfUrl);
       

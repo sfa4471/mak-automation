@@ -6,7 +6,7 @@ import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
 import { ConcreteSpecs, projectsAPI } from '../api/projects';
-import { getApiBaseUrl } from '../utils/apiUrl';
+import { getApiBaseUrlForFetch } from '../api/api';
 import ProjectHomeButton from './ProjectHomeButton';
 import './WP1Form.css';
 
@@ -882,12 +882,12 @@ const WP1Form: React.FC = () => {
         }
       }
 
-      const baseUrl = getApiBaseUrl();
-      // Use task or workpackage route for PDF
+      const baseUrl = getApiBaseUrlForFetch();
       const pdfRoute = id;
+      const apiPrefix = baseUrl ? `${baseUrl}/api` : '/api';
       const pdfUrl = isTaskRoute 
-        ? `${baseUrl}/api/pdf/wp1/${pdfRoute}?type=task`
-        : `${baseUrl}/api/pdf/wp1/${pdfRoute}`;
+        ? `${apiPrefix}/pdf/wp1/${pdfRoute}?type=task`
+        : `${apiPrefix}/pdf/wp1/${pdfRoute}`;
       const response = await fetch(pdfUrl, {
         method: 'GET',
         headers: {

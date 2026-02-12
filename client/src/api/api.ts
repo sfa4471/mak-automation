@@ -29,6 +29,17 @@ export function getApiBaseUrl(): string {
   return tenantApiBaseUrlOverride || DEFAULT_API_URL;
 }
 
+/**
+ * Base URL for building full API paths in fetch() (e.g. PDF).
+ * Same host as getApiBaseUrl() but without trailing /api to avoid double /api/api/.
+ * Use for: `${getApiBaseUrlForFetch()}/api/pdf/...` or `${getApiBaseUrlForFetch()}/api/proctor/...`
+ */
+export function getApiBaseUrlForFetch(): string {
+  const base = getApiBaseUrl();
+  if (!base) return '';
+  return base.replace(/\/api\/?$/, '');
+}
+
 const api = axios.create({
   baseURL: DEFAULT_API_URL,
   headers: {
@@ -46,11 +57,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 errors
+// Handle 401 and 403 "Tenant context required" (stale token without tenantId after deploy)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const message = (error.response?.data?.error || '').toLowerCase();
+    const isTenantRequired = status === 403 && message.includes('tenant context required');
+
+    if (status === 401 || isTenantRequired) {
       setApiBaseUrl(null);
       localStorage.removeItem('token');
       localStorage.removeItem('user');
