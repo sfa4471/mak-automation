@@ -9,7 +9,7 @@
     "client": "cd client && npm start",
     "install-all": "npm install && cd client && npm install",
     "build": "cd client && npm run build",
-    "build:render": "npm install && npm run install-chrome && npm run build",
+    "build:render": "npm run install-all && npm run install-chrome && npm run build",
     "postinstall": "npx puppeteer browsers install chrome || true",
     "install-chrome": "node scripts/install-chrome.js",
     "reset-password": "node reset-password.js",
