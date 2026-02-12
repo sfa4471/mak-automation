@@ -96,16 +96,18 @@ export async function clearChosenFolder(): Promise<void> {
 }
 
 /**
- * Get the stored directory handle. Caller must request permission if needed.
- * Use this when creating project folders or saving files.
+ * Get the stored directory handle only if permission is already granted.
+ * Does NOT call requestPermission() here, because that requires a user gesture;
+ * we are often called after an async operation (e.g. PDF fetch), so the browser
+ * would throw SecurityError: "User activation is required to request permissions."
+ * If permission was revoked, the caller will just skip folder save and use the
+ * regular download link instead. User can re-pick the folder in Settings.
  */
 export async function getFolderHandle(): Promise<FileSystemDirectoryHandle | null> {
   const handle = await getFromIdb<FileSystemDirectoryHandle>(FOLDER_HANDLE_KEY);
   if (!handle) return null;
-  if (await handle.queryPermission({ mode: 'readwrite' }) !== 'granted') {
-    const granted = await handle.requestPermission({ mode: 'readwrite' });
-    if (granted !== 'granted') return null;
-  }
+  const permission = await handle.queryPermission({ mode: 'readwrite' });
+  if (permission !== 'granted') return null;
   return handle;
 }
 
