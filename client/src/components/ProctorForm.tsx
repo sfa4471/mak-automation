@@ -3,9 +3,12 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { proctorAPI } from '../api/proctor';
+import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
 import './ProctorForm.css';
+
+const DEFAULT_SAMPLED_BY = 'MAK Lonestar Consulting, LLC';
 
 interface ProctorRow {
   panNumber: string;
@@ -56,6 +59,7 @@ const ProctorForm: React.FC = () => {
   const { user, isAdmin } = useAuth();
   const isTaskRoute = location.pathname.startsWith('/task/');
   const [task, setTask] = useState<Task | null>(null);
+  const [tenant, setTenant] = useState<TenantMe | null>(null);
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
   // Initialize with sample data for columns 1-5
   const getInitialColumns = (): ProctorRow[] => {
@@ -474,8 +478,12 @@ const ProctorForm: React.FC = () => {
     try {
       setLoading(true);
       const taskId = parseInt(id!);
-      const taskData = await tasksAPI.get(taskId);
+      const [taskData, tenantData] = await Promise.all([
+        tasksAPI.get(taskId),
+        tenantsAPI.getMe().catch(() => null)
+      ]);
       setTask(taskData);
+      setTenant(tenantData);
       
       // Try to load saved Proctor data from backend first
       let savedProctorData = null;
@@ -941,7 +949,7 @@ const ProctorForm: React.FC = () => {
       const proctorAPIData = {
         projectName: task.projectName || '',
         projectNumber: task.projectNumber || '',
-        sampledBy: 'MAK Lonestar Consulting, LLC', // Default value
+        sampledBy: tenant?.name || tenant?.companyContactName || DEFAULT_SAMPLED_BY,
         testMethod: 'ASTM D698', // Default value
         client: '',
         soilClassification: soilClassification || '',
@@ -1060,7 +1068,7 @@ const ProctorForm: React.FC = () => {
       const proctorAPIData = {
         projectName: task.projectName || '',
         projectNumber: task.projectNumber || '',
-        sampledBy: 'MAK Lonestar Consulting, LLC', // Default value
+        sampledBy: tenant?.name || tenant?.companyContactName || DEFAULT_SAMPLED_BY,
         testMethod: 'ASTM D698', // Default value
         client: '',
         soilClassification: soilClassification || '',
@@ -1272,10 +1280,9 @@ const ProctorForm: React.FC = () => {
 
         {/* Soil Classification Input */}
         <div className="soil-classification-input">
-          <div className="mold-input-group">
+          <div className="mold-input-group mold-input-group-soil">
             <label htmlFor="soilClassification">Soil Classification:</label>
-            <input
-              type="text"
+            <textarea
               id="soilClassification"
               value={soilClassification}
               onChange={(e) => setSoilClassification(e.target.value)}
@@ -1283,6 +1290,7 @@ const ProctorForm: React.FC = () => {
               className={!isEditable ? 'readonly' : ''}
               placeholder="Type soil classification / material description..."
               maxLength={120}
+              rows={2}
             />
           </div>
         </div>

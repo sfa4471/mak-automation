@@ -18,9 +18,16 @@ export interface LoginResponse {
   tenant?: { tenantId: number; tenantName: string; tenantSubdomain?: string | null; apiBaseUrl?: string | null };
 }
 
+export interface TenantChoice {
+  id: number;
+  name: string;
+}
+
 export const authAPI = {
-  login: async (email: string, password: string): Promise<LoginResponse> => {
-    const response = await api.post<LoginResponse>('/auth/login', { email, password });
+  login: async (email: string, password: string, tenantId?: number): Promise<LoginResponse> => {
+    const body: { email: string; password: string; tenantId?: number } = { email, password };
+    if (tenantId != null) body.tenantId = tenantId;
+    const response = await api.post<LoginResponse>('/auth/login', body);
     return response.data;
   },
 
@@ -50,6 +57,16 @@ export const authAPI = {
 
   deleteTechnician: async (id: number): Promise<void> => {
     await api.delete(`/auth/technicians/${id}`);
+  },
+
+  forgotPassword: async (email: string, tenantId?: number): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>('/auth/forgot-password', { email, tenantId });
+    return response.data;
+  },
+
+  resetPassword: async (token: string, newPassword: string): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>('/auth/reset-password', { token, newPassword });
+    return response.data;
   },
 };
 

@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, authAPI } from '../api/auth';
+import { tenantsAPI } from '../api/tenants';
 import { setApiBaseUrl } from '../api/api';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, tenantId?: number) => Promise<void>;
   logout: () => void;
   isAdmin: () => boolean;
   isTechnician: () => boolean;
@@ -24,24 +25,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (token && storedUser) {
       try {
         setUser(JSON.parse(storedUser));
-        // Verify token is still valid
+        // Verify token and switch to tenant's backend if they use local folder/PDFs
         authAPI.getMe()
           .then((currentUser) => {
             setUser(currentUser);
-            setApiBaseUrl(currentUser.apiBaseUrl ?? null);
             localStorage.setItem('user', JSON.stringify(currentUser));
-            if (currentUser.tenantId && currentUser.tenantName) {
-              localStorage.setItem('tenant', JSON.stringify({
-                tenantId: currentUser.tenantId,
-                tenantName: currentUser.tenantName,
-                tenantSubdomain: currentUser.tenantSubdomain ?? null,
-              }));
-            }
+            return tenantsAPI.getMe();
+          })
+          .then((tenant) => {
+            if (tenant?.apiBaseUrl) setApiBaseUrl(tenant.apiBaseUrl);
           })
           .catch(() => {
             localStorage.removeItem('token');
             localStorage.removeItem('user');
             setUser(null);
+            setApiBaseUrl(null);
           })
           .finally(() => setLoading(false));
       } catch (e) {
@@ -55,31 +53,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const response = await authAPI.login(email, password);
-    const apiBaseUrl = response.tenant?.apiBaseUrl ?? response.user.apiBaseUrl ?? null;
-    setApiBaseUrl(apiBaseUrl ?? null);
-    const userWithTenant = {
-      ...response.user,
-      tenantId: response.tenant?.tenantId ?? response.user.tenantId,
-      tenantName: response.tenant?.tenantName ?? response.user.tenantName,
-      tenantSubdomain: response.tenant?.tenantSubdomain ?? response.user.tenantSubdomain ?? null,
-      apiBaseUrl: apiBaseUrl ?? undefined,
-    };
+  const login = async (email: string, password: string, tenantId?: number) => {
+    const response = await authAPI.login(email, password, tenantId);
     localStorage.setItem('token', response.token);
-    localStorage.setItem('user', JSON.stringify(userWithTenant));
-    if (response.tenant) {
-      localStorage.setItem('tenant', JSON.stringify({ ...response.tenant, apiBaseUrl: apiBaseUrl ?? undefined }));
+    localStorage.setItem('user', JSON.stringify(response.user));
+    setUser(response.user);
+    // If tenant has their own backend (local folder/PDFs), use it for all API calls
+    try {
+      const tenant = await tenantsAPI.getMe();
+      if (tenant?.apiBaseUrl) setApiBaseUrl(tenant.apiBaseUrl);
+      else setApiBaseUrl(null);
+    } catch {
+      setApiBaseUrl(null);
     }
-    setUser(userWithTenant);
   };
 
   const logout = () => {
-    setApiBaseUrl(null);
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    localStorage.removeItem('tenant');
     setUser(null);
+    setApiBaseUrl(null);
   };
 
   const isAdmin = () => user?.role === 'ADMIN';

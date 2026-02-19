@@ -152,6 +152,21 @@
   font-style: italic;
 }
 
+/* PDF created: same size as action buttons (padding 10px 20px) */
+.pdf-saved-confirmation {
+  margin-top: 10px;
+  padding: 10px 20px;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  background: #d4edda;
+  border: 1px solid #c3e6cb;
+  border-radius: 5px;
+  color: #155724;
+  font-size: 14px;
+}
+
 .wp1-form {
   max-width: 1400px;
   margin: 0 auto;

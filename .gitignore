@@ -11,3 +11,4 @@ server/.env
 
 .vercel
 .env*.local
+.env.local.crestfield

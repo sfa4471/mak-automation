@@ -2,85 +2,50 @@ import axios from 'axios';
 
 /**
  * API base URL resolution rules:
- * - Per-tenant override (tenant.apiBaseUrl) when set — for client's own backend so workflow path works
  * - Production (Vercel): use REACT_APP_API_BASE_URL
  * - Network/local: use REACT_APP_API_URL (set by setup-network-env.js)
  * - Local development: use http://localhost:5000
+ * - NO hardcoded LAN IPs
+ * - When tenant has apiBaseUrl (client's own backend), that overrides after login.
  */
-const DEFAULT_API_URL =
+const API_URL =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_URL ||
   (window.location.hostname === 'localhost'
     ? 'http://localhost:5000/api'
     : '');
 
-/** Per-tenant backend URL; when set, all API requests go to this base (e.g. client's Windows backend). */
-let tenantApiBaseUrlOverride: string | null = null;
-
-export function getDefaultApiUrl(): string {
-  return DEFAULT_API_URL;
-}
-
-export function setApiBaseUrl(url: string | null | undefined): void {
-  tenantApiBaseUrlOverride = url && url.trim() ? url.trim() : null;
-}
-
-export function getApiBaseUrl(): string {
-  return tenantApiBaseUrlOverride || DEFAULT_API_URL;
-}
-
-/**
- * Base URL for building full API paths in fetch() (e.g. PDF).
- * Same host as getApiBaseUrl() but without trailing /api to avoid double /api/api/.
- * Use for: `${getApiBaseUrlForFetch()}/api/pdf/...` or `${getApiBaseUrlForFetch()}/api/proctor/...`
- */
-export function getApiBaseUrlForFetch(): string {
-  const base = getApiBaseUrl();
-  if (!base) return '';
-  const trimmed = base.trim();
-  try {
-    const u = new URL(trimmed);
-    if (u.pathname === '/api' || u.pathname === '/api/' || u.pathname === '' || u.pathname === '/') {
-      return u.origin;
-    }
-  } catch {
-    // not a full URL, fall through to regex
-  }
-  return trimmed.replace(/\/api\/?$/, '');
-}
-
-/**
- * Returns the full API path prefix for fetch() so there is never double /api.
- * - Same-origin: returns '/api'
- * - Remote: returns 'https://origin.com/api'
- * Use: fetch(getApiPathPrefix() + '/proctor/49/pdf') or getApiPathPrefix() + '/pdf/density/123'
- */
-export function getApiPathPrefix(): string {
-  const base = getApiBaseUrl();
-  if (!base || base === '') return '/api';
-  const trimmed = base.trim();
-  try {
-    const u = new URL(trimmed);
-    if (u.pathname === '/api' || u.pathname === '/api/' || u.pathname === '' || u.pathname === '/') {
-      return u.origin + '/api';
-    }
-  } catch {
-    // fall through
-  }
-  const withoutApi = trimmed.replace(/\/api\/?$/, '');
-  return withoutApi ? withoutApi + '/api' : '/api';
-}
-
 const api = axios.create({
-  baseURL: DEFAULT_API_URL,
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Use current base URL (default or tenant override) for every request
+/**
+ * Switch API base URL to the tenant's backend (e.g. client's PC).
+ * Call with tenant.apiBaseUrl after login when present; call with null on logout to reset.
+ */
+export function setApiBaseUrl(url: string | null): void {
+  if (url && url.trim()) {
+    const base = url.trim().replace(/\/api\/?$/, '');
+    api.defaults.baseURL = `${base}/api`;
+  } else {
+    api.defaults.baseURL = API_URL;
+  }
+}
+
+/**
+ * Base URL of the backend currently used for API calls (no trailing /api).
+ * Use this for building PDF download or logo URLs so they hit the same backend as the API.
+ */
+export function getCurrentApiBaseUrl(): string {
+  const b = api.defaults.baseURL || '';
+  return b.replace(/\/api\/?$/, '') || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : '');
+}
+
+// Add token to requests
 api.interceptors.request.use((config) => {
-  config.baseURL = getApiBaseUrl();
   const token = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -88,19 +53,13 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 and 403 "Tenant context required" (stale token without tenantId after deploy)
+// Handle 401 errors
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    const status = error.response?.status;
-    const message = (error.response?.data?.error || '').toLowerCase();
-    const isTenantRequired = status === 403 && message.includes('tenant context required');
-
-    if (status === 401 || isTenantRequired) {
-      setApiBaseUrl(null);
+    if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      localStorage.removeItem('tenant');
       window.location.href = '/login';
     }
     return Promise.reject(error);

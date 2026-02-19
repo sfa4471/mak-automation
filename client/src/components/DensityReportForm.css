@@ -205,6 +205,21 @@
   opacity: 0.6;
 }
 
+/* PDF created: same size as action buttons (padding 8px 16px) */
+.pdf-saved-confirmation {
+  margin-top: 10px;
+  padding: 8px 16px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  background: #d4edda;
+  border: 1px solid #c3e6cb;
+  border-radius: 4px;
+  color: #155724;
+  font-size: 14px;
+}
+
 .density-form-content {
   max-width: 1400px;
   margin: 0 auto;

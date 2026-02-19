@@ -75,6 +75,41 @@
   color: #333;
 }
 
+.form-row-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-row-grid-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.settings-section.subsection {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+}
+
+.settings-section.subsection h3 {
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-size: 1rem;
+  color: #555;
+}
+
+.company-logo-preview {
+  margin-bottom: 10px;
+}
+
+.company-logo-preview img {
+  max-width: 120px;
+  max-height: 80px;
+  object-fit: contain;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
 .form-input {
   width: 100%;
   padding: 10px;
@@ -260,6 +295,11 @@
 
   .settings-content {
     padding: 20px;
+  }
+
+  .form-row-grid,
+  .form-row-grid-3 {
+    grid-template-columns: 1fr;
   }
 
   .form-actions {

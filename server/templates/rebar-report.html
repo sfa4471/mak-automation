@@ -189,10 +189,9 @@
   <!-- Header Section -->
   <div class="header-section">
     <div class="company-info">
-      <div>MAK LONESTAR CONSULTING</div>
-      <div>940 N Beltline Road, Suite 107,</div>
-      <div>Irving, TX 75061</div>
-      <div>P: 214-718-1250</div>
+      <div>{{COMPANY_NAME}}</div>
+      <div>{{COMPANY_ADDRESS}}</div>
+      <div>P: {{COMPANY_PHONE}}</div>
     </div>
     <div class="logo-area">{{LOGO_IMAGE}}</div>
   </div>
@@ -247,7 +246,7 @@
     <div class="results-title">Results / Remarks:</div>
     
     <div class="prefilled-paragraph">
-      On the above-mentioned date, a representative of MAK Lonestar Consulting observed reinforcing steel placed at the following location:
+      On the above-mentioned date, a representative of {{COMPANY_NAME}} observed reinforcing steel placed at the following location:
     </div>
     
     <div class="location-detail">
@@ -273,17 +272,17 @@
   
   <!-- Signature Block -->
   <div class="signature-block">
-    <div>MAK LONESTAR CONSULTING, INC.</div>
-    <div>Texas Board of Professional Engineers Firm Reg, F-24443</div>
+    <div>{{COMPANY_NAME}}</div>
+    <div>{{PE_FIRM_REG_LINE}}</div>
     <div class="signature-line"></div>
-    <div>Muhammad Awais Khan, P.E.</div>
-    <div>Geotechnical Engineer</div>
-    <div>T +1 214 718 1250 | E maklonestarservices@gmail.com</div>
+    <div>{{LICENSE_HOLDER_NAME}}</div>
+    <div>{{LICENSE_HOLDER_TITLE}}</div>
+    <div>T {{COMPANY_PHONE}} | E {{COMPANY_EMAIL}}</div>
   </div>
   
   <!-- Footer -->
   <div class="footer">
-    <div>MAK LONESTAR CONSULTING, INC.</div>
+    <div>{{COMPANY_NAME}}</div>
   </div>
 </body>
 </html>

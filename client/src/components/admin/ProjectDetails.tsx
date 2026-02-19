@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { projectsAPI, Project, SoilSpecs, ConcreteSpecs } from '../../api/projects';
+import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress } from '../../api/projects';
 import './ProjectDetails.css';
 
 const SOIL_STRUCTURE_TYPES = [
@@ -23,16 +23,36 @@ const CONCRETE_STRUCTURE_TYPES = [
   'Other'
 ];
 
+function CopyIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
 const ProjectDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user: _user } = useAuth();
+  const { user: _user, isAdmin } = useAuth();
+  const [openingDrawing, setOpeningDrawing] = useState<string | null>(null);
+  const [deletingDrawing, setDeletingDrawing] = useState<string | null>(null);
+  const [addDrawingFiles, setAddDrawingFiles] = useState<File[]>([]);
+  const [uploadingDrawings, setUploadingDrawings] = useState(false);
+  const [drawingUploadError, setDrawingUploadError] = useState('');
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [projectName, setProjectName] = useState('');
-  const [customerEmails, setCustomerEmails] = useState<string[]>(['']);
+  /** To emails: single string, separate multiple with ; */
+  const [customerEmailsStr, setCustomerEmailsStr] = useState('');
+  /** CC emails: single string, separate multiple with ; */
+  const [ccEmailsStr, setCcEmailsStr] = useState('');
+  /** BCC emails: single string, separate multiple with ; */
+  const [bccEmailsStr, setBccEmailsStr] = useState('');
+  const [customerDetails, setCustomerDetails] = useState<CustomerDetails>({});
   const [soilSpecs, setSoilSpecs] = useState<SoilSpecs>({});
   const [concreteSpecs, setConcreteSpecs] = useState<ConcreteSpecs>({});
   const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
@@ -65,15 +85,25 @@ const ProjectDetails: React.FC = () => {
       setProject(projectData);
       setProjectName(projectData.projectName || '');
       
-      // Load customer emails (new format)
+      // Load customer emails as semicolon-separated strings
       if (projectData.customerEmails && Array.isArray(projectData.customerEmails) && projectData.customerEmails.length > 0) {
-        setCustomerEmails(projectData.customerEmails);
+        setCustomerEmailsStr(projectData.customerEmails.join('; '));
       } else if (projectData.customerEmail) {
-        // Fallback to old format for backward compatibility
-        setCustomerEmails([projectData.customerEmail]);
+        setCustomerEmailsStr(projectData.customerEmail);
       } else {
-        setCustomerEmails(['']);
+        setCustomerEmailsStr('');
       }
+      if (projectData.ccEmails && Array.isArray(projectData.ccEmails)) {
+        setCcEmailsStr(projectData.ccEmails.join('; '));
+      } else {
+        setCcEmailsStr('');
+      }
+      if (projectData.bccEmails && Array.isArray(projectData.bccEmails)) {
+        setBccEmailsStr(projectData.bccEmails.join('; '));
+      } else {
+        setBccEmailsStr('');
+      }
+      setCustomerDetails(projectData.customerDetails && typeof projectData.customerDetails === 'object' ? projectData.customerDetails : {});
       
       // Load soil specs - normalize keys to match defined structure types
       let loadedSoilSpecs = projectData.soilSpecs || {};
@@ -128,21 +158,47 @@ const ProjectDetails: React.FC = () => {
     }
   };
 
-  const addCustomerEmail = () => {
-    setCustomerEmails([...customerEmails, '']);
-  };
+  /** Parse semicolon-separated string into trimmed non-empty emails */
+  const parseEmailString = useCallback((str: string): string[] => {
+    if (!str || typeof str !== 'string') return [];
+    return str.split(/[;\n]+/).map(s => s.trim()).filter(Boolean);
+  }, []);
 
-  const removeCustomerEmail = (index: number) => {
-    if (customerEmails.length > 1) {
-      setCustomerEmails(customerEmails.filter((_, i) => i !== index));
+  const copyEmailsToClipboard = useCallback(async (emailStr: string) => {
+    const list = parseEmailString(emailStr);
+    const text = list.length ? list.join('; ') : emailStr.trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      // Could show a brief "Copied!" toast here
+    } catch {
+      // Fallback for older browsers
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
     }
-  };
+  }, [parseEmailString]);
 
-  const updateCustomerEmail = (index: number, value: string) => {
-    const newEmails = [...customerEmails];
-    newEmails[index] = value;
-    setCustomerEmails(newEmails);
-  };
+  const updateCustomerDetail = useCallback(<K extends keyof CustomerDetails>(key: K, value: CustomerDetails[K]) => {
+    setCustomerDetails(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const updateBillingAddress = useCallback((field: keyof ProjectAddress, value: string) => {
+    setCustomerDetails(prev => ({
+      ...prev,
+      billingAddress: { ...(prev.billingAddress || {}), [field]: value }
+    }));
+  }, []);
+
+  const updateShippingAddress = useCallback((field: keyof ProjectAddress, value: string) => {
+    setCustomerDetails(prev => ({
+      ...prev,
+      shippingAddress: { ...(prev.shippingAddress || {}), [field]: value }
+    }));
+  }, []);
 
   const validateSoilSpecs = (): boolean => {
     const errors: { [key: string]: string } = {};
@@ -301,27 +357,37 @@ const ProjectDetails: React.FC = () => {
     setError('');
     setValidationErrors({});
 
-    // Validate customer emails
-    const validEmails = customerEmails.filter(email => email.trim() !== '');
-    if (validEmails.length === 0) {
-      setError('At least one customer email is required');
-      return;
-    }
-
-    // Check for duplicate emails
-    const uniqueEmails = Array.from(new Set(validEmails));
-    if (uniqueEmails.length !== validEmails.length) {
-      setError('Duplicate emails are not allowed');
-      return;
-    }
-
-    // Validate email formats
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    for (const email of validEmails) {
+    const validTo = parseEmailString(customerEmailsStr);
+    const validCc = parseEmailString(ccEmailsStr);
+    const validBcc = parseEmailString(bccEmailsStr);
+
+    if (validTo.length === 0) {
+      setError('At least one customer (To) email is required');
+      return;
+    }
+    for (const email of validTo) {
       if (!emailRegex.test(email)) {
-        setError(`Invalid email format: ${email}`);
+        setError(`Invalid To email format: ${email}`);
         return;
       }
+    }
+    for (const email of validCc) {
+      if (!emailRegex.test(email)) {
+        setError(`Invalid CC email format: ${email}`);
+        return;
+      }
+    }
+    for (const email of validBcc) {
+      if (!emailRegex.test(email)) {
+        setError(`Invalid BCC email format: ${email}`);
+        return;
+      }
+    }
+    const uniqueTo = Array.from(new Set(validTo));
+    if (uniqueTo.length !== validTo.length) {
+      setError('Duplicate To emails are not allowed');
+      return;
     }
 
     // Validate soil specs
@@ -347,9 +413,20 @@ const ProjectDetails: React.FC = () => {
         concreteSpecs: JSON.parse(JSON.stringify(concreteSpecs)) // Deep clone for accurate logging
       });
       
+      const detailsPayload: CustomerDetails = {
+        ...customerDetails,
+        shippingSameAsBilling: customerDetails.shippingSameAsBilling ?? false
+      };
+      if (detailsPayload.shippingSameAsBilling && detailsPayload.billingAddress) {
+        detailsPayload.shippingAddress = { ...detailsPayload.billingAddress };
+      }
+
       const updateData: any = {
         projectName,
-        customerEmails: validEmails
+        customerEmails: validTo,
+        ccEmails: validCc,
+        bccEmails: validBcc,
+        customerDetails: detailsPayload
       };
       
       // Build soil specs - normalize keys to use correct case from defined structure types
@@ -479,12 +556,22 @@ const ProjectDetails: React.FC = () => {
       setProject(updatedProject);
       setProjectName(updatedProject.projectName || '');
       
-      // Update customer emails
-      if (updatedProject.customerEmails && Array.isArray(updatedProject.customerEmails) && updatedProject.customerEmails.length > 0) {
-        setCustomerEmails(updatedProject.customerEmails);
+      if (updatedProject.customerEmails && Array.isArray(updatedProject.customerEmails)) {
+        setCustomerEmailsStr(updatedProject.customerEmails.join('; '));
       } else {
-        setCustomerEmails(['']);
+        setCustomerEmailsStr('');
       }
+      if (updatedProject.ccEmails && Array.isArray(updatedProject.ccEmails)) {
+        setCcEmailsStr(updatedProject.ccEmails.join('; '));
+      } else {
+        setCcEmailsStr('');
+      }
+      if (updatedProject.bccEmails && Array.isArray(updatedProject.bccEmails)) {
+        setBccEmailsStr(updatedProject.bccEmails.join('; '));
+      } else {
+        setBccEmailsStr('');
+      }
+      setCustomerDetails(updatedProject.customerDetails && typeof updatedProject.customerDetails === 'object' ? updatedProject.customerDetails : {});
       
       // Use the normalized filtered specs we just sent (they have the correct case)
       // Don't use the API response directly as it might have different case
@@ -593,53 +680,300 @@ const ProjectDetails: React.FC = () => {
               />
             </div>
 
-            <div className="form-group">
-              <label>Customer Emails *</label>
-              {customerEmails.map((email, index) => (
-                <div key={index} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => updateCustomerEmail(index, e.target.value)}
-                    placeholder="customer@example.com"
-                    className="form-input"
-                    style={{ flex: 1 }}
-                    required={index === 0}
-                  />
-                  {customerEmails.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeCustomerEmail(index)}
-                      style={{
-                        padding: '8px 12px',
-                        background: '#dc3545',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={addCustomerEmail}
-                style={{
-                  padding: '8px 16px',
-                  background: '#28a745',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  marginTop: '5px'
-                }}
-              >
-                + Add Email
-              </button>
+            <h3 className="form-subsection-title">Customer Details</h3>
+            <div className="form-row form-row-2">
+              <div className="form-group">
+                <label htmlFor="customerTitle">Title</label>
+                <input
+                  type="text"
+                  id="customerTitle"
+                  value={customerDetails.title ?? ''}
+                  onChange={(e) => updateCustomerDetail('title', e.target.value)}
+                  placeholder="Mr, Ms, Dr, etc."
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="customerCompany">Company Name</label>
+                <input
+                  type="text"
+                  id="customerCompany"
+                  value={customerDetails.companyName ?? ''}
+                  onChange={(e) => updateCustomerDetail('companyName', e.target.value)}
+                  className="form-input"
+                />
+              </div>
             </div>
+            <div className="form-row form-row-3">
+              <div className="form-group">
+                <label htmlFor="customerFirstName">First Name</label>
+                <input
+                  type="text"
+                  id="customerFirstName"
+                  value={customerDetails.firstName ?? ''}
+                  onChange={(e) => updateCustomerDetail('firstName', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="customerMiddleName">Middle Name</label>
+                <input
+                  type="text"
+                  id="customerMiddleName"
+                  value={customerDetails.middleName ?? ''}
+                  onChange={(e) => updateCustomerDetail('middleName', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="customerLastName">Last Name</label>
+                <input
+                  type="text"
+                  id="customerLastName"
+                  value={customerDetails.lastName ?? ''}
+                  onChange={(e) => updateCustomerDetail('lastName', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+            </div>
+            <div className="form-row form-row-2">
+              <div className="form-group">
+                <label htmlFor="customerPhone">Phone Number</label>
+                <input
+                  type="tel"
+                  id="customerPhone"
+                  value={customerDetails.phoneNumber ?? ''}
+                  onChange={(e) => updateCustomerDetail('phoneNumber', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="customerMobile">Mobile Number</label>
+                <input
+                  type="tel"
+                  id="customerMobile"
+                  value={customerDetails.mobileNumber ?? ''}
+                  onChange={(e) => updateCustomerDetail('mobileNumber', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+            </div>
+            <div className="form-row form-row-2">
+              <div className="form-group">
+                <label htmlFor="customerWebsite">Website</label>
+                <input
+                  type="url"
+                  id="customerWebsite"
+                  value={customerDetails.website ?? ''}
+                  onChange={(e) => updateCustomerDetail('website', e.target.value)}
+                  placeholder="https://"
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="customerNameOnChecks">Name to Put on Checks</label>
+                <input
+                  type="text"
+                  id="customerNameOnChecks"
+                  value={customerDetails.nameOnChecks ?? ''}
+                  onChange={(e) => updateCustomerDetail('nameOnChecks', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+            </div>
+
+            <div className="form-group email-with-copy">
+              <label htmlFor="customerEmails">To (Customer Emails) *</label>
+              <div className="input-with-copy">
+                <input
+                  type="text"
+                  id="customerEmails"
+                  value={customerEmailsStr}
+                  onChange={(e) => setCustomerEmailsStr(e.target.value)}
+                  placeholder="email1@example.com; email2@example.com"
+                  className="form-input"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => copyEmailsToClipboard(customerEmailsStr)}
+                  className="copy-btn"
+                  title="Copy all email addresses"
+                  aria-label="Copy emails"
+                >
+                  <CopyIcon />
+                </button>
+              </div>
+              <small>Separate multiple emails with semicolon (;)</small>
+            </div>
+            <div className="form-group email-with-copy">
+              <label htmlFor="ccEmails">Cc</label>
+              <div className="input-with-copy">
+                <input
+                  type="text"
+                  id="ccEmails"
+                  value={ccEmailsStr}
+                  onChange={(e) => setCcEmailsStr(e.target.value)}
+                  placeholder="cc1@example.com; cc2@example.com"
+                  className="form-input"
+                />
+                <button
+                  type="button"
+                  onClick={() => copyEmailsToClipboard(ccEmailsStr)}
+                  className="copy-btn"
+                  title="Copy all CC addresses"
+                  aria-label="Copy CC emails"
+                >
+                  <CopyIcon />
+                </button>
+              </div>
+              <small>Separate multiple emails with semicolon (;)</small>
+            </div>
+            <div className="form-group email-with-copy">
+              <label htmlFor="bccEmails">Bcc</label>
+              <div className="input-with-copy">
+                <input
+                  type="text"
+                  id="bccEmails"
+                  value={bccEmailsStr}
+                  onChange={(e) => setBccEmailsStr(e.target.value)}
+                  placeholder="bcc1@example.com; bcc2@example.com"
+                  className="form-input"
+                />
+                <button
+                  type="button"
+                  onClick={() => copyEmailsToClipboard(bccEmailsStr)}
+                  className="copy-btn"
+                  title="Copy all BCC addresses"
+                  aria-label="Copy BCC emails"
+                >
+                  <CopyIcon />
+                </button>
+              </div>
+              <small>Separate multiple emails with semicolon (;)</small>
+            </div>
+
+            <h3 className="form-subsection-title">Billing Address</h3>
+            <div className="form-group">
+              <label htmlFor="billingStreet1">Street Address 1</label>
+              <input
+                type="text"
+                id="billingStreet1"
+                value={customerDetails.billingAddress?.street1 ?? ''}
+                onChange={(e) => updateBillingAddress('street1', e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="billingStreet2">Street Address 2</label>
+              <input
+                type="text"
+                id="billingStreet2"
+                value={customerDetails.billingAddress?.street2 ?? ''}
+                onChange={(e) => updateBillingAddress('street2', e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <div className="form-row form-row-3">
+              <div className="form-group">
+                <label htmlFor="billingCity">City</label>
+                <input
+                  type="text"
+                  id="billingCity"
+                  value={customerDetails.billingAddress?.city ?? ''}
+                  onChange={(e) => updateBillingAddress('city', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="billingState">State</label>
+                <input
+                  type="text"
+                  id="billingState"
+                  value={customerDetails.billingAddress?.state ?? ''}
+                  onChange={(e) => updateBillingAddress('state', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="billingZip">Zip Code</label>
+                <input
+                  type="text"
+                  id="billingZip"
+                  value={customerDetails.billingAddress?.zipCode ?? ''}
+                  onChange={(e) => updateBillingAddress('zipCode', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+            </div>
+
+            <h3 className="form-subsection-title">Shipping Address</h3>
+            <div className="form-group checkbox-group">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={customerDetails.shippingSameAsBilling ?? false}
+                  onChange={(e) => updateCustomerDetail('shippingSameAsBilling', e.target.checked)}
+                />
+                Same as billing address
+              </label>
+            </div>
+            {!(customerDetails.shippingSameAsBilling ?? false) && (
+              <>
+                <div className="form-group">
+                  <label htmlFor="shippingStreet1">Street Address 1</label>
+                  <input
+                    type="text"
+                    id="shippingStreet1"
+                    value={customerDetails.shippingAddress?.street1 ?? ''}
+                    onChange={(e) => updateShippingAddress('street1', e.target.value)}
+                    className="form-input"
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="shippingStreet2">Street Address 2</label>
+                  <input
+                    type="text"
+                    id="shippingStreet2"
+                    value={customerDetails.shippingAddress?.street2 ?? ''}
+                    onChange={(e) => updateShippingAddress('street2', e.target.value)}
+                    className="form-input"
+                  />
+                </div>
+                <div className="form-row form-row-3">
+                  <div className="form-group">
+                    <label htmlFor="shippingCity">City</label>
+                    <input
+                      type="text"
+                      id="shippingCity"
+                      value={customerDetails.shippingAddress?.city ?? ''}
+                      onChange={(e) => updateShippingAddress('city', e.target.value)}
+                      className="form-input"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="shippingState">State</label>
+                    <input
+                      type="text"
+                      id="shippingState"
+                      value={customerDetails.shippingAddress?.state ?? ''}
+                      onChange={(e) => updateShippingAddress('state', e.target.value)}
+                      className="form-input"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="shippingZip">Zip Code</label>
+                    <input
+                      type="text"
+                      id="shippingZip"
+                      value={customerDetails.shippingAddress?.zipCode ?? ''}
+                      onChange={(e) => updateShippingAddress('zipCode', e.target.value)}
+                      className="form-input"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="form-section">
@@ -812,16 +1146,171 @@ const ProjectDetails: React.FC = () => {
               </div>
           </div>
 
+          <div className="form-section">
+            <h2>Drawings</h2>
+            {project && (project.drawings && project.drawings.length > 0) ? (
+              <ul className="drawings-list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {(project.drawings as ProjectDrawing[]).map((d) => (
+                  <li key={d.filename} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span>{d.displayName || d.filename}</span>
+                    <button
+                      type="button"
+                      className="details-button"
+                      style={{ padding: '4px 10px' }}
+                      disabled={openingDrawing === d.filename}
+                      onClick={async () => {
+                        if (!project?.id) return;
+                        setOpeningDrawing(d.filename);
+                        try {
+                          const blob = await projectsAPI.getDrawingBlob(project.id, d.filename);
+                          const url = URL.createObjectURL(blob);
+                          window.open(url, '_blank');
+                          setTimeout(() => URL.revokeObjectURL(url), 60000);
+                        } catch {
+                          // ignore
+                        } finally {
+                          setOpeningDrawing(null);
+                        }
+                      }}
+                    >
+                      {openingDrawing === d.filename ? 'Opening...' : 'View'}
+                    </button>
+                    <a
+                      href="#"
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        if (!project?.id) return;
+                        try {
+                          const blob = await projectsAPI.getDrawingBlob(project.id, d.filename);
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = (d.displayName || d.filename).replace(/\.pdf$/i, '') + '.pdf';
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                      style={{ fontSize: 14 }}
+                    >
+                      Download
+                    </a>
+                    {isAdmin() && (
+                      <button
+                        type="button"
+                        disabled={deletingDrawing === d.filename}
+                        onClick={async () => {
+                          if (!project?.id || !window.confirm(`Delete "${d.displayName || d.filename}"?`)) return;
+                          setDeletingDrawing(d.filename);
+                          try {
+                            const { drawings } = await projectsAPI.deleteDrawing(project.id, d.filename);
+                            setProject(prev => prev ? { ...prev, drawings } : null);
+                          } catch {
+                            setError('Failed to delete drawing');
+                          } finally {
+                            setDeletingDrawing(null);
+                          }
+                        }}
+                        className="cancel-button"
+                        style={{ padding: '4px 10px', fontSize: 12 }}
+                      >
+                        {deletingDrawing === d.filename ? 'Deleting...' : 'Delete'}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p style={{ color: '#666', margin: 0 }}>No drawings uploaded.</p>
+            )}
+            {isAdmin() && project?.id && (
+              <div className="add-drawings-block" style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: 14 }}>Add drawings</h3>
+                <p style={{ color: '#666', margin: '0 0 8px 0', fontSize: 13 }}>PDF only. Max 10 files total, 20MB each.</p>
+                <input
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  multiple
+                  onChange={(e) => {
+                    const chosen = e.target.files ? Array.from(e.target.files) : [];
+                    const current = (project?.drawings?.length ?? 0);
+                    setAddDrawingFiles(prev => [...prev, ...chosen].slice(0, Math.max(0, 10 - current)));
+                    e.target.value = '';
+                    setDrawingUploadError('');
+                  }}
+                />
+                {addDrawingFiles.length > 0 && (
+                  <ul style={{ margin: '8px 0', paddingLeft: 20 }}>
+                    {addDrawingFiles.map((f, i) => (
+                      <li key={`${f.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <span>{f.name}</span>
+                        <span style={{ color: '#666', fontSize: 12 }}>({(f.size / 1024).toFixed(1)} KB)</span>
+                        <button
+                          type="button"
+                          onClick={() => setAddDrawingFiles(prev => prev.filter((_, idx) => idx !== i))}
+                          className="cancel-button"
+                          style={{ padding: '2px 8px', fontSize: 12 }}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {addDrawingFiles.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={uploadingDrawings}
+                    onClick={async () => {
+                      if (!project?.id) return;
+                      const current = (project?.drawings?.length ?? 0);
+                      if (current + addDrawingFiles.length > 10) {
+                        setDrawingUploadError('Maximum 10 drawings per project.');
+                        return;
+                      }
+                      const MAX = 20 * 1024 * 1024;
+                      for (const f of addDrawingFiles) {
+                        if (f.size > MAX) {
+                          setDrawingUploadError(`"${f.name}" is too large. Max 20MB per file.`);
+                          return;
+                        }
+                      }
+                      setUploadingDrawings(true);
+                      setDrawingUploadError('');
+                      try {
+                        const { drawings } = await projectsAPI.uploadDrawings(project.id, addDrawingFiles);
+                        setProject(prev => prev ? { ...prev, drawings } : null);
+                        setAddDrawingFiles([]);
+                      } catch (err: any) {
+                        setDrawingUploadError(err.response?.data?.error || 'Upload failed');
+                      } finally {
+                        setUploadingDrawings(false);
+                      }
+                    }}
+                    className="submit-button"
+                    style={{ marginTop: 8 }}
+                  >
+                    {uploadingDrawings ? 'Uploading...' : 'Upload selected'}
+                  </button>
+                )}
+                {drawingUploadError && <p style={{ color: '#c00', margin: '8px 0 0 0', fontSize: 13 }}>{drawingUploadError}</p>}
+              </div>
+            )}
+          </div>
+
           {error && <div className="error-message">{error}</div>}
 
-          <div className="form-actions">
-            <button type="button" onClick={() => navigate('/dashboard')} className="cancel-button">
-              Cancel
-            </button>
-            <button type="submit" disabled={saving} className="submit-button">
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
+          {isAdmin() && (
+            <div className="form-actions">
+              <button type="button" onClick={() => navigate('/dashboard')} className="cancel-button">
+                Cancel
+              </button>
+              <button type="submit" disabled={saving} className="submit-button">
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>

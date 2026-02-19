@@ -451,7 +451,10 @@ router.get('/:id/wp1', authenticate, requireTenant, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const data = await db.get('wp1_data', { workPackageId });
+    const tenantId = db.isSupabase() && (wp.tenant_id != null || wp.tenantId != null) ? (wp.tenant_id ?? wp.tenantId) : null;
+    const getConditions = { workPackageId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const data = await db.get('wp1_data', getConditions);
 
     if (data) {
       // Parse cylinders JSON
@@ -514,6 +517,10 @@ router.post('/:id/wp1', authenticate, requireTenant, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const tenantId = db.isSupabase() && (wp.tenant_id != null || wp.tenantId != null) ? (wp.tenant_id ?? wp.tenantId) : null;
+    const getConditions = { workPackageId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+
     const {
       technician, weather, placementDate, specStrength, specStrengthDays,
       structure, sampleLocation, supplier, timeBatched, classMixId, timeSampled,
@@ -568,15 +575,19 @@ router.post('/:id/wp1', authenticate, requireTenant, async (req, res) => {
       lastEditedByUserId: req.user.id,
       updatedAt: new Date().toISOString()
     };
+    if (tenantId != null) wp1Data.tenant_id = tenantId;
+
+    const updateConditions = { workPackageId };
+    if (tenantId != null) updateConditions.tenant_id = tenantId;
 
     // Check if record exists
-    const existing = await db.get('wp1_data', { workPackageId });
+    const existing = await db.get('wp1_data', getConditions);
 
     if (existing) {
       // Update
-      await db.update('wp1_data', wp1Data, { workPackageId });
+      await db.update('wp1_data', wp1Data, updateConditions);
     } else {
-      // Insert
+      // Insert (tenant_id required for multi-tenant Supabase)
       await db.insert('wp1_data', wp1Data);
     }
 
@@ -600,7 +611,7 @@ router.post('/:id/wp1', authenticate, requireTenant, async (req, res) => {
     }
 
     // Return updated data
-    const data = await db.get('wp1_data', { workPackageId });
+    const data = await db.get('wp1_data', getConditions);
     
     if (data) {
       // Parse cylinders JSON
