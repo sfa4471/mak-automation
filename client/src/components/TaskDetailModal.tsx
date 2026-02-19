@@ -88,7 +88,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
     return statusMap[status] || status;
   };
 
-  const hasAdminInstructions = task.locationNotes || task.engagementNotes;
+  const hasAdminInstructions = !!(task.locationName || task.locationNotes || task.engagementNotes);
 
   // Helper function to capitalize structure type names (title case)
   const capitalizeStructureType = (type: string): string => {
@@ -195,17 +195,27 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
           {hasAdminInstructions && (
             <div className="admin-instructions-section">
               <h3>📋 Admin Instructions</h3>
-              {task.locationNotes && (
-                <div className="instruction-block">
-                  <div className="instruction-label">Location Notes:</div>
-                  <div className="instruction-content">{task.locationNotes}</div>
-                </div>
-              )}
-              {task.engagementNotes && (
-                <div className="instruction-block">
-                  <div className="instruction-label">Engagement Notes:</div>
-                  <div className="instruction-content">{task.engagementNotes}</div>
-                </div>
+              {(task.locationName || task.locationNotes || task.engagementNotes) && (
+                <>
+                  {task.locationName && (
+                    <div className="instruction-block">
+                      <div className="instruction-label">Location Name:</div>
+                      <div className="instruction-content">{task.locationName}</div>
+                    </div>
+                  )}
+                  {task.locationNotes && (
+                    <div className="instruction-block">
+                      <div className="instruction-label">Location Notes:</div>
+                      <div className="instruction-content">{task.locationNotes}</div>
+                    </div>
+                  )}
+                  {task.engagementNotes && (
+                    <div className="instruction-block">
+                      <div className="instruction-label">Engagement Notes:</div>
+                      <div className="instruction-content">{task.engagementNotes}</div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -286,26 +296,24 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
             </div>
           </div>
 
-          {/* Specifications Section - hidden for technician view */}
-          {!isTechnicianView && (
-            <div className="specs-section">
-              <h3>Specifications</h3>
-              {loadingProject ? (
-                <div className="specs-loading">Loading specifications...</div>
-              ) : (
-                <>
-                  <div className="specs-subsection">
-                    <h4>Concrete Specifications</h4>
-                    {renderConcreteSpecs()}
-                  </div>
-                  <div className="specs-subsection">
-                    <h4>Soil Specifications</h4>
-                    {renderSoilSpecs()}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          {/* Specifications Section - show for both admin and technician */}
+          <div className="specs-section">
+            <h3>Specifications</h3>
+            {loadingProject ? (
+              <div className="specs-loading">Loading specifications...</div>
+            ) : (
+              <>
+                <div className="specs-subsection">
+                  <h4>Concrete Specifications</h4>
+                  {renderConcreteSpecs()}
+                </div>
+                <div className="specs-subsection">
+                  <h4>Soil Specifications</h4>
+                  {renderSoilSpecs()}
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Technician: Drawings list (expandable) */}
           {isTechnicianView && task.projectId && (

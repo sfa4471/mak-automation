@@ -102,8 +102,9 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         });
       }
 
-      // Check access
-      if (req.user.role === 'TECHNICIAN' && taskOrWp.assignedTechnicianId !== req.user.id) {
+      // Check access (task: assigned_technician_id; workpackage: assigned_to)
+      const taskOrWpAssignedId = taskOrWp.assigned_technician_id ?? taskOrWp.assignedTechnicianId ?? taskOrWp.assigned_to ?? taskOrWp.assignedTo;
+      if (req.user.role === 'TECHNICIAN' && taskOrWpAssignedId !== req.user.id) {
         return res.status(403).json({ error: 'Access denied' });
       }
 
@@ -688,7 +689,8 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
     }
 
     // Check access
-    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+    const assignedTechId = task.assigned_technician_id ?? task.assignedTechnicianId;
+    if (req.user.role === 'TECHNICIAN' && assignedTechId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -874,7 +876,8 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
     }
 
     // Check access
-    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+    const assignedTechId = task.assigned_technician_id ?? task.assignedTechnicianId;
+    if (req.user.role === 'TECHNICIAN' && assignedTechId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -1254,7 +1257,8 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
-    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+    const rebarAssignedTechId = task.assigned_technician_id ?? task.assignedTechnicianId;
+    if (req.user.role === 'TECHNICIAN' && rebarAssignedTechId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -1468,7 +1472,8 @@ router.post('/rebar', authenticate, async (req, res) => {
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
-    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+    const rebarAssignedTechId = task.assigned_technician_id ?? task.assignedTechnicianId;
+    if (req.user.role === 'TECHNICIAN' && rebarAssignedTechId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
     const data = {

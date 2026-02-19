@@ -59,7 +59,8 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
     if (!req.legacyDb && req.tenantId != null && (task.tenant_id ?? task.tenantId) !== req.tenantId) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+    const assignedTechId = task.assigned_technician_id ?? task.assignedTechnicianId;
+    if (req.user.role === 'TECHNICIAN' && assignedTechId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -322,7 +323,8 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
     if (!req.legacyDb && req.tenantId != null && (task.tenant_id ?? task.tenantId) !== req.tenantId) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+    const assignedTechId = task.assigned_technician_id ?? task.assignedTechnicianId;
+    if (req.user.role === 'TECHNICIAN' && assignedTechId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 

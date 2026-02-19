@@ -511,7 +511,8 @@ router.get('/:id', authenticate, requireTenant, async (req, res) => {
       }
     }
 
-    if (req.user.role === 'TECHNICIAN' && task.assignedTechnicianId !== req.user.id) {
+    const assignedTechId = task.assigned_technician_id ?? task.assignedTechnicianId;
+    if (req.user.role === 'TECHNICIAN' && assignedTechId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -1856,6 +1857,9 @@ router.get('/dashboard/technician/today', authenticate, async (req, res) => {
         dueDate: task.due_date,
         scheduledStartDate: task.scheduled_start_date,
         scheduledEndDate: task.scheduled_end_date,
+        locationName: task.location_name ?? task.locationName,
+        locationNotes: task.location_notes ?? task.locationNotes,
+        engagementNotes: task.engagement_notes ?? task.engagementNotes,
         users: undefined,
         projects: undefined
       }));
@@ -1978,6 +1982,9 @@ router.get('/dashboard/technician/upcoming', authenticate, async (req, res) => {
         dueDate: task.due_date,
         scheduledStartDate: task.scheduled_start_date,
         scheduledEndDate: task.scheduled_end_date,
+        locationName: task.location_name ?? task.locationName,
+        locationNotes: task.location_notes ?? task.locationNotes,
+        engagementNotes: task.engagement_notes ?? task.engagementNotes,
         users: undefined,
         projects: undefined
       }));
@@ -2085,6 +2092,9 @@ router.get('/dashboard/technician/tomorrow', authenticate, async (req, res) => {
         dueDate: task.due_date,
         scheduledStartDate: task.scheduled_start_date,
         scheduledEndDate: task.scheduled_end_date,
+        locationName: task.location_name ?? task.locationName,
+        locationNotes: task.location_notes ?? task.locationNotes,
+        engagementNotes: task.engagement_notes ?? task.engagementNotes,
         users: undefined,
         projects: undefined
       }));
@@ -2178,6 +2188,9 @@ router.get('/dashboard/technician/open-reports', authenticate, async (req, res) 
         dueDate: task.due_date,
         scheduledStartDate: task.scheduled_start_date,
         scheduledEndDate: task.scheduled_end_date,
+        locationName: task.location_name ?? task.locationName,
+        locationNotes: task.location_notes ?? task.locationNotes,
+        engagementNotes: task.engagement_notes ?? task.engagementNotes,
         fieldCompleted: task.field_completed,
         reportSubmitted: task.report_submitted,
         fieldCompletedAt: task.field_completed_at,
