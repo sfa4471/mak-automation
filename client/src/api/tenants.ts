@@ -24,6 +24,9 @@ export interface TenantMe {
   apiBaseUrl: string | null;
 }
 
+/** Alias for TenantMe for backward compatibility (e.g. TenantContext). */
+export type Tenant = TenantMe;
+
 export interface TenantMeUpdate {
   name?: string | null;
   companyAddress?: string | null;
