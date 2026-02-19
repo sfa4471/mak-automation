@@ -174,7 +174,7 @@ const Dashboard: React.FC = () => {
           {tenant?.logoPath ? (
             <img
               src={tenant.logoPath}
-              alt={tenant.name}
+              alt={tenant.name ?? ''}
               className="company-logo"
               onError={(e) => {
                 const target = e.target as HTMLImageElement;
