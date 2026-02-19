@@ -925,7 +925,7 @@ const DensityReportForm: React.FC = () => {
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
           const filename = result.fileName || `density-report-${task.projectNumber}-${task.id}.pdf`;
           const { saveFileToChosenFolder } = await import('../utils/browserFolder');
-          const savedToFolder = await saveFileToChosenFolder(filename, blob, task.projectNumber);
+          const savedToFolder = await saveFileToChosenFolder(filename, blob, task.projectNumber, user?.tenantId);
           if (savedToFolder) setLastSavedPath(`(saved to chosen folder)`);
 
           const url = window.URL.createObjectURL(blob);
@@ -944,7 +944,7 @@ const DensityReportForm: React.FC = () => {
       const blob = await response.blob();
       const filename = `density-report-${task.projectNumber}-${task.id}.pdf`;
       const { saveFileToChosenFolder } = await import('../utils/browserFolder');
-      await saveFileToChosenFolder(filename, blob, task.projectNumber);
+      await saveFileToChosenFolder(filename, blob, task.projectNumber, user?.tenantId);
 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');

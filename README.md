@@ -114,6 +114,10 @@ This will start:
 
 ## Deployment to Render.com
 
+### UI consistency (Vercel & production)
+
+The **Create Project** form (`client/src/components/admin/CreateProject.tsx`) is the full version: project number, tenant logo, To/Cc/Bcc emails, customer details, billing/shipping addresses, and optional drawings. Do **not** replace it with a simplified form; that would make production/Vercel show an outdated UI. The file has an in-file comment and commit `8b75d4f` as reference.
+
 ### Pre-Deployment Checklist
 
 Before deploying, run these validation scripts:

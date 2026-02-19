@@ -6,7 +6,12 @@
 
 const IDB_NAME = 'mak-automation';
 const IDB_STORE = 'settings';
-const FOLDER_HANDLE_KEY = 'project-folder-handle';
+const FOLDER_HANDLE_KEY_PREFIX = 'project-folder-handle';
+
+/** Storage key for folder handle. Scoped by tenant so different companies do not overwrite each other. */
+function getFolderHandleKey(tenantId?: number | null): string {
+  return tenantId != null ? `${FOLDER_HANDLE_KEY_PREFIX}-${tenantId}` : FOLDER_HANDLE_KEY_PREFIX;
+}
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -63,48 +68,50 @@ export function isFolderPickerSupported(): boolean {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 }
 
-/** Whether we have a stored folder handle (user has chosen a folder). */
-export async function hasChosenFolder(): Promise<boolean> {
+/** Whether we have a stored folder handle (user has chosen a folder). Pass tenantId so each company has its own folder. */
+export async function hasChosenFolder(tenantId?: number | null): Promise<boolean> {
   if (!isFolderPickerSupported()) return false;
-  const handle = await getFromIdb<FileSystemDirectoryHandle>(FOLDER_HANDLE_KEY);
+  const key = getFolderHandleKey(tenantId);
+  const handle = await getFromIdb<FileSystemDirectoryHandle>(key);
   return !!handle;
 }
 
-/** Folder name for display (from the handle). */
-export async function getChosenFolderName(): Promise<string | null> {
-  const handle = await getFromIdb<FileSystemDirectoryHandle>(FOLDER_HANDLE_KEY);
+/** Folder name for display (from the handle). Pass tenantId to match the scoped storage. */
+export async function getChosenFolderName(tenantId?: number | null): Promise<string | null> {
+  const key = getFolderHandleKey(tenantId);
+  const handle = await getFromIdb<FileSystemDirectoryHandle>(key);
   return handle?.name ?? null;
 }
 
 /**
- * Open the system folder picker. On success, the handle is stored in IndexedDB.
+ * Open the system folder picker. On success, the handle is stored in IndexedDB scoped by tenantId.
  * Must be called from a user gesture (e.g. button click).
+ * Pass tenantId so each company's folder choice is stored separately and cannot overwrite another.
  */
-export async function chooseFolder(): Promise<{ name: string }> {
+export async function chooseFolder(tenantId?: number | null): Promise<{ name: string }> {
   if (!isFolderPickerSupported()) {
     throw new Error('Your browser does not support choosing a folder. Please use Chrome or Edge.');
   }
   const win = window as Window & { showDirectoryPicker?: (opts?: { mode?: string }) => Promise<FileSystemDirectoryHandle> };
   const handle = await win.showDirectoryPicker!({ mode: 'readwrite' });
-  await setInIdb(FOLDER_HANDLE_KEY, handle);
+  const key = getFolderHandleKey(tenantId);
+  await setInIdb(key, handle);
   return { name: handle.name };
 }
 
-/** Clear the stored folder (e.g. "Don't use folder on this device"). */
-export async function clearChosenFolder(): Promise<void> {
-  await deleteFromIdb(FOLDER_HANDLE_KEY);
+/** Clear the stored folder for this tenant. Pass tenantId so only this company's choice is cleared. */
+export async function clearChosenFolder(tenantId?: number | null): Promise<void> {
+  await deleteFromIdb(getFolderHandleKey(tenantId));
 }
 
 /**
  * Get the stored directory handle only if permission is already granted.
- * Does NOT call requestPermission() here, because that requires a user gesture;
- * we are often called after an async operation (e.g. PDF fetch), so the browser
- * would throw SecurityError: "User activation is required to request permissions."
- * If permission was revoked, the caller will just skip folder save and use the
- * regular download link instead. User can re-pick the folder in Settings.
+ * Pass tenantId so the handle is the one chosen by this company (no cross-tenant overwrite).
+ * Does NOT call requestPermission() here, because that requires a user gesture.
  */
-export async function getFolderHandle(): Promise<FileSystemDirectoryHandle | null> {
-  const handle = await getFromIdb<FileSystemDirectoryHandle>(FOLDER_HANDLE_KEY);
+export async function getFolderHandle(tenantId?: number | null): Promise<FileSystemDirectoryHandle | null> {
+  const key = getFolderHandleKey(tenantId);
+  const handle = await getFromIdb<FileSystemDirectoryHandle>(key);
   if (!handle) return null;
   const permission = await handle.queryPermission({ mode: 'readwrite' });
   if (permission !== 'granted') return null;
@@ -113,10 +120,13 @@ export async function getFolderHandle(): Promise<FileSystemDirectoryHandle | nul
 
 /**
  * Create a project folder in the chosen directory and return a handle to it.
- * If no folder was chosen, returns null.
+ * Pass tenantId so the root folder is the one chosen by this company.
  */
-export async function ensureProjectFolderInBrowser(projectNumber: string): Promise<FileSystemDirectoryHandle | null> {
-  const root = await getFolderHandle();
+export async function ensureProjectFolderInBrowser(
+  projectNumber: string,
+  tenantId?: number | null
+): Promise<FileSystemDirectoryHandle | null> {
+  const root = await getFolderHandle(tenantId);
   if (!root) return null;
   const sanitized = projectNumber.replace(/[\\/:*?"<>|]/g, '_');
   return root.getDirectoryHandle(sanitized, { create: true });
@@ -124,13 +134,15 @@ export async function ensureProjectFolderInBrowser(projectNumber: string): Promi
 
 /**
  * Save a file (e.g. PDF blob) into the chosen folder, optionally under a project subfolder.
+ * Pass tenantId so files are saved to this company's chosen folder only.
  */
 export async function saveFileToChosenFolder(
   filename: string,
   blob: Blob,
-  projectNumber?: string
+  projectNumber?: string,
+  tenantId?: number | null
 ): Promise<boolean> {
-  const root = await getFolderHandle();
+  const root = await getFolderHandle(tenantId);
   if (!root) return false;
   let dir: FileSystemDirectoryHandle = root;
   if (projectNumber) {

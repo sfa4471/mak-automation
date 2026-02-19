@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import { settingsAPI, WorkflowStatusResponse } from '../../api/settings';
 import {
   isFolderPickerSupported,
@@ -16,6 +17,8 @@ import './Settings.css';
  */
 const Settings: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const tenantId = user?.tenantId ?? null;
 
   const [status, setStatus] = useState<WorkflowStatusResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -29,13 +32,13 @@ const Settings: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    hasChosenFolder().then((yes) => {
+    hasChosenFolder(tenantId).then((yes) => {
       if (cancelled) return;
-      if (yes) getChosenFolderName().then((n) => { if (!cancelled) setBrowserFolderName(n); });
+      if (yes) getChosenFolderName(tenantId).then((n) => { if (!cancelled) setBrowserFolderName(n); });
       else setBrowserFolderName(null);
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [tenantId]);
 
   const loadSettings = async () => {
     try {
@@ -83,7 +86,7 @@ const Settings: React.FC = () => {
                       onClick={async () => {
                         setBrowserFolderLoading(true);
                         try {
-                          await clearChosenFolder();
+                          await clearChosenFolder(tenantId);
                           setBrowserFolderName(null);
                           setMessage({ type: 'success', text: 'Folder cleared. Click "Choose folder" to pick again.' });
                         } catch (e: any) {
@@ -101,12 +104,12 @@ const Settings: React.FC = () => {
                 ) : (
                   <button
                     type="button"
-                    onClick={async () => {
-                      setBrowserFolderLoading(true);
-                      setMessage(null);
-                      try {
-                        const { name } = await chooseFolder();
-                        setBrowserFolderName(name);
+                      onClick={async () => {
+                        setBrowserFolderLoading(true);
+                        setMessage(null);
+                        try {
+                          const { name } = await chooseFolder(tenantId);
+                          setBrowserFolderName(name);
                         setMessage({ type: 'success', text: 'Folder selected. Project folders and PDFs will save here.' });
                       } catch (e: any) {
                         setMessage({ type: 'error', text: e?.message || 'Could not open folder picker' });

@@ -1,3 +1,8 @@
+/**
+ * Full Create Project form. Do NOT replace with a simplified version.
+ * Required: project number, tenant logo, To/Cc/Bcc emails, customer details,
+ * billing/shipping addresses, optional drawings upload. See commit 8b75d4f as reference.
+ */
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { projectsAPI, SoilSpecs, ConcreteSpecs, CustomerDetails } from '../../api/projects';

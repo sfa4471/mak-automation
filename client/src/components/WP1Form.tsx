@@ -924,7 +924,7 @@ const WP1Form: React.FC = () => {
           const projectNumber = currentItem?.projectNumber || 'report';
           const filename = result.fileName || `compressive-strength-report-${projectNumber}.pdf`;
           const { saveFileToChosenFolder } = await import('../utils/browserFolder');
-          await saveFileToChosenFolder(filename, blob, projectNumber);
+          await saveFileToChosenFolder(filename, blob, projectNumber, user?.tenantId);
 
           const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
@@ -943,7 +943,7 @@ const WP1Form: React.FC = () => {
       const projectNumber = currentItem?.projectNumber || 'report';
       const filename = `compressive-strength-report-${projectNumber}.pdf`;
       const { saveFileToChosenFolder } = await import('../utils/browserFolder');
-      await saveFileToChosenFolder(filename, blob, projectNumber);
+      await saveFileToChosenFolder(filename, blob, projectNumber, user?.tenantId);
 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');

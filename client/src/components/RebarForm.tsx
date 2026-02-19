@@ -337,7 +337,7 @@ const RebarForm: React.FC = () => {
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
           const filename = result.fileName || `Rebar-Inspection-${formData?.inspectionDate || 'report'}.pdf`;
           const { saveFileToChosenFolder } = await import('../utils/browserFolder');
-          await saveFileToChosenFolder(filename, blob, task?.projectNumber);
+          await saveFileToChosenFolder(filename, blob, task?.projectNumber, user?.tenantId);
 
           const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
@@ -355,7 +355,7 @@ const RebarForm: React.FC = () => {
       const blob = await response.blob();
       const filename = `Rebar-Inspection-${formData?.inspectionDate || 'report'}.pdf`;
       const { saveFileToChosenFolder } = await import('../utils/browserFolder');
-      await saveFileToChosenFolder(filename, blob, task?.projectNumber);
+      await saveFileToChosenFolder(filename, blob, task?.projectNumber, user?.tenantId);
 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
