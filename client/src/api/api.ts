@@ -43,6 +43,22 @@ function stripApiSuffix(url: string): string {
 }
 
 /**
+ * Return the origin (protocol + host) of the current API base URL.
+ * Used to build PDF/asset URLs with exactly one /api segment (avoids /api/api/ 404).
+ */
+function getApiOrigin(): string {
+  const b = api.defaults.baseURL || '';
+  const normalized = stripApiSuffix(b) || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : '');
+  if (!normalized) return '';
+  try {
+    const u = new URL(normalized.startsWith('http') ? normalized : `${window.location.origin}${normalized}`);
+    return u.origin;
+  } catch {
+    return normalized;
+  }
+}
+
+/**
  * Base URL of the backend currently used for API calls (no trailing /api).
  * Use this for building PDF download or logo URLs so they hit the same backend as the API.
  */
@@ -52,13 +68,13 @@ export function getCurrentApiBaseUrl(): string {
 }
 
 /**
- * API path prefix for building PDF/asset URLs (base + '/api').
- * Use with paths like getApiPathPrefix() + '/pdf/wp1/123' so the request hits the same backend as the API.
- * Defensively strips any trailing /api from base to avoid /api/api/... (404) when env or tenant URL includes /api.
+ * API path prefix for building PDF/asset URLs: always exactly origin + '/api'.
+ * Use with paths like getApiPathPrefix() + '/pdf/wp1/123'. Building from origin
+ * guarantees a single /api segment and avoids /api/api/... (404) when env or tenant URL includes /api.
  */
 export function getApiPathPrefix(): string {
-  const base = stripApiSuffix(getCurrentApiBaseUrl());
-  return base ? `${base}/api` : '/api';
+  const origin = getApiOrigin();
+  return origin ? `${origin}/api` : '/api';
 }
 
 // Add token to requests
