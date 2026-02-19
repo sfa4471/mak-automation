@@ -583,9 +583,21 @@ const ProctorSummary: React.FC = () => {
         if (result.pdfBase64) {
           const pdfBytes = Uint8Array.from(atob(result.pdfBase64), c => c.charCodeAt(0));
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-          const url = window.URL.createObjectURL(blob);
           const filename = result.fileName || `proctor-report-${task.id}.pdf`;
-          
+
+          // Save to browser-chosen folder (same as WP1, Density, Rebar) so it goes to "Project Folder Location"
+          try {
+            const { saveFileToChosenFolder } = await import('../utils/browserFolder');
+            const savedToFolder = await saveFileToChosenFolder(filename, blob, task.projectNumber ?? '', user?.tenantId ?? null);
+            if (savedToFolder) {
+              setLastSavedPath('(saved to chosen folder)');
+              setPdfSaveNotice('');
+            }
+          } catch (_) {
+            // No folder chosen or permission denied; download only is fine
+          }
+
+          const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
           link.download = filename;
