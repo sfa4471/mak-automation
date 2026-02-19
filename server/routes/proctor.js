@@ -339,8 +339,8 @@ function generateProctorChartSVG(reportData) {
   `;
 }
 
-// Generate Proctor PDF
-router.post('/:taskId/pdf', authenticate, async (req, res) => {
+// Generate Proctor PDF (requireTenant so save path uses tenant's workflow_base_path)
+router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
   try {
     const { taskId } = req.params;
     const reportData = req.body;
@@ -402,8 +402,9 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
     // Get field date (prefer scheduledStartDate, fallback to sampleDate from reportData, then today)
     const fieldDate = task.scheduledStartDate || reportData.sampleDate || new Date().toISOString().split('T')[0];
 
-    // Tenant branding: logo and address for the signed-in company (e.g. WAAPIS)
+    // Tenant branding and save path: use signed-in tenant so PDF saves to tenant's folder
     const pdfTenantId = task.tenantId ?? task.tenant_id ?? req.tenantId;
+    const tenantIdForPath = pdfTenantId != null ? Number(pdfTenantId) : null;
     const pdfTenant = await getTenant(pdfTenantId);
     const logoDataUri = await getLogoBase64(pdfTenantId);
     const companyName = (pdfTenant?.name ?? pdfTenant?.company_name ?? '').trim() || 'Company';
@@ -440,22 +441,28 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
     .header {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 20px;
-      padding-bottom: 15px;
+      align-items: center;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
       border-bottom: 2px solid #000;
     }
     .header-logo {
-      width: 150px;
+      width: 120px;
+      height: 80px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
     }
     .header-logo img {
-      width: 100%;
-      height: auto;
-      max-width: 150px;
+      width: 120px;
+      height: 80px;
+      object-fit: contain;
+      object-position: left center;
     }
     .header-address {
       font-size: 11px;
-      line-height: 1.5;
+      line-height: 1.4;
       text-align: right;
       color: #333;
     }
@@ -464,7 +471,7 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
       color: #0066cc;
       font-size: 22px;
       font-weight: bold;
-      margin: 25px 0;
+      margin: 12px 0 20px 0;
       text-transform: uppercase;
     }
     .form-grid {
@@ -534,7 +541,7 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
   <div class="page-container">
     <div class="header">
       <div class="header-logo">
-        ${logoDataUri ? `<img src="${logoDataUri}" alt="${escapeHtml(companyName)}" />` : `<div>${escapeHtml(companyName)}</div>`}
+        ${logoDataUri ? `<img src="${logoDataUri}" alt="${escapeHtml(companyName)}" />` : `<div style="font-size:12px;line-height:1.2;">${escapeHtml(companyName)}</div>`}
       </div>
       <div class="header-address">
         ${headerAddressHtml}
@@ -705,7 +712,7 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
       let saveInfo = null;
       let saveError = null;
       try {
-        const saveTenantId = task.tenantId ?? task.tenant_id ?? req.tenantId;
+        const saveTenantId = tenantIdForPath ?? (req.tenantId != null ? Number(req.tenantId) : null);
         saveInfo = await getPDFSavePath(
           task.projectNumber,
           'PROCTOR',
