@@ -18,6 +18,23 @@ const { validatePath } = require('../utils/pdfFileManager');
 const router = express.Router();
 
 /**
+ * Get tenant_id for the current user when using Supabase (multi-tenant).
+ * Used to scope app_settings by tenant. Returns null when not Supabase or user has no tenant.
+ */
+async function getTenantIdForRequest(req) {
+  if (!db.isSupabase()) return null;
+  try {
+    const user = await db.get('users', { id: req.user.id });
+    if (!user) return null;
+    const tid = user.tenant_id ?? user.tenantId;
+    return tid != null ? tid : null;
+  } catch (e) {
+    console.error('Error getting tenant_id for settings:', e);
+    return null;
+  }
+}
+
+/**
  * GET /api/settings/onedrive-path
  * Get the current OneDrive base path (Admin only)
  */
@@ -177,12 +194,15 @@ router.post('/onedrive-test', authenticate, requireAdmin, [
 
 /**
  * GET /api/settings/workflow/path
- * Get the current workflow base path (Admin only)
+ * Get the current workflow base path (Admin only). Scoped by tenant when using Supabase.
  */
 router.get('/workflow/path', authenticate, requireAdmin, async (req, res) => {
   try {
-    const setting = await db.get('app_settings', { key: 'workflow_base_path' });
-    
+    const tenantId = await getTenantIdForRequest(req);
+    const conditions = { key: 'workflow_base_path' };
+    if (tenantId != null) conditions.tenant_id = tenantId;
+    const setting = await db.get('app_settings', conditions);
+
     res.json({
       success: true,
       path: setting && setting.value ? setting.value : null
@@ -288,9 +308,11 @@ router.post('/workflow/path', authenticate, requireAdmin, [
       }
     }
 
-    // Get existing setting
-    const existing = await db.get('app_settings', { key: 'workflow_base_path' });
-    
+    const tenantId = await getTenantIdForRequest(req);
+    const getConditions = { key: 'workflow_base_path' };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const existing = await db.get('app_settings', getConditions);
+
     const settingData = {
       key: 'workflow_base_path',
       value: pathToSet && pathToSet.trim() !== '' ? pathToSet.trim() : null,
@@ -299,14 +321,16 @@ router.post('/workflow/path', authenticate, requireAdmin, [
     };
 
     if (existing) {
-      // Update existing setting
-      await db.update('app_settings', settingData, { key: 'workflow_base_path' });
+      const updateConditions = { key: 'workflow_base_path' };
+      if (tenantId != null) updateConditions.tenant_id = tenantId;
+      await db.update('app_settings', settingData, updateConditions);
     } else {
-      // Insert new setting
-      await db.insert('app_settings', {
+      const insertData = {
         ...settingData,
         description: 'Base folder path for project folders and PDFs. Leave empty to use OneDrive or default location.'
-      });
+      };
+      if (tenantId != null) insertData.tenant_id = tenantId;
+      await db.insert('app_settings', insertData);
     }
 
     res.json({
@@ -369,11 +393,14 @@ router.post('/workflow/path/test', authenticate, requireAdmin, [
 
 /**
  * GET /api/settings/workflow/status
- * Get the status of the workflow path (configured, valid, writable)
+ * Get the status of the workflow path (configured, valid, writable). Scoped by tenant when using Supabase.
  */
 router.get('/workflow/status', authenticate, requireAdmin, async (req, res) => {
   try {
-    const setting = await db.get('app_settings', { key: 'workflow_base_path' });
+    const tenantId = await getTenantIdForRequest(req);
+    const conditions = { key: 'workflow_base_path' };
+    if (tenantId != null) conditions.tenant_id = tenantId;
+    const setting = await db.get('app_settings', conditions);
     const configured = !!(setting && setting.value && setting.value.trim() !== '');
     
     if (!configured) {

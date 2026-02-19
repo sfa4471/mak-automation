@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Task, taskTypeLabel } from '../api/tasks';
 import { projectsAPI, Project } from '../api/projects';
 import './TaskDetailModal.css';
@@ -9,6 +10,7 @@ interface TaskDetailModalProps {
 }
 
 const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
+  const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [loadingProject, setLoadingProject] = useState(true);
 
@@ -287,6 +289,19 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
         </div>
 
         <div className="modal-footer">
+          {task.projectId && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                navigate(`/admin/projects/${task.projectId}/details`);
+              }}
+              className="view-project-details-button"
+              style={{ marginRight: 8 }}
+            >
+              View project details (specs &amp; drawings)
+            </button>
+          )}
           <button type="button" onClick={onClose} className="close-button">
             Close
           </button>

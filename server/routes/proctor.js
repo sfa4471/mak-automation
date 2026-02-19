@@ -5,9 +5,18 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
+const { getPuppeteerLaunchOptions } = require('../utils/puppeteerLaunch');
 const { authenticate } = require('../middleware/auth');
 const { getPDFSavePath, savePDFToFile } = require('../utils/pdfFileManager');
 const { body, validationResult } = require('express-validator');
+const {
+  getTenantIdForPdf,
+  getTenantById,
+  getLogoBase64,
+  getTenantAddress,
+  getTenantCompanyName,
+  getTenantPhoneShort
+} = require('../utils/tenantPdfHelpers');
 
 // Helper function to escape HTML
 function escapeHtml(text) {
@@ -148,20 +157,62 @@ function generateProctorChartSVG(reportData) {
     .map(p => ({ x: toNum(p.x), y: toNum(p.y) }))
     .filter(p => !isNaN(p.x) && !isNaN(p.y))
     .sort((a, b) => a.x - b.x);
-  
-  // Filter and clamp ZAV points - EXACT same logic as UI
-  const yAxisMin = 100; // Fixed Y-axis minimum (same as UI)
-  const yAxisMax = 112; // Fixed Y-axis maximum (same as UI)
+
+  // Dynamic Y-axis domain - MUST match UI (ProctorCurveChart) so PDF curve matches dashboard
+  const yValues = [];
+  cleanedProctorPoints.forEach(p => { if (Number.isFinite(p.y)) yValues.push(p.y); });
+  if (maxDensity != null && Number.isFinite(maxDensity)) yValues.push(maxDensity);
+  const validYs = yValues.filter(Number.isFinite);
+  const defaultYDomain = [100, 112];
+  let yDomain;
+  let yTicks;
+  if (validYs.length === 0) {
+    yDomain = defaultYDomain;
+    yTicks = [100, 102, 104, 106, 108, 110, 112];
+  } else {
+    const minY = Math.min(...validYs);
+    const dataMaxY = Math.max(...validYs);
+    const roundedMaxY = Math.ceil((dataMaxY + 1) / 2) * 2;
+    const padding = Math.max(1, (roundedMaxY - minY) * 0.05);
+    const roundedMinY = Math.floor((minY - padding) / 2) * 2;
+    const domainMin = Math.max(0, roundedMinY);
+    const domainMax = roundedMaxY;
+    yDomain = [domainMin, domainMax];
+    const roundedMin = Math.ceil(domainMin / 2) * 2;
+    const roundedMax = Math.floor(domainMax / 2) * 2;
+    yTicks = [];
+    for (let y = roundedMin; y <= roundedMax; y += 2) yTicks.push(y);
+    if (yTicks.length === 0) yTicks = [roundedMin, roundedMax];
+  }
+  const yAxisMin = yDomain[0];
+  const yAxisMax = yDomain[1];
+
+  // Dynamic X-axis domain - MUST match UI so PDF curve stays on axis
+  const moistureValues = cleanedProctorPoints.map(p => p.x).filter(Number.isFinite);
+  let xDomain;
+  let xTicks;
+  if (moistureValues.length === 0) {
+    xDomain = [0, 25];
+    xTicks = [0, 5, 10, 15, 20, 25];
+  } else {
+    const minX = Math.min(...moistureValues);
+    const maxX = Math.max(...moistureValues);
+    const xAxisMin = Math.max(0, minX - 7);
+    const xAxisMax = maxX + 6;
+    const range = xAxisMax - xAxisMin;
+    const tickStep = range <= 14 ? 1 : 2;
+    const xMinAligned = Math.floor(xAxisMin / tickStep) * tickStep;
+    const xMaxAligned = Math.ceil(xAxisMax / tickStep) * tickStep;
+    xDomain = [xMinAligned, xMaxAligned];
+    xTicks = [];
+    for (let x = xMinAligned; x <= xMaxAligned; x += tickStep) xTicks.push(x);
+  }
+
+  // Filter and clamp ZAV points to dynamic domain (same as UI)
   const filteredZAVPoints = cleanedZAVPoints
-    .filter(p => p.x >= 0 && p.x <= 25)
-    .map(p => ({ x: Math.max(0, Math.min(25, p.x)), y: p.y }))
-    .filter(p => p.y >= yAxisMin && p.y <= yAxisMax); // Exclude below Y-axis minimum and above Y-axis maximum
-  
-  // Use EXACT same axis domains as UI
-  const xDomain = [0, 25];
-  const yDomain = [100, 112];
-  const xTicks = [0, 5, 10, 15, 20, 25];
-  const yTicks = [100, 102, 104, 106, 108, 110, 112];
+    .filter(p => p.x >= xDomain[0] && p.x <= xDomain[1])
+    .map(p => ({ x: Math.max(xDomain[0], Math.min(xDomain[1], p.x)), y: p.y }))
+    .filter(p => p.y >= yAxisMin && p.y <= yAxisMax);
   
   // Chart dimensions - reduced height to fit on single page
   // Letter page is ~612px x 792px (72 DPI) or ~816px x 1056px (96 DPI)
@@ -248,9 +299,9 @@ function generateProctorChartSVG(reportData) {
     gridLines.push(`<text x="${margin.left - 15}" y="${y + 4}" text-anchor="end" font-size="11" font-weight="bold" fill="#000">${tick}</text>`);
   });
   
-  // Reference lines - BLACK dashed (same as UI)
+  // Reference lines - BLACK dashed (same as UI), use dynamic domain
   let referenceLines = '';
-  if (omc !== undefined && !isNaN(omc) && omc >= 0 && omc <= 25) {
+  if (omc !== undefined && !isNaN(omc) && omc >= xDomain[0] && omc <= xDomain[1]) {
     const x = scaleX(omc);
     referenceLines += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${margin.top + chartHeight}" stroke="#000" stroke-width="1.5" stroke-dasharray="5 5"/>`;
   }
@@ -262,7 +313,7 @@ function generateProctorChartSVG(reportData) {
   // Peak point marker (small filled triangle at OMC/Max intersection)
   let peakMarker = '';
   if (omc !== undefined && maxDensity !== undefined && !isNaN(omc) && !isNaN(maxDensity) &&
-      omc >= 0 && omc <= 25 && maxDensity >= yDomain[0] && maxDensity <= yDomain[1]) {
+      omc >= xDomain[0] && omc <= xDomain[1] && maxDensity >= yDomain[0] && maxDensity <= yDomain[1]) {
     const px = scaleX(omc);
     const py = scaleY(maxDensity);
     peakMarker = `<path d="M ${px} ${py - 3} L ${px - 3} ${py + 3} L ${px + 3} ${py + 3} Z" fill="#000" stroke="#000" stroke-width="1"/>`;
@@ -276,11 +327,11 @@ function generateProctorChartSVG(reportData) {
     return `<path d="M ${x} ${y - 4} L ${x - 4} ${y + 4} L ${x + 4} ${y + 4} Z" fill="white" stroke="#000" stroke-width="1.5"/>`;
   }).join('');
   
-  // ZAV label - positioned near curve (around moisture 17-20, same as UI)
-  // Offset above the curve to prevent overlap
+  // ZAV label - positioned near curve (within x domain), same as UI
   let zavLabel = '';
   if (filteredZAVPoints.length > 0) {
-    const targetPoint = filteredZAVPoints.find(p => p.x >= 17 && p.x <= 20) || 
+    const midX = (xDomain[0] + xDomain[1]) * 0.5;
+    const targetPoint = filteredZAVPoints.find(p => p.x >= midX - 3 && p.x <= midX + 3) ||
                         filteredZAVPoints[Math.floor(filteredZAVPoints.length * 0.7)];
     if (targetPoint) {
       const labelX = scaleX(targetPoint.x);
@@ -302,7 +353,7 @@ function generateProctorChartSVG(reportData) {
   const chartBorder = `<rect x="${margin.left}" y="${margin.top}" width="${chartWidth}" height="${chartHeight}" fill="none" stroke="#000" stroke-width="1.5"/>`;
   
   return `
-    <div id="proctor-chart" style="width: ${width}px; height: ${height}px; margin: 15px auto; padding: 15px; background: #fff; page-break-inside: avoid; break-inside: avoid;">
+    <div id="proctor-chart" style="width: ${width}px; height: ${height}px; margin: 6px auto; padding: 6px; background: #fff; page-break-inside: avoid; break-inside: avoid;">
       <svg width="${width}" height="${height}" style="background: white; font-family: Arial, sans-serif;">
         <!-- Grid lines -->
         ${gridLines.join('')}
@@ -396,32 +447,25 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
     // Get field date (prefer scheduledStartDate, fallback to sampleDate from reportData, then today)
     const fieldDate = task.scheduledStartDate || reportData.sampleDate || new Date().toISOString().split('T')[0];
 
-    // Read the logo file (try multiple possible locations)
+    // Tenant branding: resolve tenant, logo, address, phone
+    const proctorTenantId = await getTenantIdForPdf(req, task);
+    const proctorTenant = await getTenantById(proctorTenantId);
+    const proctorLogoDataUri = getLogoBase64(proctorTenantId, proctorTenant);
+    const proctorCompanyName = getTenantCompanyName(proctorTenant);
+    const proctorAddress = getTenantAddress(proctorTenant);
+    const proctorPhone = getTenantPhoneShort(proctorTenant);
     let logoBase64 = '';
     let logoMimeType = 'image/jpeg';
-    const possibleLogoPaths = [
-      path.join(__dirname, '../public/MAK logo_consulting.jpg'),
-      path.join(__dirname, '../../public/MAK logo_consulting.jpg'),
-      path.join(__dirname, '../client/public/MAK logo_consulting.jpg'),
-      path.join(__dirname, '../../client/public/MAK logo_consulting.jpg')
-    ];
-    
-    for (const logoPath of possibleLogoPaths) {
-      if (fs.existsSync(logoPath)) {
-        try {
-          const logoBuffer = fs.readFileSync(logoPath);
-          logoBase64 = logoBuffer.toString('base64');
-          console.log('Logo found at:', logoPath);
-          break;
-        } catch (err) {
-          console.error('Error reading logo from', logoPath, err);
-        }
+    if (proctorLogoDataUri) {
+      const match = proctorLogoDataUri.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        logoMimeType = match[1];
+        logoBase64 = match[2];
       }
     }
-    
-    if (!logoBase64) {
-      console.warn('MAK logo not found in any expected location');
-    }
+    const addressLines = proctorAddress.split(',').map(s => s.trim()).filter(Boolean);
+    const addressLine1 = addressLines[0] || '';
+    const addressLine2 = addressLines.slice(1).join(', ') || '';
 
     // Generate HTML template for Proctor report
     const html = `
@@ -437,50 +481,53 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
     }
     body {
       font-family: Arial, sans-serif;
-      padding: 20px;
+      padding: 8px;
       background: white;
     }
     .page-container {
       max-width: 8.5in;
       margin: 0 auto;
       border: 2px solid #000;
-      padding: 15px;
+      padding: 10px;
     }
     .header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 20px;
-      padding-bottom: 15px;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
       border-bottom: 2px solid #000;
     }
     .header-logo {
-      width: 150px;
+      width: 120px;
+      flex-shrink: 0;
     }
     .header-logo img {
       width: 100%;
       height: auto;
-      max-width: 150px;
+      max-width: 120px;
+      max-height: 48px;
+      object-fit: contain;
     }
     .header-address {
-      font-size: 11px;
-      line-height: 1.5;
+      font-size: 10px;
+      line-height: 1.3;
       text-align: right;
       color: #333;
     }
     .title {
       text-align: center;
       color: #0066cc;
-      font-size: 22px;
+      font-size: 18px;
       font-weight: bold;
-      margin: 25px 0;
+      margin: 8px 0 10px 0;
       text-transform: uppercase;
     }
     .form-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 20px 40px;
-      margin-bottom: 30px;
+      gap: 8px 24px;
+      margin-bottom: 10px;
     }
     .form-row {
       display: flex;
@@ -503,8 +550,8 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
       min-height: 18px;
     }
     .chart-container {
-      margin-top: 25px;
-      padding: 15px;
+      margin-top: 8px;
+      padding: 8px;
       background: #fff;
       text-align: center;
       display: flex;
@@ -543,12 +590,12 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
   <div class="page-container">
     <div class="header">
       <div class="header-logo">
-        ${logoBase64 ? `<img src="data:${logoMimeType};base64,${logoBase64}" alt="MAK Logo" />` : '<div>MAK Logo</div>'}
+        ${logoBase64 ? `<img src="data:${logoMimeType};base64,${logoBase64}" alt="${escapeHtml(proctorCompanyName)} Logo" />` : `<div>${escapeHtml(proctorCompanyName)}</div>`}
       </div>
       <div class="header-address">
-        <div>940 N Beltline Road, Suite 107,</div>
-        <div>Irving, TX 75061</div>
-        <div>P: 214-718-1250</div>
+        <div>${escapeHtml(addressLine1)}${addressLine2 ? ',' : ''}</div>
+        ${addressLine2 ? `<div>${escapeHtml(addressLine2)}</div>` : ''}
+        <div>P: ${escapeHtml(proctorPhone)}</div>
       </div>
     </div>
 
@@ -637,16 +684,7 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
     // Launch Puppeteer and generate PDF
     let browser;
     try {
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox', 
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--disable-gpu'
-        ]
-      });
+      browser = await puppeteer.launch(getPuppeteerLaunchOptions());
       const page = await browser.newPage();
       
       // Step 4: Puppeteer generation - wait for all assets + avoid partial renders
@@ -823,8 +861,10 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get Proctor data
-    const data = await db.get('proctor_data', { taskId });
+    const tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    const getConditions = { taskId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const data = await db.get('proctor_data', getConditions);
 
     if (data) {
       // Parse JSON fields
@@ -880,12 +920,24 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       
       res.json(data);
     } else {
-      // Return empty structure with project info
+      // Return empty structure with project info (default sampledBy from tenant)
+      const defaultTenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+      let defaultSampledBy = 'MAK Lonestar Consulting, LLC';
+      if (defaultTenantId) {
+        try {
+          const defaultTenant = await getTenantById(defaultTenantId);
+          if (defaultTenant && (defaultTenant.name || defaultTenant.companyName)) {
+            defaultSampledBy = defaultTenant.name || defaultTenant.companyName;
+          }
+        } catch (e) {
+          // keep fallback
+        }
+      }
       res.json({
         taskId: parseInt(taskId),
         projectName: task.projectName || '',
         projectNumber: task.projectNumber || '',
-        sampledBy: 'MAK Lonestar Consulting, LLC',
+        sampledBy: defaultSampledBy,
         testMethod: 'ASTM D698',
         client: '',
         soilClassification: '',
@@ -1057,8 +1109,10 @@ router.post('/task/:taskId', authenticate, [
     const zavPointsJson = zavPoints ? JSON.stringify(zavPoints) : null;
     const passing200Json = passing200 ? JSON.stringify(passing200) : null;
 
-    // Check if record exists
-    const existing = await db.get('proctor_data', { taskId: parseInt(taskId) });
+    const tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    const getConditions = { taskId: parseInt(taskId) };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const existing = await db.get('proctor_data', getConditions);
 
     const proctorData = {
       taskId: parseInt(taskId),
@@ -1090,14 +1144,17 @@ router.post('/task/:taskId', authenticate, [
       proctorPoints: proctorPointsJson,
       zavPoints: zavPointsJson
     };
+    if (tenantId != null) proctorData.tenant_id = tenantId;
 
+    const updateConditions = { taskId: parseInt(taskId) };
+    if (tenantId != null) updateConditions.tenant_id = tenantId;
     let result;
     if (existing) {
       // Update
-      await db.update('proctor_data', proctorData, { taskId: parseInt(taskId) });
-      result = await db.get('proctor_data', { taskId: parseInt(taskId) });
+      await db.update('proctor_data', proctorData, updateConditions);
+      result = await db.get('proctor_data', getConditions);
     } else {
-      // Insert
+      // Insert (tenant_id required for multi-tenant Supabase)
       result = await db.insert('proctor_data', proctorData);
     }
 
@@ -1174,8 +1231,10 @@ router.get('/project/:projectId/proctor/:proctorNo', authenticate, async (req, r
       }
     }
 
-    // Get Proctor data - use canonical fields with backward compatibility
-    const data = await db.get('proctor_data', { taskId: task.id });
+    const tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    const getConditions = { taskId: task.id };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const data = await db.get('proctor_data', getConditions);
 
     // Use canonical fields if available, otherwise fallback to old fields
     const optMoisturePct = data?.optMoisturePct !== null && data?.optMoisturePct !== undefined

@@ -5,12 +5,17 @@ import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
+import { tenantsAPI, TenantMe } from '../api/tenants';
 import LoadingSpinner from './LoadingSpinner';
 import './Dashboard.css';
+
+const DEFAULT_LOGO = '/MAK logo_consulting.jpg';
+const DEFAULT_COMPANY_NAME = 'MAK Lone Star Consulting';
 
 const Dashboard: React.FC = () => {
   const { user, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
+  const [tenant, setTenant] = useState<TenantMe | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_workPackages, setWorkPackages] = useState<{ [projectId: number]: WorkPackage[] }>({});
@@ -23,6 +28,14 @@ const Dashboard: React.FC = () => {
 
   const loadData = useCallback(async () => {
     try {
+      // Load current tenant (company name + logo) for header
+      try {
+        const tenantData = await tenantsAPI.getMe();
+        setTenant(tenantData);
+      } catch {
+        setTenant(null);
+      }
+
       const projectsData = await projectsAPI.list();
       setProjects(projectsData);
 
@@ -173,8 +186,8 @@ const Dashboard: React.FC = () => {
       <header className="dashboard-header">
         <div className="header-logo">
           <img 
-            src={encodeURI('/MAK logo_consulting.jpg')}
-            alt="MAK Lone Star Consulting" 
+            src={tenant?.logoPath ? `/${tenant.logoPath}` : encodeURI(DEFAULT_LOGO)}
+            alt={tenant?.name || DEFAULT_COMPANY_NAME}
             className="company-logo"
             loading="lazy"
             decoding="async"
@@ -193,7 +206,7 @@ const Dashboard: React.FC = () => {
               }
             }}
           />
-          <h1>MAK Lone Star Consulting</h1>
+          <h1>{tenant?.name || DEFAULT_COMPANY_NAME}</h1>
         </div>
         <div className="header-actions">
           {isAdmin() && (

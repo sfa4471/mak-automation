@@ -3,9 +3,24 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { tasksAPI, Task } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { proctorAPI } from '../api/proctor';
+import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
+import { getApiBaseUrl } from '../utils/apiUrl';
 import './ProctorSummary.css';
+
+const DEFAULT_LOGO = '/MAK logo_consulting.jpg';
+const DEFAULT_SAMPLED_BY = 'MAK Lonestar Consulting, LLC';
+
+function formatTenantAddress(t: TenantMe | null): string[] {
+  if (!t) return [];
+  const lines: string[] = [];
+  if (t.companyAddress) lines.push(t.companyAddress);
+  const cityStateZip = [t.companyCity, t.companyState, t.companyZip].filter(Boolean).join(', ');
+  if (cityStateZip) lines.push(cityStateZip);
+  if (t.companyPhone) lines.push(`P: ${t.companyPhone}`);
+  return lines;
+}
 
 interface ProctorSummaryData {
   projectName: string;
@@ -37,6 +52,7 @@ const ProctorSummary: React.FC = () => {
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
   const [task, setTask] = useState<Task | null>(null);
+  const [tenant, setTenant] = useState<TenantMe | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -46,7 +62,7 @@ const ProctorSummary: React.FC = () => {
   const [summaryData, setSummaryData] = useState<ProctorSummaryData>({
     projectName: '',
     projectNumber: '',
-    sampledBy: 'MAK Lonestar Consulting, LLC',
+    sampledBy: DEFAULT_SAMPLED_BY,
     testMethod: 'ASTM D698',
     client: '',
     soilClassification: '',
@@ -147,9 +163,14 @@ const ProctorSummary: React.FC = () => {
     try {
       setLoading(true);
       const taskId = parseInt(id!);
-      const taskData = await tasksAPI.get(taskId);
+      const [taskData, tenantData] = await Promise.all([
+        tasksAPI.get(taskId),
+        tenantsAPI.getMe().catch(() => null)
+      ]);
       setTask(taskData);
-      
+      setTenant(tenantData);
+      const sampledByDefault = tenantData?.name || tenantData?.companyContactName || DEFAULT_SAMPLED_BY;
+
       // Load saved Proctor data from backend
       try {
         const savedData = await proctorAPI.getByTask(taskId);
@@ -166,7 +187,7 @@ const ProctorSummary: React.FC = () => {
         const initialData: ProctorSummaryData = {
           projectName: savedData.projectName || taskData.projectName || '',
           projectNumber: savedData.projectNumber || taskData.projectNumber || '',
-          sampledBy: savedData.sampledBy || 'MAK Lonestar Consulting, LLC',
+          sampledBy: savedData.sampledBy || sampledByDefault,
           testMethod: savedData.testMethod || 'ASTM D698',
           client: savedData.client || '',
           soilClassification: savedData.soilClassification || '',
@@ -213,7 +234,7 @@ const ProctorSummary: React.FC = () => {
         const initialData: ProctorSummaryData = {
           projectName: taskData.projectName || '',
           projectNumber: taskData.projectNumber || '',
-          sampledBy: 'MAK Lonestar Consulting, LLC',
+          sampledBy: sampledByDefault,
           testMethod: 'ASTM D698',
           client: '',
           soilClassification: '',
@@ -546,13 +567,9 @@ const ProctorSummary: React.FC = () => {
           throw new Error(result.error || 'Failed to generate PDF');
         }
         
-        // Show save confirmation
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
-          setError(''); // Clear any previous errors
-          // Show success message with saved path
-          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
-          alert(message);
+          setError('');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
@@ -684,110 +701,109 @@ const ProctorSummary: React.FC = () => {
 
   return (
     <div className="proctor-summary-container">
-      <div className="proctor-summary-header">
-        <div className="summary-actions">
-          <ProjectHomeButton
-            projectId={task.projectId}
-            onSave={handleSave}
-            saving={saving}
+      {/* Single header row: logo left, buttons + address right, all inline */}
+      <div className="proctor-summary-header summary-page-header">
+        <div className="header-logo">
+          <img
+            src={tenant?.logoPath
+              ? `${getApiBaseUrl()}/${tenant.logoPath.replace(/^\/+/, '')}`
+              : encodeURI(DEFAULT_LOGO)}
+            alt={tenant?.name || 'Company logo'}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
-          <button 
-            type="button" 
-            onClick={async () => {
-              // Save current state before navigating back to preserve data
-              if (task) {
-                try {
-                  const saveData = {
-                    projectName: summaryData.projectName,
-                    projectNumber: summaryData.projectNumber,
-                    sampledBy: summaryData.sampledBy,
-                    testMethod: summaryData.testMethod,
-                    client: summaryData.client,
-                    soilClassification: summaryData.soilClassification,
-                    maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
-                    optimumMoisturePercent: summaryData.optimumMoisturePercent,
-                    correctedDryDensityPcf: summaryData.correctedDryDensityPcf || '',
-                    correctedMoistureContentPercent: summaryData.correctedMoistureContentPercent || '',
-                    liquidLimitLL: roundToWholeNumber(summaryData.liquidLimitLL),
-                    plasticLimit: roundToWholeNumber(summaryData.plasticLimit),
-                    plasticityIndex: summaryData.plasticityIndex,
-                    sampleDate: summaryData.sampleDate,
-                    calculatedBy: summaryData.calculatedBy,
-                    reviewedBy: summaryData.reviewedBy,
-                    checkedBy: summaryData.checkedBy,
-                    percentPassing200: summaryData.passing200SummaryPct || summaryData.percentPassing200 || '',
-                    passing200SummaryPct: summaryData.passing200SummaryPct || '',
-                    specificGravityG: summaryData.specificGravityG,
-                    proctorPoints: summaryData.proctorPoints || [],
-                    zavPoints: summaryData.zavPoints || []
-                  };
-                  await proctorAPI.saveByTask(task.id, saveData);
-                  localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(saveData));
-                } catch (err) {
-                  console.error('Error saving before navigation:', err);
+        </div>
+        <div className="header-right">
+          <div className="summary-actions">
+            <ProjectHomeButton
+              projectId={task.projectId}
+              onSave={handleSave}
+              saving={saving}
+            />
+            <button 
+              type="button" 
+              onClick={async () => {
+                // Save current state before navigating back to preserve data
+                if (task) {
+                  try {
+                    const saveData = {
+                      projectName: summaryData.projectName,
+                      projectNumber: summaryData.projectNumber,
+                      sampledBy: summaryData.sampledBy,
+                      testMethod: summaryData.testMethod,
+                      client: summaryData.client,
+                      soilClassification: summaryData.soilClassification,
+                      maximumDryDensityPcf: summaryData.maximumDryDensityPcf,
+                      optimumMoisturePercent: summaryData.optimumMoisturePercent,
+                      correctedDryDensityPcf: summaryData.correctedDryDensityPcf || '',
+                      correctedMoistureContentPercent: summaryData.correctedMoistureContentPercent || '',
+                      liquidLimitLL: roundToWholeNumber(summaryData.liquidLimitLL),
+                      plasticLimit: roundToWholeNumber(summaryData.plasticLimit),
+                      plasticityIndex: summaryData.plasticityIndex,
+                      sampleDate: summaryData.sampleDate,
+                      calculatedBy: summaryData.calculatedBy,
+                      reviewedBy: summaryData.reviewedBy,
+                      checkedBy: summaryData.checkedBy,
+                      percentPassing200: summaryData.passing200SummaryPct || summaryData.percentPassing200 || '',
+                      passing200SummaryPct: summaryData.passing200SummaryPct || '',
+                      specificGravityG: summaryData.specificGravityG,
+                      proctorPoints: summaryData.proctorPoints || [],
+                      zavPoints: summaryData.zavPoints || []
+                    };
+                    await proctorAPI.saveByTask(task.id, saveData);
+                    localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(saveData));
+                  } catch (err) {
+                    console.error('Error saving before navigation:', err);
+                  }
                 }
-              }
-              navigate(`/task/${id}/proctor`);
-            }}
-            className="btn-secondary"
-          >
-            Back
-          </button>
-          {isEditable && (
-            <>
-              <button 
-                type="button" 
-                onClick={handleSave} 
-                className="btn-primary" 
-                disabled={saving}
-              >
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-              <button 
-                type="button" 
-                onClick={handleCreatePDF} 
-                className="btn-primary"
-              >
-                Create PDF
-              </button>
-            </>
-          )}
+                navigate(`/task/${id}/proctor`);
+              }}
+              className="btn-secondary"
+            >
+              Back
+            </button>
+            {isEditable && (
+              <>
+                <button 
+                  type="button" 
+                  onClick={handleSave} 
+                  className="btn-primary" 
+                  disabled={saving}
+                >
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+                <button 
+                  type="button" 
+                  onClick={handleCreatePDF} 
+                  className="btn-primary"
+                >
+                  Create PDF
+                </button>
+              </>
+            )}
+          </div>
+          <div className="header-address">
+            {formatTenantAddress(tenant).length > 0 ? (
+              formatTenantAddress(tenant).map((line, i) => <div key={i}>{line}</div>)
+            ) : (
+              <>
+                <div>940 N Beltline Road, Suite 107,</div>
+                <div>Irving, TX 75061</div>
+                <div>P: 214-718-1250</div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {error && <div className="error-message">{error}</div>}
       
       {lastSavedPath && (
-        <div style={{ 
-          padding: '10px 15px', 
-          backgroundColor: '#d4edda', 
-          border: '1px solid #c3e6cb', 
-          borderRadius: '4px', 
-          marginBottom: '15px',
-          color: '#155724'
-        }}>
-          <strong>✓ PDF Saved Successfully</strong>
-          <div style={{ marginTop: '5px', fontSize: '13px', wordBreak: 'break-all' }}>
-            <strong>Location:</strong> {lastSavedPath}
-          </div>
+        <div className="pdf-created-banner">
+          PDF created.
         </div>
       )}
 
       <div className="proctor-summary-content">
-        {/* Header Section */}
-        <div className="summary-page-header">
-          <div className="header-logo">
-            <img src={encodeURI('/MAK logo_consulting.jpg')} alt="MAK Logo" onError={(e) => {
-              // Fallback if logo not found
-              console.warn('Logo image not found');
-            }} />
-          </div>
-          <div className="header-address">
-            <div>940 N Beltline Road, Suite 107,</div>
-            <div>Irving, TX 75061</div>
-            <div>P: 214-718-1250</div>
-          </div>
-        </div>
 
         {/* Title */}
         <h1 className="summary-title">MOISTURE DENSITY RELATION OF SOILS</h1>
@@ -833,15 +849,15 @@ const ProctorSummary: React.FC = () => {
                 className={!isEditable ? 'readonly' : ''}
               />
             </div>
-            <div className="summary-field-row">
+            <div className="summary-field-row summary-field-row-soil">
               <label>Soil Classification:</label>
-              <input
-                type="text"
+              <textarea
                 value={summaryData.soilClassification}
                 onChange={(e) => handleFieldChange('soilClassification', e.target.value)}
                 readOnly={!isEditable}
                 className={!isEditable ? 'readonly' : ''}
                 maxLength={120}
+                rows={2}
               />
             </div>
             <div className="summary-field-row">

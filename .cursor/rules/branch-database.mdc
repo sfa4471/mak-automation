@@ -1,0 +1,20 @@
+---
+description: When user says "switch to branch database" — use branch Supabase for local dev
+alwaysApply: true
+---
+
+# Branch database (feature/multi-tenant-saas)
+
+When the user says **"switch to branch database"** (or similar), they mean: run the app against the **branch** Supabase project instead of the main one.
+
+## What to do
+
+1. **Branch database** is used when `.env.local` exists in the project root with:
+   - `SUPABASE_URL=https://uklvgcrzhhtpqtiwrbfw.supabase.co`
+   - `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` for that project (stored in `.env.local`; do not put secrets in rules).
+2. If `.env.local` is missing or was removed: recreate it from the template in `SWITCH_TO_BRANCH_DATABASE.md` and add the branch project credentials (user has provided these in a previous conversation; get from Supabase Dashboard → project `uklvgcrzhhtpqtiwrbfw` → Settings → API if needed).
+3. Remind the user to **restart the dev server** (`npm run dev`) so the server picks up `.env.local`. Confirm in the log: `Using Supabase: https://uklvgcrzhhtpqtiwrbfw.supabase.co` and `(from .env.local — dev)`.
+
+## Switch back to main database
+
+Remove or rename `.env.local`. Restart the server; it will use `.env` (main project) again.

@@ -2,7 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
+
+// Load .env then .env.local (branch DB) so .env.local overrides when present
 require('dotenv').config();
+const envLocalPath = path.join(__dirname, '..', '.env.local');
+if (fs.existsSync(envLocalPath)) {
+  require('dotenv').config({ path: envLocalPath, override: true });
+}
 
 // ============================================================================
 // STARTUP CONFIGURATION VALIDATION
@@ -30,6 +37,12 @@ if (REQUIRE_SUPABASE) {
   const validation = validateConfiguration(false);
   if (validation.isValid) {
     console.log('✅ Supabase configuration found\n');
+    // Show which Supabase project is in use (branch vs main)
+    const url = process.env.SUPABASE_URL || '';
+    const projectRef = url.replace(/^https:\/\/([^.]+)\.supabase\.co.*/, '$1') || 'unknown';
+    const fromLocal = fs.existsSync(envLocalPath);
+    console.log(`📍 Using Supabase: ${url}`);
+    console.log(`   Project ref: ${projectRef} (${fromLocal ? 'from .env.local — branch DB' : 'from .env — main DB'})\n`);
   } else {
     console.log('ℹ️  Supabase not configured - will use SQLite fallback\n');
   }
@@ -82,6 +95,10 @@ app.use('/api/proctor', require('./routes/proctor'));
 app.use('/api/pdf', require('./routes/pdf'));
 app.use('/api/notifications', require('./routes/notifications').router);
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/tenants', require('./routes/tenants'));
+
+// Serve server public (tenant logos, MAK fallback logo, etc.)
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve static files from React app in production (only if build exists)
 // This catch-all must come AFTER API routes to ensure API routes work

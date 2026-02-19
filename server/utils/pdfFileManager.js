@@ -20,16 +20,22 @@ function getOneDriveService() {
 }
 
 /**
- * Get workflow base path from app_settings table
+ * Get workflow base path from app_settings table.
+ * When using Supabase with multi-tenant schema, pass tenantId to get the tenant's path.
+ * @param {number|null|undefined} [tenantId] - Optional tenant ID (required when using Supabase multi-tenant)
  * @returns {Promise<string|null>} The workflow base path, or null if not set
  */
-async function getWorkflowBasePath() {
-  console.log('🔍 [DIAGNOSTIC] getWorkflowBasePath() called');
+async function getWorkflowBasePath(tenantId) {
+  console.log('🔍 [DIAGNOSTIC] getWorkflowBasePath() called', tenantId != null ? { tenantId } : '');
   try {
     const db = require('../db');
     console.log('🔍 [DIAGNOSTIC] Database module loaded, isSupabase:', db.isSupabase());
-    
-    const setting = await db.get('app_settings', { key: 'workflow_base_path' });
+
+    const conditions = { key: 'workflow_base_path' };
+    if (db.isSupabase() && tenantId != null) {
+      conditions.tenant_id = tenantId;
+    }
+    const setting = await db.get('app_settings', conditions);
     console.log('🔍 [DIAGNOSTIC] Database query result:', {
       found: !!setting,
       hasValue: !!(setting && setting.value),
@@ -202,11 +208,12 @@ function validatePath(pathToValidate) {
  * 2. onedrive_base_path from app_settings (if set and valid) - backward compatibility
  * 3. PDF_BASE_PATH environment variable
  * 4. Default: ./pdfs in project root
+ * @param {number|null|undefined} [tenantId] - Optional tenant ID for Supabase multi-tenant
  * @returns {Promise<string>} The base path to use
  */
-async function getEffectiveBasePath() {
+async function getEffectiveBasePath(tenantId) {
   // Priority 1: workflow_base_path from app_settings
-  const workflowPath = await getWorkflowBasePath();
+  const workflowPath = await getWorkflowBasePath(tenantId);
   if (workflowPath) {
     const validation = validatePath(workflowPath);
     if (validation.valid && validation.isWritable) {
@@ -256,8 +263,8 @@ const TEST_TYPE_FOLDERS = {
  * Ensure base PDF directory exists
  * @param {string} basePath - Base path to ensure (optional, will be determined if not provided)
  */
-async function ensureBaseDirectory(basePath = null) {
-  const effectivePath = basePath || await getEffectiveBasePath();
+async function ensureBaseDirectory(basePath = null, tenantId = null) {
+  const effectivePath = basePath || await getEffectiveBasePath(tenantId);
   if (!fs.existsSync(effectivePath)) {
     fs.mkdirSync(effectivePath, { recursive: true });
     console.log(`Created PDF base directory: ${effectivePath}`);
@@ -302,7 +309,7 @@ function normalizeWindowsPath(filePath) {
  * @param {string} projectNumber - The project number (e.g., "MAK-2025-8188")
  * @returns {Promise<{success: boolean, path: string|null, error: string|null, warnings: string[], details: object}>} - Structured result
  */
-async function ensureProjectDirectory(projectNumber) {
+async function ensureProjectDirectory(projectNumber, tenantId = null) {
   console.log('🔍 [DIAGNOSTIC] ensureProjectDirectory() called with projectNumber:', projectNumber);
   const result = {
     success: false,
@@ -315,7 +322,7 @@ async function ensureProjectDirectory(projectNumber) {
   try {
     // Step 1: Get base path
     console.log('🔍 [DIAGNOSTIC] Step 1: Getting effective base path');
-    const basePath = await getEffectiveBasePath();
+    const basePath = await getEffectiveBasePath(tenantId);
     console.log('🔍 [DIAGNOSTIC] Base path determined:', basePath);
     result.details.basePath = basePath;
     
@@ -514,6 +521,17 @@ async function ensureProjectDirectory(projectNumber) {
     }
     result.details.subdirectories = subdirResults;
 
+    // Step 8: Create drawings subdirectory for uploaded PDF drawings
+    const drawingsDir = path.join(projectDir, 'drawings');
+    try {
+      if (!fs.existsSync(drawingsDir)) {
+        fs.mkdirSync(drawingsDir, { recursive: true });
+      }
+      result.details.drawingsDir = drawingsDir;
+    } catch (drawingsErr) {
+      result.warnings.push(`Drawings subfolder: ${drawingsErr.message}`);
+    }
+
     result.success = true;
     return result;
   } catch (error) {
@@ -533,14 +551,27 @@ function getTestTypeFolder(taskType) {
 }
 
 /**
+ * Get the full path to a project's drawings directory.
+ * Used for uploading and serving PDF drawings.
+ * @param {string} projectNumber - The project number
+ * @param {number|null} tenantId - Tenant ID (for Supabase base path)
+ * @returns {Promise<string>} - Full path to project's drawings folder
+ */
+async function getProjectDrawingsDir(projectNumber, tenantId = null) {
+  const basePath = await getEffectiveBasePath(tenantId);
+  const sanitized = sanitizeProjectNumber(projectNumber);
+  return path.join(basePath, sanitized, 'drawings');
+}
+
+/**
  * Get sequence number for a test type within a project
  * @param {string} projectNumber - The project number
  * @param {string} taskType - Task type
  * @returns {Promise<number>} - Next sequence number (01, 02, etc.)
  */
-async function getNextSequenceNumber(projectNumber, taskType) {
+async function getNextSequenceNumber(projectNumber, taskType, tenantId = null) {
   try {
-    const basePath = await getEffectiveBasePath();
+    const basePath = await getEffectiveBasePath(tenantId);
     const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
     const projectDir = path.join(basePath, sanitizedProjectNumber);
     const testTypeFolder = getTestTypeFolder(taskType);
@@ -686,17 +717,17 @@ function generateFilename(projectNumber, taskType, sequence, fieldDate, isRevisi
  * @param {boolean} isRegeneration - Whether this is regenerating an existing report
  * @returns {Promise<{filePath: string, filename: string, sequence: number, isRevision: boolean, revisionNumber: number}>}
  */
-async function getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration = false) {
+async function getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration = false, tenantId = null) {
   // Ensure project directory exists
-  const basePath = await getEffectiveBasePath();
-  const folderResult = await ensureProjectDirectory(projectNumber);
+  const basePath = await getEffectiveBasePath(tenantId);
+  const folderResult = await ensureProjectDirectory(projectNumber, tenantId);
   if (!folderResult.success) {
     // Log warning but continue - PDF generation should still work
     console.warn(`⚠️  Project folder creation failed for ${projectNumber}: ${folderResult.error}`);
   }
   
   // Get sequence number
-  const sequence = await getNextSequenceNumber(projectNumber, taskType);
+  const sequence = await getNextSequenceNumber(projectNumber, taskType, tenantId);
   
   // Get test type folder
   const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
@@ -761,10 +792,10 @@ function savePDFToFile(pdfBuffer, filePath) {
  * @param {boolean} isRegeneration - Whether this is regenerating an existing report
  * @returns {Promise<{success: boolean, saved: boolean, savedPath: string|null, fileName: string|null, sequence: number|null, isRevision: boolean, revisionNumber: number|null, saveError: string|null}>}
  */
-async function saveReportPDF(projectNumber, taskType, fieldDate, pdfBuffer, isRegeneration = false) {
+async function saveReportPDF(projectNumber, taskType, fieldDate, pdfBuffer, isRegeneration = false, tenantId = null) {
   try {
     // Get save path info
-    const saveInfo = await getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration);
+    const saveInfo = await getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration, tenantId);
     
     // Save PDF to file
     await savePDFToFile(pdfBuffer, saveInfo.filePath);
@@ -813,5 +844,6 @@ module.exports = {
   saveReportPDF,
   getWorkflowBasePath,
   validatePath,
-  normalizeWindowsPath
+  normalizeWindowsPath,
+  getProjectDrawingsDir
 };

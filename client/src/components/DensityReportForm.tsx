@@ -896,8 +896,6 @@ const DensityReportForm: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
-          alert(message);
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
@@ -974,8 +972,8 @@ const DensityReportForm: React.FC = () => {
           {saveStatus === 'idle' && lastSaved && <span className="save-status">Last saved: {lastSaved.toLocaleTimeString()}</span>}
           <button onClick={handleDownloadPdf} className="pdf-button">Download PDF</button>
           {lastSavedPath && (
-            <div className="pdf-saved-confirmation" style={{ marginTop: '10px', padding: '10px', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px', color: '#155724' }}>
-              PDF saved to: <strong>{lastSavedPath}</strong>
+            <div className="pdf-saved-confirmation">
+              PDF created.
             </div>
           )}
           {canEdit && (

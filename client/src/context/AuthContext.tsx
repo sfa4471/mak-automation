@@ -4,7 +4,7 @@ import { User, authAPI } from '../api/auth';
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, tenantId?: number) => Promise<void>;
   logout: () => void;
   isAdmin: () => boolean;
   isTechnician: () => boolean;
@@ -46,8 +46,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const response = await authAPI.login(email, password);
+  const login = async (email: string, password: string, tenantId?: number) => {
+    const response = await authAPI.login(email, password, tenantId);
     localStorage.setItem('token', response.token);
     localStorage.setItem('user', JSON.stringify(response.user));
     setUser(response.user);

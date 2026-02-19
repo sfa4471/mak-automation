@@ -5,6 +5,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoadingSpinner from './components/LoadingSpinner';
 import Login from './components/Login';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPassword from './components/ResetPassword';
 import Dashboard from './components/Dashboard';
 import TechnicianDashboard from './components/TechnicianDashboard';
 import ChangePassword from './components/ChangePassword';
@@ -32,6 +34,8 @@ function App() {
         <Router>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route
             path="/dashboard"
             element={
@@ -139,7 +143,7 @@ function App() {
           <Route
             path="/admin/projects/:id/details"
             element={
-              <ProtectedRoute requireAdmin>
+              <ProtectedRoute>
                 <Suspense fallback={<LoadingSpinner fullScreen message="Loading project details..." />}>
                   <ProjectDetails />
                 </Suspense>

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { settingsAPI, WorkflowStatusResponse } from '../../api/settings';
+import { tenantsAPI, TenantMe } from '../../api/tenants';
 import './Settings.css';
 
 /**
  * Settings Component
- * Allows admin users to configure the project folder location for storing projects and PDFs
+ * Allows admin users to configure the project folder location and company information (tenant branding).
  */
 const Settings: React.FC = () => {
   const navigate = useNavigate();
@@ -18,10 +19,37 @@ const Settings: React.FC = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [testResult, setTestResult] = useState<{ isValid: boolean; error?: string } | null>(null);
 
+  // State for Company information (tenant branding)
+  const [company, setCompany] = useState<TenantMe | null>(null);
+  const [companyForm, setCompanyForm] = useState<Partial<TenantMe>>({});
+  const [companyLoading, setCompanyLoading] = useState<boolean>(false);
+  const [companySaving, setCompanySaving] = useState<boolean>(false);
+  const [companyMessage, setCompanyMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   // Load settings when component mounts
   useEffect(() => {
     loadSettings();
+    loadCompany();
   }, []);
+
+  useEffect(() => {
+    if (company) {
+      setCompanyForm({
+        name: company.name ?? '',
+        companyAddress: company.companyAddress ?? '',
+        companyCity: company.companyCity ?? '',
+        companyState: company.companyState ?? '',
+        companyZip: company.companyZip ?? '',
+        companyPhone: company.companyPhone ?? '',
+        companyEmail: company.companyEmail ?? '',
+        companyWebsite: company.companyWebsite ?? '',
+        companyContactName: company.companyContactName ?? '',
+        peFirmReg: company.peFirmReg ?? '',
+        licenseHolderName: company.licenseHolderName ?? '',
+        licenseHolderTitle: company.licenseHolderTitle ?? '',
+      });
+    }
+  }, [company]);
 
   /**
    * Load current settings from the API
@@ -49,6 +77,24 @@ const Settings: React.FC = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  /**
+   * Load company (tenant) info for branding / PDFs
+   */
+  const loadCompany = async () => {
+    try {
+      setCompanyLoading(true);
+      const data = await tenantsAPI.getMe();
+      setCompany(data);
+    } catch (error: any) {
+      if (error.response?.status !== 404) {
+        console.error('Error loading company info:', error);
+      }
+      setCompany(null);
+    } finally {
+      setCompanyLoading(false);
     }
   };
 
@@ -141,6 +187,26 @@ const Settings: React.FC = () => {
     setFolderPath('');
     setTestResult(null);
     setMessage(null);
+  };
+
+  /**
+   * Save company info (admin only; API enforces)
+   */
+  const handleSaveCompany = async () => {
+    try {
+      setCompanySaving(true);
+      setCompanyMessage(null);
+      await tenantsAPI.putMe(companyForm);
+      await loadCompany();
+      setCompanyMessage({ type: 'success', text: 'Company information saved.' });
+    } catch (error: any) {
+      setCompanyMessage({
+        type: 'error',
+        text: error.response?.data?.error || 'Failed to save company information'
+      });
+    } finally {
+      setCompanySaving(false);
+    }
   };
 
   return (
@@ -264,6 +330,186 @@ const Settings: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Company information (tenant branding) - multi-tenant only */}
+        {(company !== null || companyLoading) && (
+          <div className="settings-section">
+            <h2>Company Information</h2>
+            <p className="settings-description">
+              This information appears on generated PDFs (reports, work orders). Only admins can edit. 
+              Rebar reports use P.E. firm reg and license holder fields in the signature block.
+            </p>
+
+            {companyLoading ? (
+              <p className="form-help">Loading...</p>
+            ) : company ? (
+              <div className="settings-form">
+                <div className="form-row-grid">
+                  <div className="form-group">
+                    <label htmlFor="company-name">Company name</label>
+                    <input
+                      id="company-name"
+                      type="text"
+                      value={companyForm.name ?? ''}
+                      onChange={(e) => setCompanyForm((f) => ({ ...f, name: e.target.value }))}
+                      className="form-input"
+                      placeholder="e.g. MAK Lone Star Consulting"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="company-contact">Contact name</label>
+                    <input
+                      id="company-contact"
+                      type="text"
+                      value={companyForm.companyContactName ?? ''}
+                      onChange={(e) => setCompanyForm((f) => ({ ...f, companyContactName: e.target.value }))}
+                      className="form-input"
+                      placeholder="Primary contact"
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="company-address">Address (street)</label>
+                  <input
+                    id="company-address"
+                    type="text"
+                    value={companyForm.companyAddress ?? ''}
+                    onChange={(e) => setCompanyForm((f) => ({ ...f, companyAddress: e.target.value }))}
+                    className="form-input"
+                    placeholder="940 N Beltline Road, Suite 107"
+                  />
+                </div>
+                <div className="form-row-grid form-row-grid-3">
+                  <div className="form-group">
+                    <label htmlFor="company-city">City</label>
+                    <input
+                      id="company-city"
+                      type="text"
+                      value={companyForm.companyCity ?? ''}
+                      onChange={(e) => setCompanyForm((f) => ({ ...f, companyCity: e.target.value }))}
+                      className="form-input"
+                      placeholder="Irving"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="company-state">State</label>
+                    <input
+                      id="company-state"
+                      type="text"
+                      value={companyForm.companyState ?? ''}
+                      onChange={(e) => setCompanyForm((f) => ({ ...f, companyState: e.target.value }))}
+                      className="form-input"
+                      placeholder="TX"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="company-zip">ZIP</label>
+                    <input
+                      id="company-zip"
+                      type="text"
+                      value={companyForm.companyZip ?? ''}
+                      onChange={(e) => setCompanyForm((f) => ({ ...f, companyZip: e.target.value }))}
+                      className="form-input"
+                      placeholder="75061"
+                    />
+                  </div>
+                </div>
+                <div className="form-row-grid">
+                  <div className="form-group">
+                    <label htmlFor="company-phone">Phone</label>
+                    <input
+                      id="company-phone"
+                      type="text"
+                      value={companyForm.companyPhone ?? ''}
+                      onChange={(e) => setCompanyForm((f) => ({ ...f, companyPhone: e.target.value }))}
+                      className="form-input"
+                      placeholder="(214) 718-1250"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="company-email">Email</label>
+                    <input
+                      id="company-email"
+                      type="email"
+                      value={companyForm.companyEmail ?? ''}
+                      onChange={(e) => setCompanyForm((f) => ({ ...f, companyEmail: e.target.value }))}
+                      className="form-input"
+                      placeholder="info@example.com"
+                    />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="company-website">Website</label>
+                  <input
+                    id="company-website"
+                    type="url"
+                    value={companyForm.companyWebsite ?? ''}
+                    onChange={(e) => setCompanyForm((f) => ({ ...f, companyWebsite: e.target.value }))}
+                    className="form-input"
+                    placeholder="https://..."
+                  />
+                </div>
+
+                <div className="settings-section subsection">
+                  <h3>Rebar report (P.E. / license holder)</h3>
+                  <div className="form-row-grid">
+                    <div className="form-group">
+                      <label htmlFor="pe-firm-reg">P.E. firm registration</label>
+                      <input
+                        id="pe-firm-reg"
+                        type="text"
+                        value={companyForm.peFirmReg ?? ''}
+                        onChange={(e) => setCompanyForm((f) => ({ ...f, peFirmReg: e.target.value }))}
+                        className="form-input"
+                        placeholder="e.g. F-24443"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="license-holder-name">License holder name</label>
+                      <input
+                        id="license-holder-name"
+                        type="text"
+                        value={companyForm.licenseHolderName ?? ''}
+                        onChange={(e) => setCompanyForm((f) => ({ ...f, licenseHolderName: e.target.value }))}
+                        className="form-input"
+                        placeholder="e.g. Muhammad Awais Khan, P.E."
+                      />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="license-holder-title">License holder title</label>
+                    <input
+                      id="license-holder-title"
+                      type="text"
+                      value={companyForm.licenseHolderTitle ?? ''}
+                      onChange={(e) => setCompanyForm((f) => ({ ...f, licenseHolderTitle: e.target.value }))}
+                      className="form-input"
+                      placeholder="e.g. Geotechnical Engineer"
+                    />
+                  </div>
+                </div>
+
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    onClick={handleSaveCompany}
+                    disabled={companySaving}
+                    className="btn btn-primary"
+                  >
+                    {companySaving ? 'Saving...' : 'Save company information'}
+                  </button>
+                </div>
+
+                {companyMessage && (
+                  <div className={`message ${companyMessage.type}`}>
+                    {companyMessage.text}
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );

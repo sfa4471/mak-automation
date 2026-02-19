@@ -84,11 +84,23 @@
       min-height: 0 !important;
     }
     
-    /* Specimen Set 2 and beyond - force new page (one per page) and add top spacing */
-    .specimen-set-container:not(.first):not(:first-of-type) {
+    /* Specimen Set 2 and beyond - force new page, unless grouped on Page 2 (see no-break-before) */
+    .specimen-set-container:not(.first):not(:first-of-type):not(.no-break-before) {
       page-break-before: always;
       break-before: page;
-      margin-top: 16px; /* Add spacing from page top border */
+      margin-top: 0;
+      padding-top: 24px; /* Gap from top of page so section boundary doesn't sit on page edge */
+    }
+    /* When 3+ specimen sets: Sets 2 and 3 share Page 2 (no break before them) */
+    .specimen-set-container.no-break-before {
+      page-break-before: auto !important;
+      break-before: auto !important;
+      margin-top: 0;
+      padding-top: 24px; /* Gap when this block appears at top of Page 2 (Specimen Set 2) */
+    }
+    /* Extra gap for Specimen Set 3 when it follows Set 2 on same page (no double padding) */
+    .specimen-set-container.no-break-before + .specimen-set-container.no-break-before {
+      padding-top: 12px;
     }
     
     /* Ensure Specimen Set sections stay together with minimal spacing */
@@ -337,9 +349,9 @@
   <div class="header-section-box">
     <div class="header-section">
       <div class="company-info">
-        <div>MAK Lonestar Consulting, LLC</div>
-        <div>940 N Beltline Road, Suite 107, Irving, TX 75061</div>
-        <div>Tel (214) 718-1250</div>
+        <div>{{COMPANY_NAME}}</div>
+        <div>{{COMPANY_ADDRESS}}</div>
+        <div>{{COMPANY_PHONE}}</div>
       </div>
       <div class="logo-area">{{LOGO_IMAGE}}</div>
     </div>

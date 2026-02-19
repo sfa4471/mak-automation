@@ -100,7 +100,10 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       soilSpecKeysCount: Object.keys(projectSoilSpecs).length
     });
 
-    const data = await db.get('density_reports', { taskId });
+    const tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    const getConditions = { taskId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const data = await db.get('density_reports', getConditions);
 
     if (data) {
       // Debug: Log what's being returned
@@ -323,29 +326,30 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Check if record exists
-    const existing = await db.get('density_reports', { taskId });
+    const tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    const getConditions = { taskId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const existing = await db.get('density_reports', getConditions);
 
-    // Auto-populate technician info from task if not provided
-    // This ensures the technician name is always set correctly, even if admin updates the report
-    let finalTechName = techName;
-    let finalTechnicianId = technicianId || task.assignedTechnicianId;
-    
-    // If techName is not provided, get it from the assigned technician
-    if (!finalTechName && finalTechnicianId) {
+    // Technician: prefer explicit form selection (technicianId/techName from request) over task assignment.
+    // Parse technicianId in case client sends string (e.g. from dropdown value).
+    const requestedTechnicianId = technicianId != null && technicianId !== '' ? parseInt(technicianId, 10) : null;
+    const isValidTechnicianId = Number.isInteger(requestedTechnicianId) && requestedTechnicianId > 0;
+    let finalTechnicianId = isValidTechnicianId ? requestedTechnicianId : (task.assigned_technician_id ?? task.assignedTechnicianId);
+    let finalTechName = (typeof techName === 'string' && techName.trim()) ? techName.trim() : null;
+
+    // If report sent a technician ID but no name, resolve name from users
+    if (finalTechnicianId && !finalTechName) {
       const tech = await db.get('users', { id: finalTechnicianId });
       if (tech) {
         finalTechName = tech.name || tech.email || '';
       }
     }
-    
     // If still no techName but we have an existing record, preserve the existing techName
-    // (Don't overwrite with null if admin is updating other fields)
-    if (!finalTechName && existing && existing.techName) {
-      finalTechName = existing.techName;
-      // Also preserve technicianId if it exists
-      if (!finalTechnicianId && existing.technicianId) {
-        finalTechnicianId = existing.technicianId;
+    if (!finalTechName && existing && (existing.techName || existing.tech_name)) {
+      finalTechName = existing.techName || existing.tech_name;
+      if (!finalTechnicianId && (existing.technicianId != null || existing.technician_id != null)) {
+        finalTechnicianId = existing.technicianId ?? existing.technician_id;
       }
     }
 
@@ -384,11 +388,14 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       lastEditedByUserId: req.user.id,
       updatedAt: new Date().toISOString()
     };
+    if (tenantId != null) densityData.tenant_id = tenantId;
 
+    const updateConditions = { taskId };
+    if (tenantId != null) updateConditions.tenant_id = tenantId;
     let result;
     if (existing) {
       // Update
-      await db.update('density_reports', densityData, { taskId });
+      await db.update('density_reports', densityData, updateConditions);
       
       // Debug: Log what was saved
       console.log('Density report updated - Header fields saved:', {
@@ -398,7 +405,7 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
         structureType: structureType || null
       });
     } else {
-      // Insert
+      // Insert (tenant_id required for multi-tenant Supabase)
       result = await db.insert('density_reports', densityData);
     }
 
@@ -429,7 +436,7 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
 
     // Return updated/created data
     if (!result) {
-      result = await db.get('density_reports', { taskId });
+      result = await db.get('density_reports', getConditions);
     }
     
     // Get project concreteSpecs and soilSpecs

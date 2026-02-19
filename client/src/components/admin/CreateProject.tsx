@@ -1,7 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { projectsAPI, SoilSpecs, ConcreteSpecs } from '../../api/projects';
+import { projectsAPI, SoilSpecs, ConcreteSpecs, CustomerDetails } from '../../api/projects';
+import { tenantsAPI, TenantMe } from '../../api/tenants';
 import './Admin.css';
+
+const DEFAULT_LOGO = '/MAK logo_consulting.jpg';
+const DEFAULT_COMPANY_NAME = 'MAK Lone Star Consulting';
+
+function CopyIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
 
 const SOIL_STRUCTURE_TYPES = [
   'Building Pad',
@@ -22,10 +35,18 @@ const CONCRETE_STRUCTURE_TYPES = [
   'Other'
 ];
 
+// Characters invalid for folder names (Windows); server will sanitize, but we warn the user
+const INVALID_PROJECT_NUMBER_CHARS = /[\\/:*?"<>|]/;
+
 const CreateProject: React.FC = () => {
   const navigate = useNavigate();
+  const [tenant, setTenant] = useState<TenantMe | null>(null);
+  const [projectNumber, setProjectNumber] = useState('');
   const [projectName, setProjectName] = useState('');
-  const [customerEmails, setCustomerEmails] = useState<string[]>(['']);
+  const [customerEmailsStr, setCustomerEmailsStr] = useState('');
+  const [ccEmailsStr, setCcEmailsStr] = useState('');
+  const [bccEmailsStr, setBccEmailsStr] = useState('');
+  const [customerDetails, setCustomerDetails] = useState<CustomerDetails>({});
   const [soilSpecs, setSoilSpecs] = useState<SoilSpecs>({});
   const [concreteSpecs, setConcreteSpecs] = useState<ConcreteSpecs>({});
   const [showSoilSpecs, setShowSoilSpecs] = useState(false);
@@ -34,22 +55,50 @@ const CreateProject: React.FC = () => {
   const [error, setError] = useState('');
   const [logoError, setLogoError] = useState(false);
   const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
+  const [drawingFiles, setDrawingFiles] = useState<File[]>([]);
 
-  const addCustomerEmail = () => {
-    setCustomerEmails([...customerEmails, '']);
-  };
+  useEffect(() => {
+    tenantsAPI.getMe().then(setTenant).catch(() => setTenant(null));
+  }, []);
 
-  const removeCustomerEmail = (index: number) => {
-    if (customerEmails.length > 1) {
-      setCustomerEmails(customerEmails.filter((_, i) => i !== index));
+  const parseEmailString = useCallback((str: string): string[] => {
+    if (!str || typeof str !== 'string') return [];
+    return str.split(/[;\n]+/).map(s => s.trim()).filter(Boolean);
+  }, []);
+
+  const copyEmailsToClipboard = useCallback(async (emailStr: string) => {
+    const list = parseEmailString(emailStr);
+    const text = list.length ? list.join('; ') : emailStr.trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
     }
-  };
+  }, [parseEmailString]);
 
-  const updateCustomerEmail = (index: number, value: string) => {
-    const newEmails = [...customerEmails];
-    newEmails[index] = value;
-    setCustomerEmails(newEmails);
-  };
+  const updateCustomerDetail = useCallback(<K extends keyof CustomerDetails>(key: K, value: CustomerDetails[K]) => {
+    setCustomerDetails(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const updateBillingAddress = useCallback((field: 'street1' | 'street2' | 'city' | 'state' | 'zipCode', value: string) => {
+    setCustomerDetails(prev => ({
+      ...prev,
+      billingAddress: { ...prev.billingAddress, [field]: value }
+    }));
+  }, []);
+
+  const updateShippingAddress = useCallback((field: 'street1' | 'street2' | 'city' | 'state' | 'zipCode', value: string) => {
+    setCustomerDetails(prev => ({
+      ...prev,
+      shippingAddress: { ...prev.shippingAddress, [field]: value }
+    }));
+  }, []);
 
   const validateSoilSpecs = (): boolean => {
     // Soil Specs only have densityPct and moistureRange, no temperature validation needed
@@ -98,25 +147,41 @@ const CreateProject: React.FC = () => {
     setError('');
     setValidationErrors({});
 
-    // Validate customer emails
-    const validEmails = customerEmails.filter(email => email.trim() !== '');
-    if (validEmails.length === 0) {
-      setError('At least one customer email is required');
+    const trimmedProjectNumber = projectNumber.trim();
+    if (!trimmedProjectNumber) {
+      setError('Project number is required');
+      return;
+    }
+    if (INVALID_PROJECT_NUMBER_CHARS.test(trimmedProjectNumber)) {
+      setError('Project number cannot contain: \\ / : * ? " < > |');
       return;
     }
 
-    // Check for duplicate emails
-    const uniqueEmails = Array.from(new Set(validEmails));
-    if (uniqueEmails.length !== validEmails.length) {
-      setError('Duplicate emails are not allowed');
+    const validTo = parseEmailString(customerEmailsStr);
+    const validCc = parseEmailString(ccEmailsStr);
+    const validBcc = parseEmailString(bccEmailsStr);
+
+    if (validTo.length === 0) {
+      setError('At least one customer (To) email is required');
       return;
     }
 
-    // Validate email formats
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    for (const email of validEmails) {
+    for (const email of validTo) {
       if (!emailRegex.test(email)) {
-        setError(`Invalid email format: ${email}`);
+        setError(`Invalid To email: ${email}`);
+        return;
+      }
+    }
+    for (const email of validCc) {
+      if (!emailRegex.test(email)) {
+        setError(`Invalid Cc email: ${email}`);
+        return;
+      }
+    }
+    for (const email of validBcc) {
+      if (!emailRegex.test(email)) {
+        setError(`Invalid Bcc email: ${email}`);
         return;
       }
     }
@@ -127,15 +192,47 @@ const CreateProject: React.FC = () => {
       return;
     }
 
+    const MAX_DRAWINGS = 10;
+    const MAX_SIZE = 20 * 1024 * 1024; // 20MB
+    if (drawingFiles.length > MAX_DRAWINGS) {
+      setError(`Maximum ${MAX_DRAWINGS} PDF drawings allowed.`);
+      return;
+    }
+    for (const f of drawingFiles) {
+      if (f.size > MAX_SIZE) {
+        setError(`File "${f.name}" is too large. Max 20MB per file.`);
+        return;
+      }
+      if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) {
+        setError('Only PDF files are allowed for drawings.');
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
-      await projectsAPI.create({
+      const created = await projectsAPI.create({
+        projectNumber: trimmedProjectNumber,
         projectName,
-        customerEmails: validEmails,
+        customerEmails: validTo,
+        ccEmails: validCc.length > 0 ? validCc : undefined,
+        bccEmails: validBcc.length > 0 ? validBcc : undefined,
+        customerDetails: Object.keys(customerDetails).length > 0 ? customerDetails : undefined,
         soilSpecs: showSoilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : undefined,
         concreteSpecs: showConcreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : undefined
       });
+
+      if (drawingFiles.length > 0) {
+        try {
+          await projectsAPI.uploadDrawings(created.id, drawingFiles);
+        } catch (uploadErr: any) {
+          setError(uploadErr.response?.data?.error || 'Project created but drawings upload failed. You can add drawings in Project Details.');
+          setLoading(false);
+          return;
+        }
+      }
+
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create project');
@@ -151,25 +248,34 @@ const CreateProject: React.FC = () => {
           <div className="header-logo">
             {!logoError ? (
               <img 
-                src="/MAK%20logo_consulting.jpg"
-                alt="MAK Lone Star Consulting" 
+                src={tenant?.logoPath ? `/${tenant.logoPath}` : encodeURI(DEFAULT_LOGO)}
+                alt={tenant?.name || DEFAULT_COMPANY_NAME}
                 className="company-logo"
                 onError={(e) => {
                   console.error('Logo failed to load:', e);
                   setLogoError(true);
                 }}
-                onLoad={() => {
-                  console.log('Logo loaded successfully');
-                  setLogoError(false);
-                }}
+                onLoad={() => setLogoError(false)}
               />
             ) : (
-              <span>MAK Lone Star Consulting</span>
+              <span>{tenant?.name || DEFAULT_COMPANY_NAME}</span>
             )}
           </div>
           <h1>Create New Project</h1>
         </header>
         <form onSubmit={handleSubmit} className="admin-form">
+          <div className="form-group">
+            <label htmlFor="projectNumber">Project Number *</label>
+            <input
+              type="text"
+              id="projectNumber"
+              value={projectNumber}
+              onChange={(e) => setProjectNumber(e.target.value)}
+              required
+              placeholder="e.g. 02-2025-0001 or MAK-2025-001"
+            />
+            <small>Avoid: \ / : * ? &quot; &lt; &gt; | (used for folder name)</small>
+          </div>
           <div className="form-group">
             <label htmlFor="projectName">Project Name *</label>
             <input
@@ -182,52 +288,300 @@ const CreateProject: React.FC = () => {
             />
           </div>
 
-          <div className="form-group">
-            <label>Customer Emails *</label>
-            {customerEmails.map((email, index) => (
-              <div key={index} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => updateCustomerEmail(index, e.target.value)}
-                  placeholder="customer@example.com"
-                  style={{ flex: 1 }}
-                  required={index === 0}
-                />
-                {customerEmails.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeCustomerEmail(index)}
-                    style={{
-                      padding: '8px 12px',
-                      background: '#dc3545',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={addCustomerEmail}
-              style={{
-                padding: '8px 16px',
-                background: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                marginTop: '5px'
-              }}
-            >
-              + Add Email
-            </button>
+          <div className="form-group email-with-copy">
+            <label htmlFor="customerEmails">To (Customer Emails) *</label>
+            <div className="input-with-copy">
+              <input
+                type="text"
+                id="customerEmails"
+                value={customerEmailsStr}
+                onChange={(e) => setCustomerEmailsStr(e.target.value)}
+                placeholder="email1@example.com; email2@example.com"
+                className="form-input"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => copyEmailsToClipboard(customerEmailsStr)}
+                className="copy-btn"
+                title="Copy all email addresses"
+                aria-label="Copy emails"
+              >
+                <CopyIcon />
+              </button>
+            </div>
+            <small>Separate multiple emails with semicolon (;)</small>
           </div>
+          <div className="form-group email-with-copy">
+            <label htmlFor="ccEmails">Cc</label>
+            <div className="input-with-copy">
+              <input
+                type="text"
+                id="ccEmails"
+                value={ccEmailsStr}
+                onChange={(e) => setCcEmailsStr(e.target.value)}
+                placeholder="cc1@example.com; cc2@example.com"
+                className="form-input"
+              />
+              <button
+                type="button"
+                onClick={() => copyEmailsToClipboard(ccEmailsStr)}
+                className="copy-btn"
+                title="Copy CC addresses"
+                aria-label="Copy CC emails"
+              >
+                <CopyIcon />
+              </button>
+            </div>
+            <small>Separate multiple emails with semicolon (;)</small>
+          </div>
+          <div className="form-group email-with-copy">
+            <label htmlFor="bccEmails">Bcc</label>
+            <div className="input-with-copy">
+              <input
+                type="text"
+                id="bccEmails"
+                value={bccEmailsStr}
+                onChange={(e) => setBccEmailsStr(e.target.value)}
+                placeholder="bcc1@example.com; bcc2@example.com"
+                className="form-input"
+              />
+              <button
+                type="button"
+                onClick={() => copyEmailsToClipboard(bccEmailsStr)}
+                className="copy-btn"
+                title="Copy Bcc addresses"
+                aria-label="Copy Bcc emails"
+              >
+                <CopyIcon />
+              </button>
+            </div>
+            <small>Separate multiple emails with semicolon (;)</small>
+          </div>
+
+          <h3 className="form-subsection-title">Customer Details</h3>
+          <div className="form-row form-row-2">
+            <div className="form-group">
+              <label htmlFor="customerTitle">Title</label>
+              <input
+                type="text"
+                id="customerTitle"
+                value={customerDetails.title ?? ''}
+                onChange={(e) => updateCustomerDetail('title', e.target.value)}
+                placeholder="Mr, Ms, Dr, etc."
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="customerCompany">Company Name</label>
+              <input
+                type="text"
+                id="customerCompany"
+                value={customerDetails.companyName ?? ''}
+                onChange={(e) => updateCustomerDetail('companyName', e.target.value)}
+                className="form-input"
+              />
+            </div>
+          </div>
+          <div className="form-row form-row-3">
+            <div className="form-group">
+              <label htmlFor="customerFirstName">First Name</label>
+              <input
+                type="text"
+                id="customerFirstName"
+                value={customerDetails.firstName ?? ''}
+                onChange={(e) => updateCustomerDetail('firstName', e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="customerMiddleName">Middle Name</label>
+              <input
+                type="text"
+                id="customerMiddleName"
+                value={customerDetails.middleName ?? ''}
+                onChange={(e) => updateCustomerDetail('middleName', e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="customerLastName">Last Name</label>
+              <input
+                type="text"
+                id="customerLastName"
+                value={customerDetails.lastName ?? ''}
+                onChange={(e) => updateCustomerDetail('lastName', e.target.value)}
+                className="form-input"
+              />
+            </div>
+          </div>
+          <div className="form-row form-row-2">
+            <div className="form-group">
+              <label htmlFor="customerPhone">Phone Number</label>
+              <input
+                type="tel"
+                id="customerPhone"
+                value={customerDetails.phoneNumber ?? ''}
+                onChange={(e) => updateCustomerDetail('phoneNumber', e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="customerMobile">Mobile Number</label>
+              <input
+                type="tel"
+                id="customerMobile"
+                value={customerDetails.mobileNumber ?? ''}
+                onChange={(e) => updateCustomerDetail('mobileNumber', e.target.value)}
+                className="form-input"
+              />
+            </div>
+          </div>
+          <div className="form-row form-row-2">
+            <div className="form-group">
+              <label htmlFor="customerWebsite">Website</label>
+              <input
+                type="url"
+                id="customerWebsite"
+                value={customerDetails.website ?? ''}
+                onChange={(e) => updateCustomerDetail('website', e.target.value)}
+                placeholder="https://"
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="customerNameOnChecks">Name to Put on Checks</label>
+              <input
+                type="text"
+                id="customerNameOnChecks"
+                value={customerDetails.nameOnChecks ?? ''}
+                onChange={(e) => updateCustomerDetail('nameOnChecks', e.target.value)}
+                className="form-input"
+              />
+            </div>
+          </div>
+
+          <h3 className="form-subsection-title">Billing Address</h3>
+          <div className="form-group">
+            <label htmlFor="billingStreet1">Street Address 1</label>
+            <input
+              type="text"
+              id="billingStreet1"
+              value={customerDetails.billingAddress?.street1 ?? ''}
+              onChange={(e) => updateBillingAddress('street1', e.target.value)}
+              className="form-input"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="billingStreet2">Street Address 2</label>
+            <input
+              type="text"
+              id="billingStreet2"
+              value={customerDetails.billingAddress?.street2 ?? ''}
+              onChange={(e) => updateBillingAddress('street2', e.target.value)}
+              className="form-input"
+            />
+          </div>
+          <div className="form-row form-row-3">
+            <div className="form-group">
+              <label htmlFor="billingCity">City</label>
+              <input
+                type="text"
+                id="billingCity"
+                value={customerDetails.billingAddress?.city ?? ''}
+                onChange={(e) => updateBillingAddress('city', e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="billingState">State</label>
+              <input
+                type="text"
+                id="billingState"
+                value={customerDetails.billingAddress?.state ?? ''}
+                onChange={(e) => updateBillingAddress('state', e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="billingZip">Zip Code</label>
+              <input
+                type="text"
+                id="billingZip"
+                value={customerDetails.billingAddress?.zipCode ?? ''}
+                onChange={(e) => updateBillingAddress('zipCode', e.target.value)}
+                className="form-input"
+              />
+            </div>
+          </div>
+
+          <h3 className="form-subsection-title">Shipping Address</h3>
+          <div className="form-group checkbox-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={customerDetails.shippingSameAsBilling ?? false}
+                onChange={(e) => updateCustomerDetail('shippingSameAsBilling', e.target.checked)}
+              />
+              Same as billing address
+            </label>
+          </div>
+          {!(customerDetails.shippingSameAsBilling ?? false) && (
+            <>
+              <div className="form-group">
+                <label htmlFor="shippingStreet1">Street Address 1</label>
+                <input
+                  type="text"
+                  id="shippingStreet1"
+                  value={customerDetails.shippingAddress?.street1 ?? ''}
+                  onChange={(e) => updateShippingAddress('street1', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="shippingStreet2">Street Address 2</label>
+                <input
+                  type="text"
+                  id="shippingStreet2"
+                  value={customerDetails.shippingAddress?.street2 ?? ''}
+                  onChange={(e) => updateShippingAddress('street2', e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div className="form-row form-row-3">
+                <div className="form-group">
+                  <label htmlFor="shippingCity">City</label>
+                  <input
+                    type="text"
+                    id="shippingCity"
+                    value={customerDetails.shippingAddress?.city ?? ''}
+                    onChange={(e) => updateShippingAddress('city', e.target.value)}
+                    className="form-input"
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="shippingState">State</label>
+                  <input
+                    type="text"
+                    id="shippingState"
+                    value={customerDetails.shippingAddress?.state ?? ''}
+                    onChange={(e) => updateShippingAddress('state', e.target.value)}
+                    className="form-input"
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="shippingZip">Zip Code</label>
+                  <input
+                    type="text"
+                    id="shippingZip"
+                    value={customerDetails.shippingAddress?.zipCode ?? ''}
+                    onChange={(e) => updateShippingAddress('zipCode', e.target.value)}
+                    className="form-input"
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           <div style={{ marginTop: '30px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
             <div style={{ display: 'flex', gap: '15px', marginBottom: '20px' }}>
@@ -411,6 +765,42 @@ const CreateProject: React.FC = () => {
             )}
           </div>
 
+          <div className="form-group">
+            <label>Drawings (optional)</label>
+            <p className="form-hint">Upload PDF drawings for this project. Technicians will be able to view them in Project Details. Max 10 files, 20MB each.</p>
+            <input
+              type="file"
+              accept=".pdf,application/pdf"
+              multiple
+              onChange={(e) => {
+                const chosen = e.target.files ? Array.from(e.target.files) : [];
+                setDrawingFiles(prev => {
+                  const combined = [...prev, ...chosen].slice(0, 10);
+                  return combined;
+                });
+                e.target.value = '';
+              }}
+            />
+            {drawingFiles.length > 0 && (
+              <ul className="drawing-files-list" style={{ marginTop: 8, paddingLeft: 20 }}>
+                {drawingFiles.map((f, i) => (
+                  <li key={`${f.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span>{f.name}</span>
+                    <span style={{ color: '#666', fontSize: '0.9em' }}>({(f.size / 1024).toFixed(1)} KB)</span>
+                    <button
+                      type="button"
+                      onClick={() => setDrawingFiles(prev => prev.filter((_, idx) => idx !== i))}
+                      className="cancel-button"
+                      style={{ padding: '2px 8px', fontSize: 12 }}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           {error && <div className="error-message">{error}</div>}
           <div className="form-actions">
             <button type="button" onClick={() => navigate('/dashboard')} className="cancel-button">
@@ -421,11 +811,6 @@ const CreateProject: React.FC = () => {
             </button>
           </div>
         </form>
-        <p className="info-text">
-          * Project number will be auto-generated in format 02-YYYY-NNNN
-          <br />
-          * Tasks can be created after project creation
-        </p>
       </div>
     </div>
   );

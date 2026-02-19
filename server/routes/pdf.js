@@ -6,30 +6,37 @@ const path = require('path');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
 const { saveReportPDF } = require('../utils/pdfFileManager');
+const { getPuppeteerLaunchOptions } = require('../utils/puppeteerLaunch');
 const { authenticate } = require('../middleware/auth');
+const {
+  getTenantIdForPdf,
+  getTenantById,
+  getLogoBase64,
+  getTenantAddress,
+  getTenantCompanyName,
+  getTenantPhone,
+  getTenantPhoneShort,
+  getTenantEmail,
+  getTenantRebarFooter
+} = require('../utils/tenantPdfHelpers');
 
 const router = express.Router();
 
-// Logo configuration - reusable across all reports
-const LOGO_CONFIG = {
-  path: path.join(__dirname, '..', 'public', 'MAK logo_consulting.jpg'),
-  fallback: null // Will be set if logo exists
-};
-
-// Helper function to get logo as base64 data URI (for embedding in HTML/PDF)
-function getLogoBase64() {
+/** Get tenant_id for current user when using Supabase (for workflow path scope). */
+async function getTenantIdForRequest(req) {
+  if (!db.isSupabase()) return null;
   try {
-    if (fs.existsSync(LOGO_CONFIG.path)) {
-      const imageBuffer = fs.readFileSync(LOGO_CONFIG.path);
-      const base64 = imageBuffer.toString('base64');
-      const mimeType = 'image/jpeg'; // Assuming JPG
-      return `data:${mimeType};base64,${base64}`;
-    }
-  } catch (err) {
-    console.warn('Error loading logo:', err.message);
+    const user = await db.get('users', { id: req.user.id });
+    if (!user) return null;
+    const tid = user.tenant_id ?? user.tenantId;
+    return tid != null ? tid : null;
+  } catch (e) {
+    console.error('Error getting tenant_id for PDF save:', e);
+    return null;
   }
-  return null; // Return null if logo not found
 }
+
+// Logo/tenant branding: use tenantPdfHelpers.getLogoBase64(tenantId, tenant) in each route
 
 // Generate PDF for WP1 (supports both workPackageId and taskId)
 router.get('/wp1/:id', authenticate, async (req, res) => {
@@ -267,13 +274,6 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
       }
     };
 
-    // Get logo as base64 data URI and replace placeholder
-    const logoBase64 = getLogoBase64();
-    const logoHtml = logoBase64 
-      ? `<img src="${logoBase64}" alt="MAK Lone Star Consulting Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
-      : '<div class="logo-placeholder">MAK</div>';
-    html = html.replace('{{LOGO_IMAGE}}', logoHtml);
-
     // Replace basic placeholders
     html = html.replace('{{PROJECT_NAME}}', escapeHtml(taskOrWp.projectName || ''));
     html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(taskOrWp.projectNumber || ''));
@@ -287,8 +287,12 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     html = html.replace('{{SPEC_STRENGTH}}', escapeHtml(specStrength));
     html = html.replace('{{SPEC_STRENGTH_DAYS}}', escapeHtml(specStrengthDays));
 
-    // Sample Information
-    html = html.replace('{{STRUCTURE}}', escapeHtml(wp1Data.structure || ''));
+    // Sample Information - structure: at least first letter uppercase (e.g. curb -> Curb)
+    const structureRaw = wp1Data.structure || '';
+    const structureDisplay = structureRaw
+      ? structureRaw.charAt(0).toUpperCase() + structureRaw.slice(1).toLowerCase()
+      : '';
+    html = html.replace('{{STRUCTURE}}', escapeHtml(structureDisplay));
     html = html.replace('{{SAMPLE_LOCATION}}', escapeHtml(wp1Data.sampleLocation || ''));
     html = html.replace('{{SUPPLIER}}', escapeHtml(wp1Data.supplier || ''));
     html = html.replace('{{TIME_BATCHED}}', escapeHtml(formatTime(wp1Data.timeBatched || '')));
@@ -375,8 +379,11 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         }
 
         // Generate specimen set section HTML - wrapped in bordered container
-        // First set gets 'first' class to prevent page break, others get page break
-        const containerClass = setIndex === 0 ? 'specimen-set-container first' : 'specimen-set-container';
+        // Page breaks: Set 1 = Page 1. If 3+ sets, Sets 2 & 3 share Page 2; Set 4+ each on own page.
+        const sharePage2 = cylinderSets.length >= 3 && (setIndex === 1 || setIndex === 2);
+        const containerClass = setIndex === 0
+          ? 'specimen-set-container first'
+          : (sharePage2 ? 'specimen-set-container no-break-before' : 'specimen-set-container');
         specimenSetsHtml += `
           <!-- Specimen Set ${setIndex + 1} -->
           <div class="${containerClass}">
@@ -459,6 +466,21 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
 
     html = html.replace('{{SPECIMEN_SETS}}', specimenSetsHtml);
 
+    // Tenant branding: resolve tenant and replace company/logo placeholders
+    const tenantId = await getTenantIdForPdf(req, taskOrWp);
+    const tenant = await getTenantById(tenantId);
+    const logoBase64 = getLogoBase64(tenantId, tenant);
+    const companyName = getTenantCompanyName(tenant);
+    const companyAddress = getTenantAddress(tenant);
+    const companyPhone = getTenantPhone(tenant);
+    const logoHtml = logoBase64
+      ? `<img src="${logoBase64}" alt="${escapeHtml(companyName)} Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
+      : '<div class="logo-placeholder">' + escapeHtml(companyName) + '</div>';
+    html = html.replace('{{LOGO_IMAGE}}', logoHtml);
+    html = html.replace(/\{\{COMPANY_NAME\}\}/g, escapeHtml(companyName));
+    html = html.replace(/\{\{COMPANY_ADDRESS\}\}/g, escapeHtml(companyAddress));
+    html = html.replace(/\{\{COMPANY_PHONE\}\}/g, escapeHtml(companyPhone));
+
     // Generate REMARKS section conditionally
     // If only 1 specimen set, move REMARKS to Page 2 with top spacing
     const hasOnlyOneSet = cylinderSets.length === 1;
@@ -473,10 +495,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
 
     // Generate PDF using Puppeteer
     console.log('Launching Puppeteer for WP1 PDF generation...');
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
     
     try {
       const page = await browser.newPage();
@@ -537,7 +556,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         footerTemplate: `
           <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: 3px solid #000; border-top: none; pointer-events: none; box-sizing: border-box;">
             <div style="position: absolute; bottom: 0.2in; left: 0.5in; font-size: 9pt; color: #000;">Page <span class="pageNumber"></span></div>
-            <div style="position: absolute; bottom: 0.2in; right: 0.5in; font-size: 9pt; color: #000;">MAK Lonestar Consulting, LLC</div>
+            <div style="position: absolute; bottom: 0.2in; right: 0.5in; font-size: 9pt; color: #000;">${companyName.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</div>
           </div>
         `
       });
@@ -572,12 +591,14 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
       let saveInfo = null;
       let saveError = null;
       try {
+        const tenantId = await getTenantIdForRequest(req);
         saveInfo = await saveReportPDF(
           taskOrWp.projectNumber,
           taskType,
           fieldDate,
           pdfBuffer,
-          isRegeneration
+          isRegeneration,
+          tenantId
         );
         
         if (saveInfo.saved) {
@@ -680,6 +701,20 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    // Tenant branding for header
+    let taskTenantId = task.tenant_id ?? task.tenantId;
+    if (taskTenantId == null && (task.project_id != null || task.projectId != null)) {
+      const project = await db.get('projects', { id: task.project_id ?? task.projectId });
+      if (project) taskTenantId = project.tenant_id ?? project.tenantId;
+    }
+    const taskTenant = await getTenantById(taskTenantId);
+    const headerCompanyName = getTenantCompanyName(taskTenant);
+    const headerAddress = getTenantAddress(taskTenant);
+    const headerPhone = getTenantPhone(taskTenant);
+    const headerAddressLines = headerAddress.split(',').map(s => s.trim()).filter(Boolean);
+    const line1 = headerAddressLines[0] || '';
+    const line2 = headerAddressLines.slice(1).join(', ') || '';
+
       try {
         // Set headers
         res.setHeader('Content-Type', 'application/pdf');
@@ -703,18 +738,20 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         const margin = 50;
         const usableWidth = pageWidth - (margin * 2); // 512 points
 
-        // Header
-        doc.fontSize(10)
-           .text('MAK Lonestar Consulting, LLC', 50, 50)
-           .text('940 N Beltline Road, Suite 107', 50, 65)
-           .text('Irving, TX 75061', 50, 80)
-           .text('Tel (214) 718-1250', 50, 95);
+        // Header (tenant branding)
+        let headerY = 50;
+        doc.fontSize(10).text(headerCompanyName, 50, headerY);
+        headerY += 15;
+        if (line1) { doc.text(line1, 50, headerY); headerY += 15; }
+        if (line2) { doc.text(line2, 50, headerY); headerY += 15; }
+        doc.text(headerPhone, 50, headerY);
+        headerY += 25;
 
         // Title
         doc.fontSize(14)
-           .text('TASK WORK ORDER / JOB TICKET', 50, 130, { underline: true });
+           .text('TASK WORK ORDER / JOB TICKET', 50, headerY, { underline: true });
 
-        let yPos = 170;
+        let yPos = headerY + 40;
 
         // Project Information
         doc.fontSize(11)
@@ -863,8 +900,10 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get density report data
-    const data = await db.get('density_reports', { taskId });
+    const tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    const getConditions = { taskId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const data = await db.get('density_reports', getConditions);
     if (!data) {
       return res.status(404).json({ error: 'No report data found. Please save the form first.' });
     }
@@ -925,19 +964,32 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         ? new Date(data.datePerformed).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
         : '';
 
-      // Get logo as base64 data URI and replace placeholder
-      const logoBase64 = getLogoBase64();
-      const logoHtml = logoBase64 
-        ? `<img src="${logoBase64}" alt="MAK Lone Star Consulting Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
-        : '<div class="logo-placeholder">MAK</div>';
-      html = html.replace('{{LOGO_IMAGE}}', logoHtml);
+      // Tenant branding
+      const densityTenantId = await getTenantIdForPdf(req, task);
+      const densityTenant = await getTenantById(densityTenantId);
+      const densityLogoBase64 = getLogoBase64(densityTenantId, densityTenant);
+      const densityCompanyName = getTenantCompanyName(densityTenant);
+      const densityCompanyAddress = getTenantAddress(densityTenant);
+      const densityCompanyPhone = getTenantPhone(densityTenant);
+      const densityLogoHtml = densityLogoBase64
+        ? `<img src="${densityLogoBase64}" alt="${escapeHtml(densityCompanyName)} Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
+        : '<div class="logo-placeholder">' + escapeHtml(densityCompanyName) + '</div>';
+      html = html.replace('{{LOGO_IMAGE}}', densityLogoHtml);
+      html = html.replace(/\{\{COMPANY_NAME\}\}/g, escapeHtml(densityCompanyName));
+      html = html.replace(/\{\{COMPANY_ADDRESS\}\}/g, escapeHtml(densityCompanyAddress));
+      html = html.replace(/\{\{COMPANY_PHONE\}\}/g, escapeHtml(densityCompanyPhone));
 
       // Replace header placeholders (escape HTML)
       html = html.replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''));
       html = html.replace('{{DATE_PERFORMED}}', escapeHtml(datePerformed));
       html = html.replace('{{PROJECT_NAME}}', escapeHtml(task.projectName || ''));
       html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(task.projectNumber || ''));
-      html = html.replace('{{STRUCTURE}}', escapeHtml(data.structure || ''));
+      // Structure: preserve display casing (capitalize first letter so "utilities" -> "Utilities")
+      const structureRaw = data.structure || '';
+      const structureDisplay = structureRaw
+        ? structureRaw.charAt(0).toUpperCase() + structureRaw.slice(1).toLowerCase()
+        : '';
+      html = html.replace('{{STRUCTURE}}', escapeHtml(structureDisplay));
 
       // Generate test rows HTML
       let testRowsHtml = '';
@@ -1022,22 +1074,33 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       html = html.replace('{{METHOD_D3017}}', data.methodD3017 ? 'checked' : '');
       html = html.replace('{{METHOD_D698}}', data.methodD698 ? 'checked' : '');
 
-      // Get technician name - prioritize saved techName, then task's assigned technician
-      let technicianName = data.techName;
-      
-      // If techName is missing, try to get it from the task's assigned technician
+      // Technician name: prefer the report's selected technician (form field) over the task's assigned technician.
+      // Support both camelCase (db adapter) and snake_case (raw Supabase row) for report data.
+      const reportTechName = data.techName ?? data.tech_name ?? '';
+      const reportTechnicianId = data.technicianId ?? data.technician_id ?? null;
+      let technicianName = (typeof reportTechName === 'string' && reportTechName.trim()) ? reportTechName.trim() : '';
+      // If report has a technician ID, always resolve name from users so the PDF shows who was selected in the form
+      if (reportTechnicianId != null) {
+        const reportTech = await db.get('users', { id: reportTechnicianId });
+        if (reportTech) {
+          const resolved = reportTech.name || reportTech.email || '';
+          if (resolved) technicianName = resolved;
+        }
+      }
+      // Fallback only when report has no technician selection: use task's assigned technician
       if (!technicianName) {
-        if (task.assignedTechnicianName) {
-          technicianName = task.assignedTechnicianName;
-        } else if (task.assignedTechnicianId) {
-          // Fetch technician name from database
-          const tech = await db.get('users', { id: task.assignedTechnicianId });
+        const taskAssignedName = task.assignedTechnicianName;
+        const taskAssignedId = task.assignedTechnicianId ?? task.assigned_technician_id;
+        if (taskAssignedName) {
+          technicianName = taskAssignedName;
+        } else if (taskAssignedId != null) {
+          const tech = await db.get('users', { id: taskAssignedId });
           if (tech) {
             technicianName = tech.name || tech.email || '';
           }
         }
       }
-      
+
       // Replace footer placeholders
       html = html.replace('{{REMARKS}}', escapeHtml(data.remarks || ''));
       html = html.replace('{{TECH_NAME}}', escapeHtml(technicianName || ''));
@@ -1045,10 +1108,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
 
       // Generate PDF using Puppeteer
       console.log('Launching Puppeteer for density PDF generation...');
-      const browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-      });
+      const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
       
       try {
         const page = await browser.newPage();
@@ -1131,12 +1191,14 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         let saveInfo = null;
         let saveError = null;
         try {
+          const tenantId = await getTenantIdForRequest(req);
           saveInfo = await saveReportPDF(
             task.projectNumber,
             'DENSITY_MEASUREMENT',
             fieldDate,
             pdfBuffer,
-            isRegeneration
+            isRegeneration,
+            tenantId
           );
           
           if (saveInfo.saved) {
@@ -1246,11 +1308,32 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get rebar report data
-    const data = await db.get('rebar_reports', { taskId });
-    
+    let tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    if (tenantId == null && db.isSupabase() && (task.project_id != null || task.projectId != null)) {
+      const project = await db.get('projects', { id: task.project_id ?? task.projectId });
+      if (project) tenantId = project.tenant_id ?? project.tenantId ?? null;
+    }
+    const getConditions = { taskId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    let data = await db.get('rebar_reports', getConditions);
     if (!data) {
-      return res.status(404).json({ error: 'No report data found. Please save the form first.' });
+      data = await db.get('rebar_reports', { taskId });
+    }
+    if (!data) {
+      const today = new Date().toISOString().split('T')[0];
+      const defaultTechName = (task.assignedTechnicianName != null && task.assignedTechnicianName !== '')
+        ? task.assignedTechnicianName
+        : (req.user && (req.user.name || req.user.email)) || '';
+      data = {
+        clientName: '',
+        reportDate: today,
+        inspectionDate: today,
+        generalContractor: '',
+        locationDetail: '',
+        wireMeshSpec: '',
+        drawings: '',
+        techName: defaultTechName
+      };
     }
 
     try {
@@ -1284,12 +1367,24 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
           }
         };
 
-        // Get logo as base64 data URI and replace placeholder
-        const logoBase64 = getLogoBase64();
-        const logoHtml = logoBase64 
-          ? `<img src="${logoBase64}" alt="MAK Lone Star Consulting Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
-          : '<div class="logo-placeholder">MAK</div>';
-        html = html.replace('{{LOGO_IMAGE}}', logoHtml);
+        // Tenant branding (Rebar: logo + company + PE/license footer)
+        const rebarTenantId = await getTenantIdForPdf(req, task);
+        const rebarTenant = await getTenantById(rebarTenantId);
+        const rebarFooter = getTenantRebarFooter(rebarTenant);
+        const rebarLogoBase64 = getLogoBase64(rebarTenantId, rebarTenant);
+        const rebarLogoHtml = rebarLogoBase64
+          ? `<img src="${rebarLogoBase64}" alt="${escapeHtml(rebarFooter.companyName)} Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
+          : '<div class="logo-placeholder">' + escapeHtml(rebarFooter.companyName) + '</div>';
+        html = html.replace('{{LOGO_IMAGE}}', rebarLogoHtml);
+        html = html.replace(/\{\{COMPANY_NAME\}\}/g, escapeHtml(rebarFooter.companyName));
+        html = html.replace(/\{\{COMPANY_ADDRESS\}\}/g, escapeHtml(getTenantAddress(rebarTenant)));
+        // Rebar header uses "P: number"; signature uses "T number | E email" - pass short phone
+        const rebarPhoneShort = getTenantPhoneShort(rebarTenant);
+        html = html.replace(/\{\{COMPANY_PHONE\}\}/g, escapeHtml(rebarPhoneShort));
+        html = html.replace(/\{\{COMPANY_EMAIL\}\}/g, escapeHtml(rebarFooter.companyEmail));
+        html = html.replace(/\{\{PE_FIRM_REG_LINE\}\}/g, escapeHtml(rebarFooter.peFirmRegLine));
+        html = html.replace(/\{\{LICENSE_HOLDER_NAME\}\}/g, escapeHtml(rebarFooter.licenseHolderName));
+        html = html.replace(/\{\{LICENSE_HOLDER_TITLE\}\}/g, escapeHtml(rebarFooter.licenseHolderTitle));
 
         // Replace placeholders
         html = html.replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''));
@@ -1305,10 +1400,7 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
 
         // Generate PDF using Puppeteer
         console.log('Launching Puppeteer for rebar PDF generation...');
-        const browser = await puppeteer.launch({
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
+        const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
         
         try {
           const page = await browser.newPage();
@@ -1374,12 +1466,14 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
           let saveInfo = null;
           let saveError = null;
           try {
+            const tenantId = await getTenantIdForRequest(req);
             saveInfo = await saveReportPDF(
               task.projectNumber,
               'REBAR',
               fieldDate,
               pdfBuffer,
-              isRegeneration
+              isRegeneration,
+              tenantId
             );
             
             if (saveInfo.saved) {

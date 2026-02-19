@@ -86,7 +86,10 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       }
     }
 
-    const data = await db.get('wp1_data', { taskId });
+    const tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    const getConditions = { taskId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+    const data = await db.get('wp1_data', getConditions);
 
     if (data) {
       // Parse cylinders JSON
@@ -158,6 +161,10 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const tenantId = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+    const getConditions = { taskId };
+    if (tenantId != null) getConditions.tenant_id = tenantId;
+
     const {
       technician, weather, placementDate, specStrength, specStrengthDays,
       structure, sampleLocation, supplier, timeBatched, classMixId, timeSampled,
@@ -214,17 +221,20 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
       lastEditedByUserId: req.user.id,
       updatedAt: new Date().toISOString()
     };
+    if (tenantId != null) wp1Data.tenant_id = tenantId;
 
     // Check if record exists
-    const existing = await db.get('wp1_data', { taskId });
+    const existing = await db.get('wp1_data', getConditions);
 
+    const updateConditions = { taskId };
+    if (tenantId != null) updateConditions.tenant_id = tenantId;
     let data;
     if (existing) {
       // Update
-      await db.update('wp1_data', wp1Data, { taskId });
-      data = await db.get('wp1_data', { taskId });
+      await db.update('wp1_data', wp1Data, updateConditions);
+      data = await db.get('wp1_data', getConditions);
     } else {
-      // Insert
+      // Insert (tenant_id required for multi-tenant Supabase)
       data = await db.insert('wp1_data', wp1Data);
     }
 
@@ -273,7 +283,7 @@ router.post('/task/:taskId', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Error saving WP1 data:', err);
     console.error('Error details:', {
-      taskId,
+      taskId: req.params?.taskId,
       errorMessage: err.message,
       errorStack: err.stack,
       requestBody: req.body

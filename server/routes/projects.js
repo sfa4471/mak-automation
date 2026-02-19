@@ -1,9 +1,12 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const db = require('../db');
 const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
-const { ensureProjectDirectory } = require('../utils/pdfFileManager');
+const { ensureProjectDirectory, getProjectDrawingsDir } = require('../utils/pdfFileManager');
 
 const router = express.Router();
 
@@ -59,51 +62,171 @@ function parseProjectJSONFields(project) {
   } else {
     project.concreteSpecs = {};
   }
-  
+
+  // customerDetails: JSONB (Supabase) or string (SQLite)
+  if (project.customerDetails !== null && project.customerDetails !== undefined) {
+    if (typeof project.customerDetails === 'string') {
+      try {
+        project.customerDetails = JSON.parse(project.customerDetails);
+      } catch (e) {
+        project.customerDetails = {};
+      }
+    } else if (typeof project.customerDetails !== 'object' || Array.isArray(project.customerDetails)) {
+      project.customerDetails = {};
+    }
+  } else {
+    project.customerDetails = {};
+  }
+
+  // ccEmails / bccEmails: array (Supabase) or string (SQLite)
+  if (project.ccEmails !== null && project.ccEmails !== undefined) {
+    if (typeof project.ccEmails === 'string') {
+      try {
+        project.ccEmails = JSON.parse(project.ccEmails);
+      } catch (e) {
+        project.ccEmails = [];
+      }
+    }
+    if (!Array.isArray(project.ccEmails)) project.ccEmails = [];
+  } else {
+    project.ccEmails = [];
+  }
+  if (project.bccEmails !== null && project.bccEmails !== undefined) {
+    if (typeof project.bccEmails === 'string') {
+      try {
+        project.bccEmails = JSON.parse(project.bccEmails);
+      } catch (e) {
+        project.bccEmails = [];
+      }
+    }
+    if (!Array.isArray(project.bccEmails)) project.bccEmails = [];
+  } else {
+    project.bccEmails = [];
+  }
+
+  // drawings: JSONB array of { filename, displayName? }
+  if (project.drawings !== null && project.drawings !== undefined) {
+    if (typeof project.drawings === 'string') {
+      try {
+        project.drawings = JSON.parse(project.drawings);
+      } catch (e) {
+        project.drawings = [];
+      }
+    }
+    if (!Array.isArray(project.drawings)) project.drawings = [];
+  } else {
+    project.drawings = [];
+  }
+
   return project;
 }
 
-// Generate project number: 02-YYYY-NNNN (with year-based sequence)
-// Uses atomic counter to ensure uniqueness and handle concurrency
-// Includes retry logic to handle race conditions and out-of-sync counters
-async function generateProjectNumber() {
+/**
+ * Load project by id and enforce tenant + technician access. Returns project or sends error and returns null.
+ */
+async function loadProjectWithAccess(req, res, projectId) {
+  const id = parseInt(projectId, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid project ID' });
+    return null;
+  }
+  const project = await db.get('projects', { id });
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return null;
+  }
+  if (db.isSupabase()) {
+    const tenantId = req.user.tenantId ?? req.user.tenant_id ?? null;
+    if (tenantId != null) {
+      const projectTenantId = project.tenant_id ?? project.tenantId;
+      if (projectTenantId !== tenantId) {
+        res.status(404).json({ error: 'Project not found' });
+        return null;
+      }
+    }
+  }
+  if (req.user.role === 'TECHNICIAN') {
+    let hasAccess = false;
+    if (db.isSupabase()) {
+      const [tasksResult, wpResult] = await Promise.all([
+        supabase.from('tasks').select('id').eq('project_id', id).eq('assigned_technician_id', req.user.id).limit(1),
+        supabase.from('workpackages').select('id').eq('project_id', id).eq('assigned_to', req.user.id).limit(1)
+      ]);
+      hasAccess = (tasksResult.data && tasksResult.data.length > 0) || (wpResult.data && wpResult.data.length > 0);
+    } else {
+      const sqliteDb = require('../database');
+      const [wpCount, taskCount] = await Promise.all([
+        new Promise((resolve, reject) => {
+          sqliteDb.get('SELECT COUNT(*) as count FROM workpackages WHERE projectId = ? AND assignedTo = ?', [id, req.user.id], (err, row) => {
+            if (err) return reject(err);
+            resolve(row ? row.count : 0);
+          });
+        }),
+        new Promise((resolve, reject) => {
+          sqliteDb.get('SELECT COUNT(*) as count FROM tasks WHERE projectId = ? AND assignedTechnicianId = ?', [id, req.user.id], (err, row) => {
+            if (err) return reject(err);
+            resolve(row ? row.count : 0);
+          });
+        })
+      ]);
+      hasAccess = wpCount > 0 || taskCount > 0;
+    }
+    if (!hasAccess) {
+      res.status(403).json({ error: 'Access denied' });
+      return null;
+    }
+  }
+  parseProjectJSONFields(project);
+  return project;
+}
+
+// Generate project number: PREFIX-YYYY-NNNN (with year-based sequence)
+// When Supabase + tenantId: uses tenant_project_counters and tenant's prefix (branch multi-tenant).
+// Otherwise: uses project_counters (main or legacy).
+async function generateProjectNumber(tenantId = null) {
   const year = new Date().getFullYear();
   const baseStart = (year - 2022) * 1000 + 1;
   const maxRetries = 20;
-  
+  let prefix = '02';
+
+  if (db.isSupabase() && tenantId != null) {
+    const tenant = await db.get('tenants', { id: tenantId });
+    if (tenant && (tenant.project_number_prefix || tenant.projectNumberPrefix)) {
+      prefix = tenant.project_number_prefix || tenant.projectNumberPrefix;
+    }
+  }
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       let nextSeq;
-      
-      if (db.isSupabase()) {
-        // Supabase: Get or create counter, then increment
+
+      if (db.isSupabase() && tenantId != null) {
+        // Branch multi-tenant: use tenant_project_counters
         const { data: existingCounter, error: selectError } = await supabase
-          .from('project_counters')
+          .from('tenant_project_counters')
           .select('next_seq')
+          .eq('tenant_id', tenantId)
           .eq('year', year)
           .single();
-        
+
         if (selectError && selectError.code !== 'PGRST116') {
           throw selectError;
         }
-        
+
         if (!existingCounter) {
-          // First project for this year - try to insert
-          nextSeq = baseStart;
+          nextSeq = 1;
           const { error: insertError } = await supabase
-            .from('project_counters')
-            .insert({ year, next_seq: nextSeq + 1 });
-          
-          // If insert fails due to race condition, fetch existing counter
+            .from('tenant_project_counters')
+            .insert({ tenant_id: tenantId, year, next_seq: 2 });
+
           if (insertError) {
             if (insertError.code === '23505' || insertError.message?.includes('duplicate')) {
-              // Someone else created it - fetch and use it
               const { data: raceCounter, error: raceError } = await supabase
-                .from('project_counters')
+                .from('tenant_project_counters')
                 .select('next_seq')
+                .eq('tenant_id', tenantId)
                 .eq('year', year)
                 .single();
-              
               if (raceError) throw raceError;
               nextSeq = raceCounter.next_seq;
             } else {
@@ -113,30 +236,81 @@ async function generateProjectNumber() {
         } else {
           nextSeq = existingCounter.next_seq;
         }
-        
-        // Atomically increment the counter
-        // Note: Supabase JS client doesn't support true atomic increment,
-        // so we use update and handle race conditions with retry logic
+
+        const { error: updateError } = await supabase
+          .from('tenant_project_counters')
+          .update({ next_seq: nextSeq + 1, updated_at: new Date().toISOString() })
+          .eq('tenant_id', tenantId)
+          .eq('year', year);
+
+        if (updateError) {
+          const { data: verifyCounter } = await supabase
+            .from('tenant_project_counters')
+            .select('next_seq')
+            .eq('tenant_id', tenantId)
+            .eq('year', year)
+            .single();
+          if (verifyCounter && verifyCounter.next_seq > nextSeq) continue;
+          throw updateError;
+        }
+
+        const projectNumber = `${prefix}-${year}-${nextSeq.toString().padStart(4, '0')}`;
+        const existConditions = { project_number: projectNumber };
+        existConditions.tenant_id = tenantId;
+        const existingProject = await db.get('projects', existConditions);
+        if (!existingProject) return projectNumber;
+        console.warn(`Project number ${projectNumber} already exists (counter out of sync), retrying...`);
+        continue;
+      }
+
+      if (db.isSupabase()) {
+        // Supabase without tenantId (legacy): use project_counters
+        const { data: existingCounter, error: selectError } = await supabase
+          .from('project_counters')
+          .select('next_seq')
+          .eq('year', year)
+          .single();
+
+        if (selectError && selectError.code !== 'PGRST116') {
+          throw selectError;
+        }
+
+        if (!existingCounter) {
+          nextSeq = baseStart;
+          const { error: insertError } = await supabase
+            .from('project_counters')
+            .insert({ year, next_seq: nextSeq + 1 });
+
+          if (insertError) {
+            if (insertError.code === '23505' || insertError.message?.includes('duplicate')) {
+              const { data: raceCounter, error: raceError } = await supabase
+                .from('project_counters')
+                .select('next_seq')
+                .eq('year', year)
+                .single();
+              if (raceError) throw raceError;
+              nextSeq = raceCounter.next_seq;
+            } else {
+              throw insertError;
+            }
+          }
+        } else {
+          nextSeq = existingCounter.next_seq;
+        }
+
         const { error: updateError } = await supabase
           .from('project_counters')
           .update({ next_seq: nextSeq + 1, updated_at: new Date().toISOString() })
           .eq('year', year);
-        
+
         if (updateError) {
-          // If update failed, check if counter was already incremented (race condition)
           const { data: verifyCounter } = await supabase
             .from('project_counters')
             .select('next_seq')
             .eq('year', year)
             .single();
-          
-          if (verifyCounter && verifyCounter.next_seq > nextSeq) {
-            // Counter was incremented by another request - use the new value for next iteration
-            // We'll retry in the next loop iteration
-            continue;
-          } else {
-            throw updateError;
-          }
+          if (verifyCounter && verifyCounter.next_seq > nextSeq) continue;
+          throw updateError;
         }
       } else {
         // SQLite: Use atomic increment
@@ -204,9 +378,15 @@ async function generateProjectNumber() {
 
 // Create project (Admin only)
 router.post('/', authenticate, requireAdmin, [
+  body('projectNumber').notEmpty().trim(),
   body('projectName').notEmpty().trim(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
+  body('ccEmails').optional().isArray(),
+  body('ccEmails.*').optional().isEmail(),
+  body('bccEmails').optional().isArray(),
+  body('bccEmails.*').optional().isEmail(),
+  body('customerDetails').optional().isObject(),
   body('soilSpecs').optional().isObject(),
   body('concreteSpecs').optional().isObject()
 ], async (req, res) => {
@@ -217,11 +397,20 @@ router.post('/', authenticate, requireAdmin, [
     }
 
     const { 
+      projectNumber: rawProjectNumber, 
       projectName, 
       customerEmails,
+      ccEmails,
+      bccEmails,
+      customerDetails,
       soilSpecs,
       concreteSpecs
     } = req.body;
+
+    const trimmedProjectNumber = (rawProjectNumber || '').trim();
+    if (!trimmedProjectNumber) {
+      return res.status(400).json({ error: 'Project number is required' });
+    }
 
     // Validate customerEmails if provided
     if (customerEmails && (!Array.isArray(customerEmails) || customerEmails.length === 0)) {
@@ -244,8 +433,19 @@ router.post('/', authenticate, requireAdmin, [
       return res.status(400).json({ error: 'Project name cannot be empty' });
     }
     
-    // Check for duplicate project name before creating
-    const existingProjectByName = await db.get('projects', { projectName: trimmedProjectName });
+    // Resolve tenant for Supabase multi-tenant (before duplicate check and project number)
+    let tenantIdForCreate = null;
+    if (db.isSupabase()) {
+      const user = await db.get('users', { id: req.user.id });
+      tenantIdForCreate = user && (user.tenant_id != null || user.tenantId != null)
+        ? (user.tenant_id ?? user.tenantId)
+        : null;
+    }
+
+    // Check for duplicate project name before creating (per-tenant when Supabase)
+    const nameCheckConditions = { projectName: trimmedProjectName };
+    if (db.isSupabase() && tenantIdForCreate != null) nameCheckConditions.tenant_id = tenantIdForCreate;
+    const existingProjectByName = await db.get('projects', nameCheckConditions);
     if (existingProjectByName) {
       console.log('Duplicate project name detected:', {
         requestedName: trimmedProjectName,
@@ -254,36 +454,34 @@ router.post('/', authenticate, requireAdmin, [
       return res.status(400).json({ error: 'Project name already exists' });
     }
 
-    // Generate project number using atomic counter
-    let projectNumber;
-    try {
-      projectNumber = await generateProjectNumber();
-    } catch (genErr) {
-      console.error('Error generating project number:', genErr);
-      return res.status(500).json({ error: 'Database error: Failed to generate project number' });
+    // Check for duplicate project number (per-tenant when Supabase)
+    const numberCheckConditions = { projectNumber: trimmedProjectNumber };
+    if (db.isSupabase() && tenantIdForCreate != null) numberCheckConditions.tenant_id = tenantIdForCreate;
+    const existingProjectByNumber = await db.get('projects', numberCheckConditions);
+    if (existingProjectByNumber) {
+      return res.status(400).json({ error: 'Project number already exists for this organization' });
     }
 
-    if (!projectNumber) {
-      return res.status(500).json({ error: 'Failed to generate project number' });
-    }
-
-    // Note: generateProjectNumber() already handles duplicate checking and retries
-    // so we don't need to check again here
+    // Use client-provided project number (folder and DB)
+    const projectNumber = trimmedProjectNumber;
 
     // Prepare data for insertion
-    // For SQLite, JSON fields need to be stringified; for Supabase, they should be objects/arrays
     const projectData = {
       projectNumber,
       projectName: trimmedProjectName
     };
-    
+
     if (db.isSupabase()) {
+      if (tenantIdForCreate != null) projectData.tenant_id = tenantIdForCreate;
       // Supabase: pass objects/arrays directly (will be stored as JSONB)
       projectData.customerEmails = customerEmails && customerEmails.length > 0 ? customerEmails : null;
+      projectData.ccEmails = ccEmails && ccEmails.length > 0 ? ccEmails : null;
+      projectData.bccEmails = bccEmails && bccEmails.length > 0 ? bccEmails : null;
+      projectData.customerDetails = customerDetails && Object.keys(customerDetails).length > 0 ? customerDetails : null;
       projectData.soilSpecs = soilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : null;
       projectData.concreteSpecs = concreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : null;
     } else {
-      // SQLite: stringify JSON fields
+      // SQLite: stringify JSON fields (no customerDetails/ccEmails/bccEmails columns in legacy schema)
       projectData.customerEmails = customerEmails && customerEmails.length > 0 ? JSON.stringify(customerEmails) : null;
       projectData.soilSpecs = soilSpecs && Object.keys(soilSpecs).length > 0 ? JSON.stringify(soilSpecs) : null;
       projectData.concreteSpecs = concreteSpecs && Object.keys(concreteSpecs).length > 0 ? JSON.stringify(concreteSpecs) : null;
@@ -309,7 +507,10 @@ router.post('/', authenticate, requireAdmin, [
 
     // Create project folder structure for PDF storage (use project number, not ID)
     try {
-      await ensureProjectDirectory(projectNumber);
+      const tenantId = project && (project.tenant_id != null || project.tenantId != null)
+        ? (project.tenant_id ?? project.tenantId)
+        : null;
+      await ensureProjectDirectory(projectNumber, tenantId);
     } catch (folderError) {
       console.error('Error creating project folder:', folderError);
       // Continue even if folder creation fails
@@ -324,19 +525,18 @@ router.post('/', authenticate, requireAdmin, [
   }
 });
 
-// Get all projects (Admin sees all, Technician sees assigned only)
+// Get all projects (Admin sees all in their tenant, Technician sees assigned only in their tenant)
 router.get('/', authenticate, async (req, res) => {
   try {
     let projects;
-    
+    const tenantId = req.user.tenantId ?? req.user.tenant_id ?? null;
+
     if (db.isSupabase()) {
       if (req.user.role === 'ADMIN') {
-        // Admin: get all projects
-        const { data, error } = await supabase
-          .from('projects')
-          .select('*')
-          .order('created_at', { ascending: false });
-        
+        // Admin: get projects for current tenant only (multi-tenant isolation)
+        let query = supabase.from('projects').select('*').order('created_at', { ascending: false });
+        if (tenantId != null) query = query.eq('tenant_id', tenantId);
+        const { data, error } = await query;
         if (error) throw error;
         projects = (data || []).map(keysToCamelCase);
       } else {
@@ -366,12 +566,13 @@ router.get('/', authenticate, async (req, res) => {
         if (projectIds.length === 0) {
           projects = [];
         } else {
-          const { data, error } = await supabase
+          let techQuery = supabase
             .from('projects')
             .select('*')
             .in('id', projectIds)
             .order('created_at', { ascending: false });
-          
+          if (tenantId != null) techQuery = techQuery.eq('tenant_id', tenantId);
+          const { data, error } = await techQuery;
           if (error) throw error;
           projects = (data || []).map(keysToCamelCase);
         }
@@ -436,6 +637,16 @@ router.get('/:id', authenticate, async (req, res) => {
     
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (db.isSupabase()) {
+      const tenantId = req.user.tenantId ?? req.user.tenant_id ?? null;
+      if (tenantId != null) {
+        const projectTenantId = project.tenant_id ?? project.tenantId;
+        if (projectTenantId !== tenantId) {
+          return res.status(404).json({ error: 'Project not found' });
+        }
+      }
     }
 
     // Check access: Admin can see all, Technician only assigned
@@ -508,6 +719,11 @@ router.put('/:id', authenticate, requireAdmin, [
   body('projectName').optional().notEmpty(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
+  body('ccEmails').optional().isArray(),
+  body('ccEmails.*').optional().isEmail(),
+  body('bccEmails').optional().isArray(),
+  body('bccEmails.*').optional().isEmail(),
+  body('customerDetails').optional().isObject(),
   body('soilSpecs').optional().isObject(),
   body('concreteSpecs').optional().isObject()
 ], async (req, res) => {
@@ -526,6 +742,9 @@ router.put('/:id', authenticate, requireAdmin, [
     const { 
       projectName, 
       customerEmails,
+      ccEmails,
+      bccEmails,
+      customerDetails,
       soilSpecs,
       concreteSpecs
     } = req.body;
@@ -555,6 +774,15 @@ router.put('/:id', authenticate, requireAdmin, [
         updateData.customerEmails = JSON.stringify(customerEmails);
       }
     }
+    if (ccEmails !== undefined && ccEmails !== null && db.isSupabase()) {
+      updateData.ccEmails = ccEmails;
+    }
+    if (bccEmails !== undefined && bccEmails !== null && db.isSupabase()) {
+      updateData.bccEmails = bccEmails;
+    }
+    if (customerDetails !== undefined && customerDetails !== null && db.isSupabase()) {
+      updateData.customerDetails = customerDetails;
+    }
     if (soilSpecs !== undefined && soilSpecs !== null) {
       if (db.isSupabase()) {
         updateData.soilSpecs = soilSpecs;
@@ -574,6 +802,20 @@ router.put('/:id', authenticate, requireAdmin, [
       return res.status(400).json({ error: 'No fields to update' });
     }
 
+    const existingProject = await db.get('projects', { id: projectId });
+    if (!existingProject) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if (db.isSupabase()) {
+      const tenantId = req.user.tenantId ?? req.user.tenant_id ?? null;
+      if (tenantId != null) {
+        const projectTenantId = existingProject.tenant_id ?? existingProject.tenantId;
+        if (projectTenantId !== tenantId) {
+          return res.status(404).json({ error: 'Project not found' });
+        }
+      }
+    }
+
     // Update project
     const changes = await db.update('projects', updateData, { id: projectId });
     
@@ -588,11 +830,172 @@ router.put('/:id', authenticate, requireAdmin, [
       return res.status(404).json({ error: 'Project not found' });
     }
 
+    if (db.isSupabase()) {
+      const tenantId = req.user.tenantId ?? req.user.tenant_id ?? null;
+      if (tenantId != null) {
+        const projectTenantId = project.tenant_id ?? project.tenantId;
+        if (projectTenantId !== tenantId) {
+          return res.status(404).json({ error: 'Project not found' });
+        }
+      }
+    }
+
     parseProjectJSONFields(project);
     res.json(project);
   } catch (error) {
     console.error('Error updating project:', error);
     res.status(500).json({ error: 'Database error: ' + (error.message || 'Unknown error') });
+  }
+});
+
+// --- Project drawings (PDF upload / list / serve) ---
+const MAX_DRAWING_SIZE = 20 * 1024 * 1024; // 20MB
+const MAX_DRAWINGS = 10;
+
+const drawingsUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_DRAWING_SIZE, files: MAX_DRAWINGS },
+  fileFilter: (req, file, cb) => {
+    const ok = file.mimetype === 'application/pdf' || (file.originalname && file.originalname.toLowerCase().endsWith('.pdf'));
+    if (ok) cb(null, true);
+    else cb(new Error('Only PDF files are allowed'), false);
+  }
+});
+
+// Sanitize filename for storage (no path separators or traversal)
+function safeDrawingFilename(name) {
+  const base = path.basename(name || 'drawing').replace(/\.pdf$/i, '') || 'drawing';
+  return base.replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
+}
+
+// POST /projects/:id/drawings - upload PDF drawings (Admin only)
+router.post('/:id/drawings', authenticate, requireAdmin, (req, res, next) => {
+  drawingsUpload.array('drawings', MAX_DRAWINGS)(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'File too large. Max 20MB per file.' });
+      if (err.code === 'LIMIT_FILE_COUNT') return res.status(400).json({ error: `Max ${MAX_DRAWINGS} files per upload.` });
+      return res.status(400).json({ error: err.message || 'Upload failed' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const project = await loadProjectWithAccess(req, res, req.params.id);
+    if (!project) return;
+
+    const files = req.files || [];
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+
+    await ensureProjectDirectory(project.projectNumber, project.tenant_id ?? project.tenantId ?? null);
+    const drawingsDir = await getProjectDrawingsDir(project.projectNumber, project.tenant_id ?? project.tenantId ?? null);
+    if (!fs.existsSync(drawingsDir)) fs.mkdirSync(drawingsDir, { recursive: true });
+
+    const existing = Array.isArray(project.drawings) ? project.drawings : [];
+    const added = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const baseName = (file.originalname && path.basename(file.originalname)) || `drawing-${i + 1}`;
+      const storedName = `${project.projectNumber}_${existing.length + added.length + 1}_${safeDrawingFilename(baseName)}`;
+      const filePath = path.join(drawingsDir, storedName);
+      fs.writeFileSync(filePath, file.buffer);
+      const displayName = baseName.replace(/\.pdf$/i, '');
+      added.push({ filename: storedName, displayName });
+    }
+
+    const newDrawings = [...existing, ...added];
+    const updatePayload = db.isSupabase() ? { drawings: newDrawings } : { drawings: JSON.stringify(newDrawings) };
+    await db.update('projects', updatePayload, { id: project.id });
+
+    const updated = await db.get('projects', { id: project.id });
+    parseProjectJSONFields(updated);
+    res.status(201).json({ drawings: updated.drawings });
+  } catch (error) {
+    console.error('Error uploading project drawings:', error);
+    res.status(500).json({ error: 'Failed to upload drawings: ' + (error.message || 'Unknown error') });
+  }
+});
+
+// GET /projects/:id/drawings - list drawings (same access as project)
+router.get('/:id/drawings', authenticate, async (req, res) => {
+  try {
+    const project = await loadProjectWithAccess(req, res, req.params.id);
+    if (!project) return;
+    res.json({ drawings: project.drawings || [] });
+  } catch (error) {
+    console.error('Error listing project drawings:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// GET /projects/:id/drawings/:filename - serve one drawing PDF (same access as project)
+router.get('/:id/drawings/:filename', authenticate, async (req, res) => {
+  try {
+    const project = await loadProjectWithAccess(req, res, req.params.id);
+    if (!project) return;
+
+    const rawFilename = req.params.filename;
+    if (!rawFilename || rawFilename.includes('..') || path.isAbsolute(rawFilename) || rawFilename.includes(path.sep)) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
+    const list = project.drawings || [];
+    const entry = list.find(d => d.filename === rawFilename);
+    if (!entry) {
+      return res.status(404).json({ error: 'Drawing not found' });
+    }
+
+    const drawingsDir = await getProjectDrawingsDir(project.projectNumber, project.tenant_id ?? project.tenantId ?? null);
+    const filePath = path.join(drawingsDir, rawFilename);
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(entry.displayName || entry.filename)}"`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    console.error('Error serving project drawing:', error);
+    res.status(500).json({ error: 'Failed to load drawing' });
+  }
+});
+
+// DELETE /projects/:id/drawings/:filename - remove one drawing (Admin only)
+router.delete('/:id/drawings/:filename', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const project = await loadProjectWithAccess(req, res, req.params.id);
+    if (!project) return;
+
+    const rawFilename = req.params.filename;
+    if (!rawFilename || rawFilename.includes('..') || path.isAbsolute(rawFilename) || rawFilename.includes(path.sep)) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
+    const list = project.drawings || [];
+    const index = list.findIndex(d => d.filename === rawFilename);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Drawing not found' });
+    }
+
+    const drawingsDir = await getProjectDrawingsDir(project.projectNumber, project.tenant_id ?? project.tenantId ?? null);
+    const filePath = path.join(drawingsDir, rawFilename);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (unlinkErr) {
+        console.error('Error deleting drawing file:', unlinkErr);
+      }
+    }
+
+    const newDrawings = list.filter(d => d.filename !== rawFilename);
+    const updatePayload = db.isSupabase() ? { drawings: newDrawings } : { drawings: JSON.stringify(newDrawings) };
+    await db.update('projects', updatePayload, { id: project.id });
+
+    const updated = await db.get('projects', { id: project.id });
+    parseProjectJSONFields(updated);
+    res.json({ drawings: updated.drawings });
+  } catch (error) {
+    console.error('Error deleting project drawing:', error);
+    res.status(500).json({ error: 'Failed to delete drawing' });
   }
 });
 

@@ -44,7 +44,12 @@ db.serialize(() => {
     specAirContentByVolume TEXT,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+  )`, () => {
+    // Add drawings column if missing (e.g. existing DBs before PDF drawings feature)
+    db.run(`ALTER TABLE projects ADD COLUMN drawings TEXT DEFAULT '[]'`, (err) => {
+      if (err && !/duplicate column name/i.test(err.message)) console.error('Adding projects.drawings:', err.message);
+    });
+  });
 
   // Work Packages table (deprecated - use tasks instead, kept for backward compatibility)
   db.run(`CREATE TABLE IF NOT EXISTS workpackages (

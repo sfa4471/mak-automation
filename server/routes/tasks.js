@@ -10,14 +10,20 @@ const router = express.Router();
 // Helper function to log task history
 async function logTaskHistory(taskId, actorRole, actorName, actorUserId, actionType, note) {
   try {
-    await db.insert('task_history', {
+    const historyData = {
       taskId,
       actorRole,
       actorName,
       actorUserId: actorUserId || null,
       actionType,
       note: note || null
-    });
+    };
+    if (db.isSupabase()) {
+      const task = await db.get('tasks', { id: taskId });
+      const tid = task && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+      if (tid != null) historyData.tenant_id = tid;
+    }
+    await db.insert('task_history', historyData);
   } catch (err) {
     console.error('Error logging task history:', err);
   }
@@ -650,7 +656,8 @@ router.put('/:id', authenticate, [
       const project = await db.get('projects', { id: projectId });
       if (project) {
         const message = `Admin ${oldAssignedId ? 'reassigned' : 'assigned'} ${taskLabel} for Project ${project.projectNumber}`;
-        await createNotification(assignedTechnicianId, message, 'info', taskId, projectId);
+        const tid = db.isSupabase() && (project.tenant_id != null || project.tenantId != null) ? (project.tenant_id ?? project.tenantId) : null;
+        await createNotification(assignedTechnicianId, message, 'info', taskId, projectId, null, tid);
       }
     }
 
@@ -794,6 +801,8 @@ router.post('/', authenticate, requireAdmin, [
       }
     }
 
+    const taskTenantId = db.isSupabase() && project ? (project.tenant_id ?? project.tenantId) : null;
+
     // Create task
     const taskData = {
       projectId,
@@ -808,6 +817,7 @@ router.post('/', authenticate, requireAdmin, [
       scheduledEndDate: normalizedScheduledEndDate,
       proctorNo
     };
+    if (taskTenantId != null) taskData.tenant_id = taskTenantId;
 
     const task = await db.insert('tasks', taskData);
     const taskId = task.id;
@@ -815,11 +825,13 @@ router.post('/', authenticate, requireAdmin, [
     // If this is a COMPRESSIVE_STRENGTH, create wp1_data entry
     if (taskType === 'COMPRESSIVE_STRENGTH') {
       try {
-        await db.insert('wp1_data', {
+        const wp1Data = {
           taskId,
           workPackageId: null,
           cylinders: []
-        });
+        };
+        if (taskTenantId != null) wp1Data.tenant_id = taskTenantId;
+        await db.insert('wp1_data', wp1Data);
       } catch (err) {
         console.error('Error creating wp1_data:', err);
         // Continue anyway, wp1_data can be created later
@@ -837,7 +849,7 @@ router.post('/', authenticate, requireAdmin, [
       };
       const taskLabel = taskTypeLabels[taskType] || taskType;
       const message = `Admin assigned ${taskLabel} for Project ${project.projectNumber}`;
-      createNotification(assignedTechnicianId, message, 'info', taskId, projectId).catch(console.error);
+      createNotification(assignedTechnicianId, message, 'info', taskId, projectId, null, taskTenantId).catch(console.error);
     }
 
     // Return created task with joins
@@ -1095,7 +1107,8 @@ router.put('/:id', authenticate, requireAdmin, [
       const taskLabel = taskTypeLabels[taskType] || taskType;
       const projectId = db.isSupabase() ? oldTask.project_id : oldTask.projectId;
       const message = `Admin assigned ${taskLabel} for Project ${oldTask.projectNumber}`;
-      await createNotification(assignmentChange.newTechId, message, 'info', taskId, projectId);
+      const tid = db.isSupabase() && (oldTask.tenant_id != null || oldTask.tenantId != null) ? (oldTask.tenant_id ?? oldTask.tenantId) : null;
+      await createNotification(assignmentChange.newTechId, message, 'info', taskId, projectId, null, tid);
     }
 
     // Return updated task
@@ -1254,12 +1267,17 @@ router.put('/:id/status', authenticate, [
       const taskLabel = taskTypeLabels[taskType] || taskType;
       const projectId = db.isSupabase() ? task.project_id : task.projectId;
       
-      // Get all admins
-      const admins = await db.all('users', { role: 'ADMIN' });
+      // Get all admins (same tenant when Supabase multi-tenant)
+      const adminConditions = { role: 'ADMIN' };
+      if (db.isSupabase() && (task.tenant_id != null || task.tenantId != null)) {
+        adminConditions.tenant_id = task.tenant_id ?? task.tenantId;
+      }
+      const admins = await db.all('users', adminConditions);
       if (admins && admins.length > 0) {
         const message = `${technicianName} completed ${taskLabel} for Project ${task.projectNumber}`;
+        const tid = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
         await Promise.all(admins.map(admin => 
-          createNotification(admin.id, message, 'info', taskId, projectId)
+          createNotification(admin.id, message, 'info', taskId, projectId, null, tid)
         ));
       }
     }
@@ -1433,7 +1451,8 @@ router.post('/:id/reject', authenticate, requireAdmin, [
       const project = await db.get('projects', { id: projectId });
       if (project) {
         const message = `Your task for Project ${project.projectNumber} has been rejected. Please review the remarks and resubmit.`;
-        await createNotification(assignedId, message, 'warning', taskId, projectId);
+        const tid = db.isSupabase() && (task.tenant_id != null || task.tenantId != null) ? (task.tenant_id ?? task.tenantId) : null;
+        await createNotification(assignedId, message, 'warning', taskId, projectId, null, tid);
       }
     }
 

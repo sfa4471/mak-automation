@@ -10,6 +10,12 @@ import { getApiBaseUrl } from '../utils/apiUrl';
 import ProjectHomeButton from './ProjectHomeButton';
 import './WP1Form.css';
 
+/** Format structure name for display: first letter uppercase (e.g. curb → Curb) */
+const formatStructureName = (name: string): string => {
+  if (!name || typeof name !== 'string') return '';
+  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+};
+
 const WP1Form: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -879,8 +885,6 @@ const WP1Form: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
-          alert(message);
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
@@ -998,8 +1002,8 @@ const WP1Form: React.FC = () => {
                 Generate PDF
               </button>
               {lastSavedPath && (
-                <div className="pdf-saved-confirmation" style={{ marginTop: '10px', padding: '10px', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px', color: '#155724' }}>
-                  PDF saved to: <strong>{lastSavedPath}</strong>
+                <div className="pdf-saved-confirmation">
+                  PDF created.
                 </div>
               )}
             </>
@@ -1146,7 +1150,7 @@ const WP1Form: React.FC = () => {
                 {Object.keys(concreteSpecs).length > 0 ? (
                   Object.keys(concreteSpecs).map((structureType) => (
                     <option key={structureType} value={structureType}>
-                      {structureType}
+                      {formatStructureName(structureType)}
                     </option>
                   ))
                 ) : (

@@ -115,16 +115,18 @@ router.put('/mark-all-read', authenticate, async (req, res) => {
 });
 
 // Create notification (internal helper function, can be called from other routes)
-async function createNotification(userId, message, type = 'info', relatedWorkPackageId = null, relatedProjectId = null, relatedTaskId = null) {
+async function createNotification(userId, message, type = 'info', relatedWorkPackageId = null, relatedProjectId = null, relatedTaskId = null, tenantId = null) {
   try {
-    const notification = await db.insert('notifications', {
+    const data = {
       userId,
       message,
       type,
       relatedWorkPackageId,
       relatedProjectId,
       relatedTaskId
-    });
+    };
+    if (db.isSupabase() && tenantId != null) data.tenant_id = tenantId;
+    const notification = await db.insert('notifications', data);
     return notification.id;
   } catch (err) {
     console.error('Create notification error:', err);

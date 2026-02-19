@@ -4,14 +4,18 @@ import { rebarAPI, RebarReport } from '../api/rebar';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
+import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProjectHomeButton from './ProjectHomeButton';
 import './RebarForm.css';
+
+const DEFAULT_COMPANY_NAME = 'MAK Lonestar Consulting';
 
 const RebarForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
   const [task, setTask] = useState<Task | null>(null);
+  const [tenant, setTenant] = useState<TenantMe | null>(null);
   const [formData, setFormData] = useState<RebarReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -33,11 +37,13 @@ const RebarForm: React.FC = () => {
     try {
       setLoading(true);
       const taskId = parseInt(id!);
-      const [taskData, reportData] = await Promise.all([
+      const [taskData, reportData, tenantData] = await Promise.all([
         tasksAPI.get(taskId),
-        rebarAPI.getByTask(taskId)
+        rebarAPI.getByTask(taskId),
+        tenantsAPI.getMe().catch(() => null)
       ]);
       setTask(taskData);
+      setTenant(tenantData);
       setFormData(reportData);
       
       // Update last saved snapshot after loading
@@ -257,12 +263,25 @@ const RebarForm: React.FC = () => {
         alert('Authentication required. Please log in again.');
         return;
       }
+      // Save current form data first so PDF includes latest client and other fields
+      if (formData) {
+        try {
+          await rebarAPI.saveByTask(
+            task.id,
+            formData,
+            undefined,
+            isAdmin() && formData.techName ? technicians.find(t => (t.name || t.email) === formData.techName)?.id : undefined
+          );
+        } catch (saveErr) {
+          console.warn('Save before PDF failed (continuing):', saveErr);
+        }
+      }
       const { getApiBaseUrl } = require('../utils/apiUrl');
       const baseUrl = getApiBaseUrl();
       // Ensure baseUrl doesn't already end with /api to avoid double /api/api/
       const cleanBaseUrl = baseUrl.replace(/\/api\/?$/, '');
       const pdfUrl = `${cleanBaseUrl}/api/pdf/rebar/${task.id}`;
-      
+
       const response = await fetch(pdfUrl, {
         method: 'GET',
         headers: {
@@ -294,8 +313,6 @@ const RebarForm: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          const message = `PDF saved successfully!\n\nLocation: ${result.savedPath}\nFilename: ${result.fileName}`;
-          alert(message);
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
@@ -391,8 +408,8 @@ const RebarForm: React.FC = () => {
             Create PDF
           </button>
           {lastSavedPath && (
-            <div className="pdf-saved-confirmation" style={{ marginTop: '10px', padding: '10px', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px', color: '#155724' }}>
-              PDF saved to: <strong>{lastSavedPath}</strong>
+            <div className="pdf-saved-confirmation">
+              PDF created.
             </div>
           )}
         </div>
@@ -492,7 +509,7 @@ const RebarForm: React.FC = () => {
           <label className="section-label">Results / Remarks:</label>
           
           <div className="prefilled-paragraph">
-            On the above-mentioned date, a representative of MAK Lonestar Consulting observed reinforcing steel placed at the following location:
+            On the above-mentioned date, a representative of {tenant?.name || DEFAULT_COMPANY_NAME} observed reinforcing steel placed at the following location:
           </div>
 
           <div className="form-row">

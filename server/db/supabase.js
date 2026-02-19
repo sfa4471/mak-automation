@@ -9,7 +9,14 @@
  *   const { data, error } = await supabase.from('users').select('*');
  */
 
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
+const envLocalPath = path.join(__dirname, '..', '..', '.env.local');
+if (fs.existsSync(envLocalPath)) {
+  require('dotenv').config({ path: envLocalPath, override: true });
+}
+
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;

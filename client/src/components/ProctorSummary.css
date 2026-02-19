@@ -6,14 +6,31 @@
   min-height: 100vh;
 }
 
+/* Top header: logo (left) and buttons + address (right), single row, inline */
 .proctor-summary-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
   margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 2px solid #000;
+}
+
+.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
 }
 
 .summary-actions {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .btn-primary,
@@ -62,25 +79,33 @@
   background: #fff;
 }
 
-/* Header Section */
+/* Header Section (when used as summary-page-header, same layout) */
 .summary-page-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   margin-bottom: 30px;
   padding-bottom: 15px;
   border-bottom: 2px solid #000;
 }
 
+/* Standardized logo size for all tenants (MAK, Waapis, etc.): same visual footprint */
 .header-logo {
-  width: 150px;
-  height: auto;
+  flex-shrink: 0;
+  width: 120px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
 }
 
 .header-logo img {
-  width: 100%;
+  max-width: 120px;
+  max-height: 56px;
+  width: auto;
   height: auto;
-  max-width: 150px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .header-address {
@@ -149,6 +174,49 @@
   border-bottom: 1px solid #ccc;
 }
 
+/* Soil classification: textarea so full text is visible */
+.summary-field-row-soil {
+  align-items: flex-start;
+}
+.summary-field-row-soil label {
+  padding-top: 8px;
+}
+.summary-field-row textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  background: #fff;
+}
+.summary-field-row textarea:focus {
+  outline: none;
+  border-color: #007bff;
+}
+.summary-field-row textarea.readonly {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+/* PDF created banner: same height and padding as action buttons */
+.pdf-created-banner {
+  padding: 8px 16px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  background-color: #d4edda;
+  border: 1px solid #c3e6cb;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  color: #155724;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
 .summary-field-value {
   flex: 1;
   border-bottom: 1px solid #333;
@@ -173,13 +241,18 @@
     gap: 20px;
   }
 
-  .summary-page-header {
+  .proctor-summary-header.summary-page-header {
     flex-direction: column;
-    gap: 20px;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .header-right {
+    align-items: flex-start;
   }
 
   .header-logo {
-    align-self: flex-end;
+    align-self: flex-start;
   }
 }
 
