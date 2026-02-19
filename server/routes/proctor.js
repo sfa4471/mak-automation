@@ -9,6 +9,7 @@ const { supabase, isAvailable } = require('../db/supabase');
 const { authenticate } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { getPDFSavePath, savePDFToFile } = require('../utils/pdfFileManager');
+const { getTenant, getTenantAddress, getLogoBase64 } = require('../utils/tenantBranding');
 const { body, validationResult } = require('express-validator');
 
 // Helper function to escape HTML
@@ -352,7 +353,7 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
         .from('tasks')
         .select(`
           *,
-          projects:project_id(project_name, project_number, id)
+          projects:project_id(project_name, project_number, id, tenant_id)
         `)
         .eq('id', taskId)
         .eq('task_type', 'PROCTOR')
@@ -362,11 +363,14 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
         return res.status(404).json({ error: 'Task not found' });
       }
       
+      const tenantId = data.tenant_id ?? data.projects?.tenant_id ?? req.tenantId;
       task = {
         ...data,
         projectName: data.projects?.project_name,
         projectNumber: data.projects?.project_number,
         projectId: data.projects?.id,
+        tenantId,
+        tenant_id: tenantId,
         projects: undefined
       };
     } else {
@@ -398,32 +402,17 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
     // Get field date (prefer scheduledStartDate, fallback to sampleDate from reportData, then today)
     const fieldDate = task.scheduledStartDate || reportData.sampleDate || new Date().toISOString().split('T')[0];
 
-    // Read the logo file (try multiple possible locations)
-    let logoBase64 = '';
-    let logoMimeType = 'image/jpeg';
-    const possibleLogoPaths = [
-      path.join(__dirname, '../public/MAK logo_consulting.jpg'),
-      path.join(__dirname, '../../public/MAK logo_consulting.jpg'),
-      path.join(__dirname, '../client/public/MAK logo_consulting.jpg'),
-      path.join(__dirname, '../../client/public/MAK logo_consulting.jpg')
-    ];
-    
-    for (const logoPath of possibleLogoPaths) {
-      if (fs.existsSync(logoPath)) {
-        try {
-          const logoBuffer = fs.readFileSync(logoPath);
-          logoBase64 = logoBuffer.toString('base64');
-          console.log('Logo found at:', logoPath);
-          break;
-        } catch (err) {
-          console.error('Error reading logo from', logoPath, err);
-        }
-      }
-    }
-    
-    if (!logoBase64) {
-      console.warn('MAK logo not found in any expected location');
-    }
+    // Tenant branding: logo and address for the signed-in company (e.g. WAAPIS)
+    const pdfTenantId = task.tenantId ?? task.tenant_id ?? req.tenantId;
+    const pdfTenant = await getTenant(pdfTenantId);
+    const logoDataUri = await getLogoBase64(pdfTenantId);
+    const companyName = (pdfTenant?.name ?? pdfTenant?.company_name ?? '').trim() || 'Company';
+    const addressLines = getTenantAddress(pdfTenant);
+    const companyPhone = pdfTenant?.company_phone ?? pdfTenant?.companyPhone ?? '';
+    const headerAddressHtml = [
+      ...addressLines.split('\n').filter(Boolean).map(line => `<div>${escapeHtml(line)}</div>`),
+      companyPhone ? `<div>P: ${escapeHtml(companyPhone)}</div>` : ''
+    ].filter(Boolean).join('\n      ') || '<div>—</div>';
 
     // Generate HTML template for Proctor report
     const html = `
@@ -545,12 +534,10 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
   <div class="page-container">
     <div class="header">
       <div class="header-logo">
-        ${logoBase64 ? `<img src="data:${logoMimeType};base64,${logoBase64}" alt="MAK Logo" />` : '<div>MAK Logo</div>'}
+        ${logoDataUri ? `<img src="${logoDataUri}" alt="${escapeHtml(companyName)}" />` : `<div>${escapeHtml(companyName)}</div>`}
       </div>
       <div class="header-address">
-        <div>940 N Beltline Road, Suite 107,</div>
-        <div>Irving, TX 75061</div>
-        <div>P: 214-718-1250</div>
+        ${headerAddressHtml}
       </div>
     </div>
 
@@ -718,11 +705,13 @@ router.post('/:taskId/pdf', authenticate, async (req, res) => {
       let saveInfo = null;
       let saveError = null;
       try {
+        const saveTenantId = task.tenantId ?? task.tenant_id ?? req.tenantId;
         saveInfo = await getPDFSavePath(
           task.projectNumber,
           'PROCTOR',
           fieldDate,
-          isRegeneration
+          isRegeneration,
+          saveTenantId
         );
         
         await savePDFToFile(pdfBuffer, saveInfo.filePath);

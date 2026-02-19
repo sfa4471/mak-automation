@@ -21,52 +21,7 @@ async function safeCloseBrowser(browser) {
   }
 }
 
-const LOGO_CONFIG = {
-  path: path.join(__dirname, '..', 'public', 'MAK logo_consulting.jpg'),
-  fallback: null
-};
-
-// Get tenant record by id (for PDF branding)
-async function getTenant(tenantId) {
-  if (tenantId == null) return null;
-  return db.get('tenants', { id: tenantId });
-}
-
-// Formatted company address string for PDFs
-function getTenantAddress(tenant) {
-  if (!tenant) return '';
-  const a = tenant.company_address ?? tenant.companyAddress ?? '';
-  const city = tenant.company_city ?? tenant.companyCity ?? '';
-  const state = tenant.company_state ?? tenant.companyState ?? '';
-  const zip = tenant.company_zip ?? tenant.companyZip ?? '';
-  const parts = [a, [city, state, zip].filter(Boolean).join(', ')].filter(Boolean);
-  return parts.join('\n') || '';
-}
-
-// Get logo as base64 data URI; optional tenantId to use tenant's logo_path
-async function getLogoBase64(tenantId) {
-  let logoPath = LOGO_CONFIG.path;
-  if (tenantId != null) {
-    const tenant = await getTenant(tenantId);
-    const tenantLogo = tenant?.logo_path ?? tenant?.logoPath;
-    if (tenantLogo && typeof tenantLogo === 'string') {
-      const fullPath = path.isAbsolute(tenantLogo) ? tenantLogo : path.join(__dirname, '..', 'public', tenantLogo);
-      if (fs.existsSync(fullPath)) logoPath = fullPath;
-    }
-  }
-  try {
-    if (fs.existsSync(logoPath)) {
-      const imageBuffer = fs.readFileSync(logoPath);
-      const ext = path.extname(logoPath).toLowerCase();
-      const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
-      const base64 = imageBuffer.toString('base64');
-      return `data:${mimeType};base64,${base64}`;
-    }
-  } catch (err) {
-    console.warn('Error loading logo:', err.message);
-  }
-  return null;
-}
+const { getTenant, getTenantAddress, getLogoBase64 } = require('../utils/tenantBranding');
 
 // Generate PDF for WP1 (supports both workPackageId and taskId)
 router.get('/wp1/:id', authenticate, async (req, res) => {
