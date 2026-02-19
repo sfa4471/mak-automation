@@ -56,6 +56,7 @@ const ProctorSummary: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [pdfSaveNotice, setPdfSaveNotice] = useState('');
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
   const lastSavedDataRef = useRef<string>('');
 
@@ -455,6 +456,7 @@ const ProctorSummary: React.FC = () => {
     try {
       setSaving(true);
       setError(''); // Clear previous errors
+      setPdfSaveNotice('');
       
       // Save current state to database and localStorage BEFORE generating PDF
       // This ensures data is preserved if user clicks Back
@@ -568,12 +570,13 @@ const ProctorSummary: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
+          setPdfSaveNotice(result.savedToConfiguredPath ? '' : 'PDF downloaded. To save automatically to your workflow folder, run the app locally (npm run dev) and set Workflow path in Settings.');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
           alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
-        }
-        if (result.saved && result.savedToConfiguredPath === false && !result.saveError) {
-          setError('PDF downloaded. To save to your folder automatically, run the app locally (npm run dev) and set Workflow path in Settings.');
+          setPdfSaveNotice('');
+        } else if (result.saved && result.savedToConfiguredPath === false && !result.saveError) {
+          setPdfSaveNotice('PDF downloaded. To save automatically to your workflow folder, run the app locally (npm run dev) and set Workflow path in Settings.');
         }
         
         // Trigger download from base64
@@ -797,6 +800,7 @@ const ProctorSummary: React.FC = () => {
       </div>
 
       {error && <div className="error-message">{error}</div>}
+      {pdfSaveNotice && <div className="pdf-save-notice">{pdfSaveNotice}</div>}
       
       {lastSavedPath && (
         <div className="pdf-created-banner">

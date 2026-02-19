@@ -47,7 +47,9 @@ class DatabaseAdapter {
         const snakeKey = toSnakeCase(key);
         // Ensure value is properly handled (trim strings, handle null/undefined)
         const cleanValue = typeof value === 'string' ? value.trim() : value;
-        if (cleanValue !== null && cleanValue !== undefined) {
+        if (cleanValue === null) {
+          query = query.is(snakeKey, null);
+        } else if (cleanValue !== undefined) {
           query = query.eq(snakeKey, cleanValue);
         }
       }
@@ -72,14 +74,22 @@ class DatabaseAdapter {
       
       return data ? keysToCamelCase(data) : null;
     } else {
-      // SQLite fallback
+      // SQLite fallback (support null: use "col IS NULL" instead of "col = ?")
       return new Promise((resolve, reject) => {
-        const conditionsStr = Object.keys(conditions).map(k => `${k} = ?`).join(' AND ');
-        const values = Object.values(conditions);
-        const sql = conditionsStr 
+        const parts = [];
+        const values = [];
+        for (const [k, v] of Object.entries(conditions)) {
+          if (v === null) {
+            parts.push(`${k} IS NULL`);
+          } else if (v !== undefined) {
+            parts.push(`${k} = ?`);
+            values.push(v);
+          }
+        }
+        const conditionsStr = parts.join(' AND ');
+        const sql = conditionsStr
           ? `SELECT * FROM ${table} WHERE ${conditionsStr} LIMIT 1`
           : `SELECT * FROM ${table} LIMIT 1`;
-        
         sqliteDb.get(sql, values, (err, row) => {
           if (err) return reject(err);
           resolve(row || null);

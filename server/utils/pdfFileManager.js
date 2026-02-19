@@ -32,8 +32,9 @@ async function getWorkflowBasePath(tenantId) {
     console.log('🔍 [DIAGNOSTIC] Database module loaded, isSupabase:', db.isSupabase());
 
     const conditions = { key: 'workflow_base_path' };
-    if (db.isSupabase() && tenantId != null) {
-      conditions.tenant_id = tenantId;
+    if (db.isSupabase()) {
+      // Explicit tenant_id: match tenant row, or null for global row (tenant_id IS NULL)
+      conditions.tenant_id = tenantId != null ? tenantId : null;
     }
     const setting = await db.get('app_settings', conditions);
     console.log('🔍 [DIAGNOSTIC] Database query result:', {
