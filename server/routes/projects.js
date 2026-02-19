@@ -1,12 +1,26 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const db = require('../db');
 const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
-const { ensureProjectDirectory } = require('../utils/pdfFileManager');
+const { ensureProjectDirectory, getProjectDrawingsDir } = require('../utils/pdfFileManager');
 
 const router = express.Router();
+
+// Multer for drawings upload (memory storage; we write to project dir in handler)
+const uploadDrawings = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB per file
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (ext !== '.pdf') return cb(new Error('Only PDF files are allowed for drawings'));
+    cb(null, true);
+  }
+});
 
 // Helper function to parse JSON fields from project
 // Handles both SQLite (JSON strings) and Supabase (JSONB objects)
@@ -60,7 +74,21 @@ function parseProjectJSONFields(project) {
   } else {
     project.concreteSpecs = {};
   }
-  
+
+  // drawings: array of { filename, displayName? }
+  if (project.drawings !== null && project.drawings !== undefined) {
+    if (typeof project.drawings === 'string') {
+      try {
+        project.drawings = JSON.parse(project.drawings);
+      } catch (e) {
+        project.drawings = [];
+      }
+    }
+    if (!Array.isArray(project.drawings)) project.drawings = [];
+  } else {
+    project.drawings = [];
+  }
+
   return project;
 }
 
@@ -628,6 +656,140 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
   } catch (error) {
     console.error('Error updating project:', error);
     res.status(500).json({ error: 'Database error: ' + (error.message || 'Unknown error') });
+  }
+});
+
+// --- Project drawings (PDF upload/list/serve/delete) ---
+
+// Helper: safe filename for drawing (no path traversal, PDF only)
+function safeDrawingFilename(originalName) {
+  const base = (originalName || 'drawing.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const ext = path.extname(base).toLowerCase();
+  const name = path.basename(base, ext) || 'drawing';
+  return `${name}${ext === '.pdf' ? ext : '.pdf'}`;
+}
+
+// Ensure filename is unique in directory
+function uniqueDrawingPath(dir, baseName) {
+  const ext = path.extname(baseName);
+  const stem = path.basename(baseName, ext);
+  let filename = baseName;
+  let n = 0;
+  while (fs.existsSync(path.join(dir, filename))) {
+    n += 1;
+    filename = `${stem}_${n}${ext}`;
+  }
+  return filename;
+}
+
+// POST /api/projects/:id/drawings — upload PDF drawings (Admin only)
+router.post('/:id/drawings', authenticate, requireTenant, requireAdmin, uploadDrawings.array('drawings', 10), async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const tenantId = req.tenantId;
+    if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+
+    const project = await db.get('projects', { id: projectId });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    if ((project.tenant_id ?? project.tenantId) !== tenantId) return res.status(403).json({ error: 'Access denied' });
+
+    const projectNumber = project.project_number ?? project.projectNumber;
+    if (!projectNumber) return res.status(500).json({ error: 'Project has no project number' });
+
+    await ensureProjectDirectory(projectNumber);
+    const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
+    if (!fs.existsSync(drawingsDir)) fs.mkdirSync(drawingsDir, { recursive: true });
+
+    let drawings = [];
+    if (project.drawings != null) {
+      if (typeof project.drawings === 'string') {
+        try { drawings = JSON.parse(project.drawings); } catch (e) { drawings = []; }
+      } else if (Array.isArray(project.drawings)) drawings = [...project.drawings];
+    }
+
+    const files = req.files || [];
+    if (files.length === 0) {
+      parseProjectJSONFields(project);
+      return res.json({ drawings: project.drawings || [] });
+    }
+
+    for (const file of files) {
+      const baseName = safeDrawingFilename(file.originalname);
+      const filename = uniqueDrawingPath(drawingsDir, baseName);
+      const filePath = path.join(drawingsDir, filename);
+      fs.writeFileSync(filePath, file.buffer);
+      drawings.push({ filename, displayName: file.originalname || filename });
+    }
+
+    const updatePayload = db.isSupabase() ? { drawings } : { drawings: JSON.stringify(drawings) };
+    await db.update('projects', updatePayload, { id: projectId });
+    res.json({ drawings });
+  } catch (err) {
+    if (err.message && err.message.includes('Only PDF')) return res.status(400).json({ error: err.message });
+    console.error('Error uploading drawings:', err);
+    res.status(500).json({ error: err.message || 'Failed to upload drawings' });
+  }
+});
+
+// GET /api/projects/:id/drawings/:filename — serve one drawing PDF
+router.get('/:id/drawings/:filename', authenticate, requireTenant, async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const tenantId = req.tenantId;
+    const filename = path.basename(req.params.filename);
+    if (isNaN(projectId) || !filename) return res.status(400).json({ error: 'Invalid project ID or filename' });
+
+    const project = await db.get('projects', { id: projectId });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    if ((project.tenant_id ?? project.tenantId) !== tenantId) return res.status(403).json({ error: 'Access denied' });
+
+    let drawings = project.drawings;
+    if (typeof drawings === 'string') { try { drawings = JSON.parse(drawings); } catch (e) { drawings = []; } }
+    if (!Array.isArray(drawings)) drawings = [];
+    const entry = drawings.find(d => (d.filename === filename));
+    if (!entry) return res.status(404).json({ error: 'Drawing not found' });
+
+    const projectNumber = project.project_number ?? project.projectNumber;
+    const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
+    const filePath = path.join(drawingsDir, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.sendFile(path.resolve(filePath));
+  } catch (err) {
+    console.error('Error serving drawing:', err);
+    res.status(500).json({ error: err.message || 'Failed to serve drawing' });
+  }
+});
+
+// DELETE /api/projects/:id/drawings/:filename — remove one drawing (Admin only)
+router.delete('/:id/drawings/:filename', authenticate, requireTenant, requireAdmin, async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const tenantId = req.tenantId;
+    const filename = path.basename(req.params.filename);
+    if (isNaN(projectId) || !filename) return res.status(400).json({ error: 'Invalid project ID or filename' });
+
+    const project = await db.get('projects', { id: projectId });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    if ((project.tenant_id ?? project.tenantId) !== tenantId) return res.status(403).json({ error: 'Access denied' });
+
+    let drawings = project.drawings;
+    if (typeof drawings === 'string') { try { drawings = JSON.parse(drawings); } catch (e) { drawings = []; } }
+    if (!Array.isArray(drawings)) drawings = [];
+    const filtered = drawings.filter(d => d.filename !== filename);
+    if (filtered.length === drawings.length) return res.status(404).json({ error: 'Drawing not found' });
+
+    const projectNumber = project.project_number ?? project.projectNumber;
+    const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
+    const filePath = path.join(drawingsDir, filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    const updatePayload = db.isSupabase() ? { drawings: filtered } : { drawings: JSON.stringify(filtered) };
+    await db.update('projects', updatePayload, { id: projectId });
+    res.json({ drawings: filtered });
+  } catch (err) {
+    console.error('Error deleting drawing:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete drawing' });
   }
 });
 

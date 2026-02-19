@@ -129,14 +129,6 @@ const Settings: React.FC = () => {
             <p className="form-help">Loading…</p>
           ) : tenant ? (
             <div className="settings-form">
-              <div className="form-group company-logo-preview">
-                <label>Company logo</label>
-                {tenant.logoPath ? (
-                  <img src={`${getCurrentApiBaseUrl()}/${tenant.logoPath.replace(/^\/+/, '')}`} alt={tenant.name ?? 'Logo'} style={{ maxWidth: 120, maxHeight: 80, objectFit: 'contain', border: '1px solid #ddd', borderRadius: 4 }} />
-                ) : (
-                  <span className="form-help">Logo is set when the company is created.</span>
-                )}
-              </div>
               <div className="form-group">
                 <label>Company name</label>
                 <input className="form-input" value={tenantForm.name ?? ''} onChange={(e) => updateTenantField('name', e.target.value)} placeholder="Company name" />
