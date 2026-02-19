@@ -36,20 +36,28 @@ export function setApiBaseUrl(url: string | null): void {
 }
 
 /**
+ * Strip trailing /api or /api/ from a URL so we never double up path segments.
+ */
+function stripApiSuffix(url: string): string {
+  return (url || '').replace(/\/api\/?$/, '').replace(/\/+$/, '') || '';
+}
+
+/**
  * Base URL of the backend currently used for API calls (no trailing /api).
  * Use this for building PDF download or logo URLs so they hit the same backend as the API.
  */
 export function getCurrentApiBaseUrl(): string {
   const b = api.defaults.baseURL || '';
-  return b.replace(/\/api\/?$/, '') || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : '');
+  return stripApiSuffix(b) || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : '');
 }
 
 /**
  * API path prefix for building PDF/asset URLs (base + '/api').
- * Use with paths like getApiPathPrefix() + '/pdf/density/123' so the request hits the same backend as the API.
+ * Use with paths like getApiPathPrefix() + '/pdf/wp1/123' so the request hits the same backend as the API.
+ * Defensively strips any trailing /api from base to avoid /api/api/... (404) when env or tenant URL includes /api.
  */
 export function getApiPathPrefix(): string {
-  const base = getCurrentApiBaseUrl();
+  const base = stripApiSuffix(getCurrentApiBaseUrl());
   return base ? `${base}/api` : '/api';
 }
 
