@@ -44,6 +44,15 @@ export function getCurrentApiBaseUrl(): string {
   return b.replace(/\/api\/?$/, '') || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : '');
 }
 
+/**
+ * API path prefix for building PDF/asset URLs (base + '/api').
+ * Use with paths like getApiPathPrefix() + '/pdf/density/123' so the request hits the same backend as the API.
+ */
+export function getApiPathPrefix(): string {
+  const base = getCurrentApiBaseUrl();
+  return base ? `${base}/api` : '/api';
+}
+
 // Add token to requests
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
