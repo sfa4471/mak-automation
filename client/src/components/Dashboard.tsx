@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../context/TenantContext';
+import { getCurrentApiBaseUrl } from '../api/api';
 import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
@@ -173,7 +174,7 @@ const Dashboard: React.FC = () => {
         <div className="header-logo">
           {tenant?.logoPath ? (
             <img
-              src={tenant.logoPath}
+              src={`${getCurrentApiBaseUrl()}/${tenant.logoPath.replace(/^\/+/, '')}`}
               alt={tenant.name ?? ''}
               className="company-logo"
               onError={(e) => {

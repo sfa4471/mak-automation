@@ -7,6 +7,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { projectsAPI, SoilSpecs, ConcreteSpecs, CustomerDetails } from '../../api/projects';
 import { tenantsAPI, TenantMe } from '../../api/tenants';
+import { getCurrentApiBaseUrl } from '../../api/api';
 import './Admin.css';
 
 const DEFAULT_LOGO = '/MAK logo_consulting.jpg';
@@ -253,7 +254,7 @@ const CreateProject: React.FC = () => {
           <div className="header-logo">
             {!logoError ? (
               <img 
-                src={tenant?.logoPath ? `/${tenant.logoPath}` : encodeURI(DEFAULT_LOGO)}
+                src={tenant?.logoPath ? `${getCurrentApiBaseUrl()}/${tenant.logoPath.replace(/^\/+/, '')}` : encodeURI(DEFAULT_LOGO)}
                 alt={tenant?.name || DEFAULT_COMPANY_NAME}
                 className="company-logo"
                 onError={(e) => {

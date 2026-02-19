@@ -55,9 +55,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const login = async (email: string, password: string, tenantId?: number) => {
     const response = await authAPI.login(email, password, tenantId);
+    // Merge tenant into user so user.tenantId is set (needed for tenant-scoped folder, etc.)
+    const mergedUser = {
+      ...response.user,
+      tenantId: response.tenant?.tenantId ?? response.user.tenantId,
+      tenantName: response.tenant?.tenantName ?? response.user.tenantName,
+      tenantSubdomain: response.tenant?.tenantSubdomain ?? response.user.tenantSubdomain,
+      apiBaseUrl: response.tenant?.apiBaseUrl ?? response.user.apiBaseUrl,
+    };
     localStorage.setItem('token', response.token);
-    localStorage.setItem('user', JSON.stringify(response.user));
-    setUser(response.user);
+    localStorage.setItem('user', JSON.stringify(mergedUser));
+    setUser(mergedUser);
     // If tenant has their own backend (local folder/PDFs), use it for all API calls
     try {
       const tenant = await tenantsAPI.getMe();
