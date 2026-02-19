@@ -308,11 +308,18 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     };
 
     const pdfTenantId = taskOrWp.tenant_id ?? taskOrWp.tenantId ?? null;
+    const pdfTenant = await getTenant(pdfTenantId);
     const logoBase64 = await getLogoBase64(pdfTenantId);
     const logoHtml = logoBase64 
       ? `<img src="${logoBase64}" alt="Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
       : '<div class="logo-placeholder">MAK</div>';
     html = html.replace('{{LOGO_IMAGE}}', logoHtml);
+    const companyName = pdfTenant ? (pdfTenant.name ?? pdfTenant.companyName ?? '') : 'MAK Lonestar Consulting, LLC';
+    const companyAddress = getTenantAddress(pdfTenant) || '940 N Beltline Road, Suite 107, Irving, TX 75061';
+    const companyPhone = (pdfTenant?.company_phone ?? pdfTenant?.companyPhone) ? `Tel ${(pdfTenant.company_phone || pdfTenant.companyPhone).trim()}` : 'Tel (214) 718-1250';
+    html = html.replace('{{COMPANY_NAME}}', escapeHtml(companyName));
+    html = html.replace('{{COMPANY_ADDRESS}}', escapeHtml(companyAddress));
+    html = html.replace('{{COMPANY_PHONE}}', escapeHtml(companyPhone));
 
     html = html.replace('{{PROJECT_NAME}}', escapeHtml(taskOrWp.projectName || ''));
     html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(taskOrWp.projectNumber || ''));
@@ -613,7 +620,8 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
           taskType,
           fieldDate,
           pdfBuffer,
-          isRegeneration
+          isRegeneration,
+          pdfTenantId
         );
         
         if (saveInfo.saved) {

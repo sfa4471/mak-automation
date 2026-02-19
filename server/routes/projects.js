@@ -372,9 +372,9 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       return res.status(500).json({ error: 'Failed to create project after retries' });
     }
 
-    // Create project folder structure for PDF storage (use project number, not ID)
+    // Create project folder structure for PDF storage (use project number + tenant for path)
     try {
-      await ensureProjectDirectory(project.projectNumber || projectData.projectNumber);
+      await ensureProjectDirectory(project.projectNumber || projectData.projectNumber, tenantId);
     } catch (folderError) {
       console.error('Error creating project folder:', folderError);
       // Continue even if folder creation fails
