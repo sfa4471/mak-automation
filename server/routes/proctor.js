@@ -402,9 +402,9 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
     // Get field date (prefer scheduledStartDate, fallback to sampleDate from reportData, then today)
     const fieldDate = task.scheduledStartDate || reportData.sampleDate || new Date().toISOString().split('T')[0];
 
-    // Tenant branding and save path: use signed-in tenant so PDF saves to tenant's folder
+    // Tenant branding and save path: always use signed-in tenant for folder (req.tenantId from requireTenant)
     const pdfTenantId = task.tenantId ?? task.tenant_id ?? req.tenantId;
-    const tenantIdForPath = pdfTenantId != null ? Number(pdfTenantId) : null;
+    const tenantIdForPath = req.tenantId != null ? Number(req.tenantId) : (pdfTenantId != null ? Number(pdfTenantId) : null);
     const pdfTenant = await getTenant(pdfTenantId);
     const logoDataUri = await getLogoBase64(pdfTenantId);
     const companyName = (pdfTenant?.name ?? pdfTenant?.company_name ?? '').trim() || 'Company';
@@ -712,7 +712,7 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
       let saveInfo = null;
       let saveError = null;
       try {
-        const saveTenantId = tenantIdForPath ?? (req.tenantId != null ? Number(req.tenantId) : null);
+        const saveTenantId = tenantIdForPath;
         saveInfo = await getPDFSavePath(
           task.projectNumber,
           'PROCTOR',
@@ -722,7 +722,7 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
         );
         
         await savePDFToFile(pdfBuffer, saveInfo.filePath);
-        console.log(`PDF saved: ${saveInfo.filePath}`);
+        console.log(`[Proctor PDF] tenantId=${saveTenantId} → saved: ${saveInfo.filePath}`);
         console.log(`Filename: ${saveInfo.filename} (Sequence: ${saveInfo.sequence}${saveInfo.isRevision ? `, Revision: ${saveInfo.revisionNumber}` : ''})`);
       } catch (saveErr) {
         saveError = saveErr;

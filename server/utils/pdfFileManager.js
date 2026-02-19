@@ -223,7 +223,7 @@ function validatePath(pathToValidate) {
  * @returns {Promise<string>} The base path to use
  */
 async function getEffectiveBasePath(tenantId) {
-  // Priority 1: workflow_base_path from app_settings
+  // Priority 1: workflow_base_path from app_settings (per-tenant)
   const workflowPath = await getWorkflowBasePath(tenantId);
   if (workflowPath) {
     const validation = validatePath(workflowPath);
@@ -232,6 +232,8 @@ async function getEffectiveBasePath(tenantId) {
     } else {
       console.warn('Workflow path is configured but invalid:', workflowPath, validation.error || 'not writable');
     }
+  } else if (tenantId != null) {
+    console.warn('[PDF path] No workflow_base_path for tenant', tenantId, '- set in Settings → Workflow path. Using fallback.');
   }
   
   // Priority 2: OneDrive path (backward compatibility)
