@@ -20,6 +20,8 @@ export interface TenantMe {
   licenseHolderName: string | null;
   licenseHolderTitle: string | null;
   logoPath: string | null;
+  /** When set, frontend uses this URL for all API calls so folder/PDFs run on client's backend (their PC). */
+  apiBaseUrl: string | null;
 }
 
 export interface TenantMeUpdate {

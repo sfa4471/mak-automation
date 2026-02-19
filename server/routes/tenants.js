@@ -29,6 +29,7 @@ async function getTenantIdForUser(req) {
 /** Safe tenant fields to return to client (no sensitive/internal) */
 function toTenantResponse(tenant) {
   if (!tenant) return null;
+  const apiBaseUrl = tenant.api_base_url ?? tenant.apiBaseUrl ?? null;
   return {
     id: tenant.id,
     name: tenant.name,
@@ -43,7 +44,8 @@ function toTenantResponse(tenant) {
     peFirmReg: tenant.peFirmReg ?? tenant.pe_firm_reg ?? null,
     licenseHolderName: tenant.licenseHolderName ?? tenant.license_holder_name ?? null,
     licenseHolderTitle: tenant.licenseHolderTitle ?? tenant.license_holder_title ?? null,
-    logoPath: tenant.logoPath ?? tenant.logo_path ?? null
+    logoPath: tenant.logoPath ?? tenant.logo_path ?? null,
+    apiBaseUrl: apiBaseUrl && String(apiBaseUrl).trim() ? String(apiBaseUrl).trim() : null
   };
 }
 

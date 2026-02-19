@@ -6,7 +6,7 @@ import { proctorAPI } from '../api/proctor';
 import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
-import { getApiBaseUrl } from '../utils/apiUrl';
+import { getCurrentApiBaseUrl } from '../api/api';
 import './ProctorSummary.css';
 
 const DEFAULT_LOGO = '/MAK logo_consulting.jpg';
@@ -520,8 +520,7 @@ const ProctorSummary: React.FC = () => {
       
       // Use same approach as WP1Form - direct fetch (bypassing API helper)
       const token = localStorage.getItem('token');
-      const { getApiBaseUrl } = require('../utils/apiUrl');
-      const baseUrl = getApiBaseUrl();
+      const baseUrl = getCurrentApiBaseUrl();
       const pdfUrl = `${baseUrl}/api/proctor/${task.id}/pdf`;
       
       console.log('Fetching PDF from:', pdfUrl);
@@ -706,7 +705,7 @@ const ProctorSummary: React.FC = () => {
         <div className="header-logo">
           <img
             src={tenant?.logoPath
-              ? `${getApiBaseUrl()}/${tenant.logoPath.replace(/^\/+/, '')}`
+              ? `${getCurrentApiBaseUrl()}/${tenant.logoPath.replace(/^\/+/, '')}`
               : encodeURI(DEFAULT_LOGO)}
             alt={tenant?.name || 'Company logo'}
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

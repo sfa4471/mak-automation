@@ -78,6 +78,17 @@ function validatePath(pathToValidate) {
     return { valid: false, isWritable: false, error: 'Path cannot be empty' };
   }
 
+  // When the app runs on a cloud server (e.g. Linux), it cannot access paths on the user's Windows PC.
+  // Return a clear message so users know to run locally or use a server path.
+  const isWindowsAbsolutePath = /^[A-Za-z]:[\\\/]/.test(trimmedPath);
+  if (isWindowsAbsolutePath && process.platform !== 'win32') {
+    return {
+      valid: false,
+      isWritable: false,
+      error: 'This path is on your Windows PC. The app is currently using a cloud server that cannot access your computer. To use this folder, run the app locally (npm run dev) on your PC, or configure a path that exists on the server.'
+    };
+  }
+
   // Windows-specific: Check for invalid characters
   // Note: Colon (:) is valid in drive letters (C:\), so we check for it in the wrong places
   if (process.platform === 'win32') {
