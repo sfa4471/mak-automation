@@ -280,6 +280,12 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
       }
     };
 
+    // Title case for structure type (e.g. "curb" -> "Curb")
+    const toTitleCase = (s) => {
+      if (!s || typeof s !== 'string') return '';
+      return s.trim().replace(/\b\w/g, (c) => c.toUpperCase());
+    };
+
     // Format time from 24-hour format (HH:MM) to 12-hour format with AM/PM
     const formatTime = (timeString) => {
       if (!timeString) return '';
@@ -334,7 +340,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     html = html.replace('{{SPEC_STRENGTH_DAYS}}', escapeHtml(specStrengthDays));
 
     // Sample Information
-    html = html.replace('{{STRUCTURE}}', escapeHtml(wp1Data.structure || ''));
+    html = html.replace('{{STRUCTURE}}', escapeHtml(toTitleCase(wp1Data.structure || '')));
     html = html.replace('{{SAMPLE_LOCATION}}', escapeHtml(wp1Data.sampleLocation || ''));
     html = html.replace('{{SUPPLIER}}', escapeHtml(wp1Data.supplier || ''));
     html = html.replace('{{TIME_BATCHED}}', escapeHtml(formatTime(wp1Data.timeBatched || '')));
@@ -421,8 +427,15 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         }
 
         // Generate specimen set section HTML - wrapped in bordered container
-        // First set gets 'first' class to prevent page break, others get page break
-        const containerClass = setIndex === 0 ? 'specimen-set-container first' : 'specimen-set-container';
+        // Pagination: 2 sets = current; 3 sets = Specimen 2 & 3 on page 2 (gap above 2); 4 sets = 2&3 on page 2, 4 on page 3
+        const totalSets = cylinderSets.length;
+        let containerClass = 'specimen-set-container';
+        if (setIndex === 0) {
+          containerClass += ' first';
+        } else if (setIndex === 2 && (totalSets === 3 || totalSets === 4)) {
+          containerClass += ' no-break-before'; // Specimen 3 stays on page 2 with Specimen 2
+        }
+        // setIndex 1 (Specimen 2) gets default: new page + padding-top gap when total 3 or 4
         specimenSetsHtml += `
           <!-- Specimen Set ${setIndex + 1} -->
           <div class="${containerClass}">
@@ -580,7 +593,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         footerTemplate: `
           <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: 3px solid #000; border-top: none; pointer-events: none; box-sizing: border-box;">
             <div style="position: absolute; bottom: 0.2in; left: 0.5in; font-size: 9pt; color: #000;">Page <span class="pageNumber"></span></div>
-            <div style="position: absolute; bottom: 0.2in; right: 0.5in; font-size: 9pt; color: #000;">MAK Lonestar Consulting, LLC</div>
+            <div style="position: absolute; bottom: 0.2in; right: 0.5in; font-size: 9pt; color: #000;">${escapeHtml(companyName)}</div>
           </div>
         `
       });
@@ -975,19 +988,27 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         ? new Date(data.datePerformed).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
         : '';
 
-      const pdfTenantId = task?.tenant_id ?? task?.tenantId ?? project?.tenant_id ?? project?.tenantId ?? null;
+      const pdfTenantId = task?.tenant_id ?? task?.tenantId ?? null;
+      const pdfTenant = await getTenant(pdfTenantId);
       const logoBase64 = await getLogoBase64(pdfTenantId);
       const logoHtml = logoBase64 
         ? `<img src="${logoBase64}" alt="Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
         : '<div class="logo-placeholder">MAK</div>';
       html = html.replace('{{LOGO_IMAGE}}', logoHtml);
+      const companyName = pdfTenant ? (pdfTenant.name ?? pdfTenant.companyName ?? '') : 'MAK Lonestar Consulting, LLC';
+      const companyAddress = getTenantAddress(pdfTenant) || '940 N Beltline Road, Suite 107, Irving, TX 75061';
+      const companyPhone = (pdfTenant?.company_phone ?? pdfTenant?.companyPhone) ? String(pdfTenant.company_phone || pdfTenant.companyPhone).trim() : '(214) 718-1250';
+      html = html.replace('{{COMPANY_NAME}}', escapeHtml(companyName));
+      html = html.replace('{{COMPANY_ADDRESS}}', escapeHtml(companyAddress));
+      html = html.replace('{{COMPANY_PHONE}}', escapeHtml(companyPhone));
 
       // Replace header placeholders (escape HTML)
       html = html.replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''));
       html = html.replace('{{DATE_PERFORMED}}', escapeHtml(datePerformed));
       html = html.replace('{{PROJECT_NAME}}', escapeHtml(task.projectName || ''));
       html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(task.projectNumber || ''));
-      html = html.replace('{{STRUCTURE}}', escapeHtml(data.structure || ''));
+      const toTitleCase = (s) => { if (!s || typeof s !== 'string') return ''; return s.trim().replace(/\b\w/g, (c) => c.toUpperCase()); };
+      html = html.replace('{{STRUCTURE}}', escapeHtml(toTitleCase(data.structure || '')));
 
       // Generate test rows HTML
       let testRowsHtml = '';
@@ -1072,22 +1093,14 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       html = html.replace('{{METHOD_D3017}}', data.methodD3017 ? 'checked' : '');
       html = html.replace('{{METHOD_D698}}', data.methodD698 ? 'checked' : '');
 
-      // Get technician name - prioritize saved techName, then task's assigned technician
-      let technicianName = data.techName;
-      
-      // If techName is missing, try to get it from the task's assigned technician
-      if (!technicianName) {
-        if (task.assignedTechnicianName) {
-          technicianName = task.assignedTechnicianName;
-        } else if (task.assignedTechnicianId) {
-          // Fetch technician name from database
-          const tech = await db.get('users', { id: task.assignedTechnicianId });
-          if (tech) {
-            technicianName = tech.name || tech.email || '';
-          }
-        }
+      // Get technician name - use same source as dashboard: task's assigned technician first, then saved techName
+      let technicianName = task.assignedTechnicianName;
+      if (!technicianName && task.assignedTechnicianId) {
+        const tech = await db.get('users', { id: task.assignedTechnicianId });
+        if (tech) technicianName = tech.name || tech.email || '';
       }
-      
+      if (!technicianName) technicianName = data.techName;
+
       // Replace footer placeholders
       html = html.replace('{{REMARKS}}', escapeHtml(data.remarks || ''));
       html = html.replace('{{TECH_NAME}}', escapeHtml(technicianName || ''));
@@ -1329,12 +1342,28 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
           }
         };
 
-        const pdfTenantId = task?.tenant_id ?? task?.tenantId ?? project?.tenant_id ?? project?.tenantId ?? null;
+        const pdfTenantId = task?.tenant_id ?? task?.tenantId ?? null;
+        const pdfTenant = await getTenant(pdfTenantId);
         const logoBase64 = await getLogoBase64(pdfTenantId);
         const logoHtml = logoBase64 
           ? `<img src="${logoBase64}" alt="Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
           : '<div class="logo-placeholder">MAK</div>';
         html = html.replace('{{LOGO_IMAGE}}', logoHtml);
+        const companyName = pdfTenant ? (pdfTenant.name ?? pdfTenant.companyName ?? '') : 'MAK Lonestar Consulting, LLC';
+        const companyAddress = getTenantAddress(pdfTenant) || '940 N Beltline Road, Suite 107, Irving, TX 75061';
+        const companyPhone = (pdfTenant?.company_phone ?? pdfTenant?.companyPhone) ? String(pdfTenant.company_phone || pdfTenant.companyPhone).trim() : '214-718-1250';
+        const companyEmail = (pdfTenant?.company_email ?? pdfTenant?.companyEmail) ? String(pdfTenant.company_email || pdfTenant.companyEmail).trim() : '';
+        const peFirmReg = (pdfTenant?.pe_firm_reg ?? pdfTenant?.peFirmReg) ? String(pdfTenant.pe_firm_reg || pdfTenant.peFirmReg).trim() : '';
+        const peFirmRegLine = peFirmReg ? `Texas Board of Professional Engineers Firm Reg, ${peFirmReg}` : '';
+        const licenseHolderName = (pdfTenant?.license_holder_name ?? pdfTenant?.licenseHolderName) ? String(pdfTenant.license_holder_name || pdfTenant.licenseHolderName).trim() : '';
+        const licenseHolderTitle = (pdfTenant?.license_holder_title ?? pdfTenant?.licenseHolderTitle) ? String(pdfTenant.license_holder_title || pdfTenant.licenseHolderTitle).trim() : '';
+        html = html.replace(/\{\{COMPANY_NAME\}\}/g, escapeHtml(companyName));
+        html = html.replace(/\{\{COMPANY_ADDRESS\}\}/g, escapeHtml(companyAddress));
+        html = html.replace(/\{\{COMPANY_PHONE\}\}/g, escapeHtml(companyPhone));
+        html = html.replace(/\{\{COMPANY_EMAIL\}\}/g, escapeHtml(companyEmail));
+        html = html.replace(/\{\{PE_FIRM_REG_LINE\}\}/g, escapeHtml(peFirmRegLine));
+        html = html.replace(/\{\{LICENSE_HOLDER_NAME\}\}/g, escapeHtml(licenseHolderName));
+        html = html.replace(/\{\{LICENSE_HOLDER_TITLE\}\}/g, escapeHtml(licenseHolderTitle));
 
         // Replace placeholders
         html = html.replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''));
@@ -1522,11 +1551,27 @@ router.post('/rebar', authenticate, async (req, res) => {
       }
     };
     const pdfTenantId = task?.tenant_id ?? task?.tenantId ?? null;
+    const pdfTenant = await getTenant(pdfTenantId);
     const logoBase64 = await getLogoBase64(pdfTenantId);
     const logoHtml = logoBase64
       ? `<img src="${logoBase64}" alt="Logo" style="max-width: 120px; max-height: 80px; object-fit: contain;" />`
       : '<div class="logo-placeholder">MAK</div>';
+    const companyName = pdfTenant ? (pdfTenant.name ?? pdfTenant.companyName ?? '') : 'MAK Lonestar Consulting, LLC';
+    const companyAddress = getTenantAddress(pdfTenant) || '940 N Beltline Road, Suite 107, Irving, TX 75061';
+    const companyPhone = (pdfTenant?.company_phone ?? pdfTenant?.companyPhone) ? String(pdfTenant.company_phone || pdfTenant.companyPhone).trim() : '214-718-1250';
+    const companyEmail = (pdfTenant?.company_email ?? pdfTenant?.companyEmail) ? String(pdfTenant.company_email || pdfTenant.companyEmail).trim() : '';
+    const peFirmReg = (pdfTenant?.pe_firm_reg ?? pdfTenant?.peFirmReg) ? String(pdfTenant.pe_firm_reg || pdfTenant.peFirmReg).trim() : '';
+    const peFirmRegLine = peFirmReg ? `Texas Board of Professional Engineers Firm Reg, ${peFirmReg}` : '';
+    const licenseHolderName = (pdfTenant?.license_holder_name ?? pdfTenant?.licenseHolderName) ? String(pdfTenant.license_holder_name || pdfTenant.licenseHolderName).trim() : '';
+    const licenseHolderTitle = (pdfTenant?.license_holder_title ?? pdfTenant?.licenseHolderTitle) ? String(pdfTenant.license_holder_title || pdfTenant.licenseHolderTitle).trim() : '';
     html = html.replace('{{LOGO_IMAGE}}', logoHtml)
+      .replace(/\{\{COMPANY_NAME\}\}/g, escapeHtml(companyName))
+      .replace(/\{\{COMPANY_ADDRESS\}\}/g, escapeHtml(companyAddress))
+      .replace(/\{\{COMPANY_PHONE\}\}/g, escapeHtml(companyPhone))
+      .replace(/\{\{COMPANY_EMAIL\}\}/g, escapeHtml(companyEmail))
+      .replace(/\{\{PE_FIRM_REG_LINE\}\}/g, escapeHtml(peFirmRegLine))
+      .replace(/\{\{LICENSE_HOLDER_NAME\}\}/g, escapeHtml(licenseHolderName))
+      .replace(/\{\{LICENSE_HOLDER_TITLE\}\}/g, escapeHtml(licenseHolderTitle))
       .replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''))
       .replace('{{REPORT_DATE}}', escapeHtml(formatDate(data.reportDate)))
       .replace('{{PROJECT_NAME}}', escapeHtml(task.projectName || ''))

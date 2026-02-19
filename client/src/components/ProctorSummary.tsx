@@ -6,7 +6,7 @@ import { proctorAPI } from '../api/proctor';
 import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
-import { getCurrentApiBaseUrl } from '../api/api';
+import { getCurrentApiBaseUrl, getApiPathPrefix } from '../api/api';
 import './ProctorSummary.css';
 
 const DEFAULT_LOGO = '/MAK logo_consulting.jpg';
@@ -520,8 +520,7 @@ const ProctorSummary: React.FC = () => {
       
       // Use same approach as WP1Form - direct fetch (bypassing API helper)
       const token = localStorage.getItem('token');
-      const baseUrl = getCurrentApiBaseUrl();
-      const pdfUrl = `${baseUrl}/api/proctor/${task.id}/pdf`;
+      const pdfUrl = getApiPathPrefix() + `/proctor/${task.id}/pdf`;
       
       console.log('Fetching PDF from:', pdfUrl);
       
