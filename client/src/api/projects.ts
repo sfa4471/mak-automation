@@ -93,7 +93,8 @@ export interface Project {
 }
 
 export interface CreateProjectRequest {
-  projectNumber: string;
+  /** Optional; server auto-generates when not provided (e.g. from tenant counter). */
+  projectNumber?: string;
   projectName: string;
   customerEmails?: string[];
   ccEmails?: string[];
