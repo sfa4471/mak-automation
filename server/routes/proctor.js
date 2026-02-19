@@ -635,13 +635,17 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
     try {
       browser = await puppeteer.launch(getPuppeteerLaunchOptions());
       const page = await browser.newPage();
-      
-      // Step 4: Puppeteer generation - wait for all assets + avoid partial renders
-      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+      // Allow more time on Render/cloud where Chromium is slow (avoid "Navigation timeout of 30000 ms exceeded")
+      const pdfTimeout = process.env.RENDER === 'true' ? 60000 : 30000;
+      page.setDefaultNavigationTimeout(pdfTimeout);
+      page.setDefaultTimeout(pdfTimeout);
+
+      // Step 4: Puppeteer generation - use 'load' for inline HTML (networkidle0 can hang with data URIs)
+      await page.setContent(html, { waitUntil: 'load', timeout: pdfTimeout });
       
       // Wait for chart to fully render (critical for matching UI)
       try {
-        await page.waitForSelector('#proctor-chart svg', { timeout: 10000 });
+        await page.waitForSelector('#proctor-chart svg', { timeout: 15000 });
         // Additional wait for SVG rendering to complete
         await page.waitForTimeout(200);
       } catch (e) {
@@ -731,7 +735,7 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
       }
 
       // Return JSON response with save info and download URL
-      // Frontend can then trigger download if needed
+      // savedToConfiguredPath: false when using deployed server (e.g. Render) or path not set - file cannot be saved to user's folder
       res.status(200).json({
         success: true,
         saved: saveInfo !== null,
@@ -740,9 +744,9 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
         sequence: saveInfo ? saveInfo.sequence : null,
         isRevision: saveInfo ? saveInfo.isRevision : false,
         revisionNumber: saveInfo ? saveInfo.revisionNumber : null,
+        savedToConfiguredPath: saveInfo ? !!saveInfo.fromConfigured : false,
         downloadUrl: `/api/proctor/${taskId}/pdf/download?token=${encodeURIComponent(req.headers.authorization || '')}`,
         saveError: saveError ? saveError.message : null,
-        // Include PDF as base64 for download (optional - frontend can also use downloadUrl)
         pdfBase64: pdfBuffer.toString('base64')
       });
     } catch (pdfError) {

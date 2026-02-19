@@ -220,20 +220,30 @@ function validatePath(pathToValidate) {
  * 3. PDF_BASE_PATH environment variable
  * 4. Default: ./pdfs in project root
  * @param {number|null|undefined} [tenantId] - Optional tenant ID for Supabase multi-tenant
- * @returns {Promise<string>} The base path to use
+ * @returns {Promise<{path: string, fromConfigured: boolean}>} Base path and whether it's the tenant's configured path
  */
 async function getEffectiveBasePath(tenantId) {
-  // Priority 1: workflow_base_path from app_settings (per-tenant)
-  const workflowPath = await getWorkflowBasePath(tenantId);
+  const fallbackPath = () => path.join(__dirname, '..', 'pdfs');
+  // Priority 1: workflow_base_path from app_settings (per-tenant, then global fallback)
+  const tid = tenantId != null ? Number(tenantId) : null;
+  let workflowPath = await getWorkflowBasePath(tid);
+  // When tenant-specific path is not set, fall back to key-only row (tenant_id null) so all PDFs use the same configured path
+  if (!workflowPath && tid != null) {
+    workflowPath = await getWorkflowBasePath(null);
+    if (workflowPath) {
+      console.log('[PDF path] Using global workflow path (no tenant-specific path for tenant', tid, '):', workflowPath);
+    }
+  }
   if (workflowPath) {
     const validation = validatePath(workflowPath);
     if (validation.valid && validation.isWritable) {
-      return workflowPath;
+      console.log('[PDF path] Using configured workflow path for tenant', tid, ':', workflowPath);
+      return { path: workflowPath, fromConfigured: true };
     } else {
       console.warn('Workflow path is configured but invalid:', workflowPath, validation.error || 'not writable');
     }
-  } else if (tenantId != null) {
-    console.warn('[PDF path] No workflow_base_path for tenant', tenantId, '- set in Settings → Workflow path. Using fallback.');
+  } else if (tid != null) {
+    console.warn('[PDF path] No workflow_base_path for tenant', tid, '- set in Settings → Workflow path. Using fallback.');
   }
   
   // Priority 2: OneDrive path (backward compatibility)
@@ -242,10 +252,9 @@ async function getEffectiveBasePath(tenantId) {
     try {
       const onedrivePath = await service.getBasePath();
       if (onedrivePath) {
-        // Validate OneDrive path is still valid
         const status = await service.getPathStatus();
         if (status.valid && status.isWritable) {
-          return onedrivePath;
+          return { path: onedrivePath, fromConfigured: false };
         }
       }
     } catch (error) {
@@ -255,11 +264,11 @@ async function getEffectiveBasePath(tenantId) {
   
   // Priority 3: Environment variable
   if (PDF_BASE_PATH) {
-    return PDF_BASE_PATH;
+    return { path: PDF_BASE_PATH, fromConfigured: false };
   }
   
   // Priority 4: Default
-  return path.join(__dirname, '..', 'pdfs');
+  return { path: fallbackPath(), fromConfigured: false };
 }
 
 // Test type to folder name mapping
@@ -277,7 +286,8 @@ const TEST_TYPE_FOLDERS = {
  * @param {string} basePath - Base path to ensure (optional, will be determined if not provided)
  */
 async function ensureBaseDirectory(basePath = null, tenantId = null) {
-  const effectivePath = basePath || await getEffectiveBasePath(tenantId);
+  const resolved = basePath ? { path: basePath } : await getEffectiveBasePath(tenantId);
+  const effectivePath = resolved.path;
   if (!fs.existsSync(effectivePath)) {
     fs.mkdirSync(effectivePath, { recursive: true });
     console.log(`Created PDF base directory: ${effectivePath}`);
@@ -335,8 +345,9 @@ async function ensureProjectDirectory(projectNumber, tenantId = null) {
   try {
     // Step 1: Get base path
     console.log('🔍 [DIAGNOSTIC] Step 1: Getting effective base path');
-    const basePath = await getEffectiveBasePath(tenantId);
-    console.log('🔍 [DIAGNOSTIC] Base path determined:', basePath);
+    const pathInfo = await getEffectiveBasePath(tenantId);
+    const basePath = pathInfo.path;
+    console.log('🔍 [DIAGNOSTIC] Base path determined:', basePath, 'fromConfigured:', pathInfo.fromConfigured);
     result.details.basePath = basePath;
     
     if (!basePath) {
@@ -571,7 +582,7 @@ function getTestTypeFolder(taskType) {
  * @returns {Promise<string>} - Full path to project's drawings folder
  */
 async function getProjectDrawingsDir(projectNumber, tenantId = null) {
-  const basePath = await getEffectiveBasePath(tenantId);
+  const { path: basePath } = await getEffectiveBasePath(tenantId);
   const sanitized = sanitizeProjectNumber(projectNumber);
   return path.join(basePath, sanitized, 'drawings');
 }
@@ -584,7 +595,7 @@ async function getProjectDrawingsDir(projectNumber, tenantId = null) {
  */
 async function getNextSequenceNumber(projectNumber, taskType, tenantId = null) {
   try {
-    const basePath = await getEffectiveBasePath(tenantId);
+    const { path: basePath } = await getEffectiveBasePath(tenantId);
     const sanitizedProjectNumber = sanitizeProjectNumber(projectNumber);
     const projectDir = path.join(basePath, sanitizedProjectNumber);
     const testTypeFolder = getTestTypeFolder(taskType);
@@ -732,7 +743,8 @@ function generateFilename(projectNumber, taskType, sequence, fieldDate, isRevisi
  */
 async function getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration = false, tenantId = null) {
   // Ensure project directory exists
-  const basePath = await getEffectiveBasePath(tenantId);
+  const pathInfo = await getEffectiveBasePath(tenantId);
+  const basePath = pathInfo.path;
   const folderResult = await ensureProjectDirectory(projectNumber, tenantId);
   if (!folderResult.success) {
     // Log warning but continue - PDF generation should still work
@@ -767,7 +779,8 @@ async function getPDFSavePath(projectNumber, taskType, fieldDate, isRegeneration
     filename: path.basename(filePath),
     sequence,
     isRevision,
-    revisionNumber
+    revisionNumber,
+    fromConfigured: pathInfo.fromConfigured
   };
 }
 
