@@ -248,9 +248,13 @@ async function generateProjectNumber(tenantId) {
   throw new Error('Failed to generate project number after maximum retries');
 }
 
+// Invalid project number characters (must match client: \ / : * ? " < > |)
+const INVALID_PROJECT_NUMBER_CHARS = /[\\/:*?"<>|]/;
+
 // Create project (Admin only, tenant-scoped)
 router.post('/', authenticate, requireTenant, requireAdmin, [
   body('projectName').notEmpty().trim(),
+  body('projectNumber').optional().trim(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
   body('soilSpecs').optional().isObject(),
@@ -264,6 +268,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
 
     const { 
       projectName, 
+      projectNumber: bodyProjectNumber,
       customerEmails,
       soilSpecs,
       concreteSpecs
@@ -300,21 +305,29 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       return res.status(400).json({ error: 'Project name already exists' });
     }
 
-    // Generate project number using per-tenant counter
+    // Use user-provided project number when provided; otherwise generate
     let projectNumber;
-    try {
-      projectNumber = await generateProjectNumber(tenantId);
-    } catch (genErr) {
-      console.error('Error generating project number:', genErr);
-      return res.status(500).json({ error: 'Database error: Failed to generate project number' });
+    const trimmedUserProjectNumber = typeof bodyProjectNumber === 'string' ? bodyProjectNumber.trim() : '';
+    if (trimmedUserProjectNumber) {
+      if (INVALID_PROJECT_NUMBER_CHARS.test(trimmedUserProjectNumber)) {
+        return res.status(400).json({ error: 'Project number cannot contain: \\ / : * ? " < > |' });
+      }
+      const existingByNumber = await db.get('projects', { projectNumber: trimmedUserProjectNumber, tenantId });
+      if (existingByNumber) {
+        return res.status(400).json({ error: 'Project number already exists for this tenant' });
+      }
+      projectNumber = trimmedUserProjectNumber;
+    } else {
+      try {
+        projectNumber = await generateProjectNumber(tenantId);
+      } catch (genErr) {
+        console.error('Error generating project number:', genErr);
+        return res.status(500).json({ error: 'Database error: Failed to generate project number' });
+      }
+      if (!projectNumber) {
+        return res.status(500).json({ error: 'Failed to generate project number' });
+      }
     }
-
-    if (!projectNumber) {
-      return res.status(500).json({ error: 'Failed to generate project number' });
-    }
-
-    // Note: generateProjectNumber() already handles duplicate checking and retries
-    // so we don't need to check again here
 
     // Prepare data for insertion (include tenant_id)
     const projectData = {
@@ -335,7 +348,8 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       projectData.concreteSpecs = concreteSpecs && Object.keys(concreteSpecs).length > 0 ? JSON.stringify(concreteSpecs) : null;
     }
 
-    // Create project (retry with next project number if duplicate project_number, e.g. fallback race)
+    // Create project (retry with next project number only when number was auto-generated and duplicate race)
+    const userProvidedProjectNumber = !!trimmedUserProjectNumber;
     let project;
     const maxInsertRetries = 5;
     for (let insertAttempt = 0; insertAttempt < maxInsertRetries; insertAttempt++) {
@@ -346,6 +360,9 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
         const errorMessage = insertErr.message || '';
         const isDuplicateProjectNumber = (errorMessage.includes('UNIQUE') || errorMessage.includes('duplicate')) &&
           (errorMessage.includes('project_number') || errorMessage.includes('projectnumber'));
+        if (userProvidedProjectNumber && isDuplicateProjectNumber) {
+          return res.status(400).json({ error: 'Project number already exists for this tenant' });
+        }
         if (isDuplicateProjectNumber && insertAttempt < maxInsertRetries - 1) {
           const match = projectData.projectNumber.match(/^(.+-)(\d+)$/);
           if (match) {
@@ -372,17 +389,21 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       return res.status(500).json({ error: 'Failed to create project after retries' });
     }
 
-    // Create project folder structure for PDF storage (use project number + tenant for path)
+    // Create project folder structure at tenant's desired path (workflow_base_path); tenantId required for correct location
+    let folderCreation = { success: false, path: null, error: null };
     try {
-      await ensureProjectDirectory(project.projectNumber || projectData.projectNumber, tenantId);
+      folderCreation = await ensureProjectDirectory(project.projectNumber || projectData.projectNumber, tenantId);
+      if (!folderCreation.success && folderCreation.error) {
+        console.error('Error creating project folder:', folderCreation.error);
+      }
     } catch (folderError) {
+      folderCreation.error = folderError.message || 'Folder creation failed';
       console.error('Error creating project folder:', folderError);
-      // Continue even if folder creation fails
     }
 
     // Parse JSON fields for response
     parseProjectJSONFields(project);
-    res.status(201).json(project);
+    res.status(201).json({ ...project, folderCreation });
   } catch (error) {
     console.error('Unexpected error creating project:', error);
     res.status(500).json({ error: 'Internal server error: ' + (error.message || 'Unknown error') });
@@ -659,6 +680,28 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
   }
 });
 
+// POST /api/projects/:id/retry-folder — create project folder at tenant's desired path (e.g. after Settings change)
+router.post('/:id/retry-folder', authenticate, requireTenant, requireAdmin, async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const tenantId = req.tenantId;
+    if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+
+    const project = await db.get('projects', { id: projectId });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    if ((project.tenant_id ?? project.tenantId) !== tenantId) return res.status(403).json({ error: 'Access denied' });
+
+    const projectNumber = project.project_number ?? project.projectNumber;
+    if (!projectNumber) return res.status(500).json({ error: 'Project has no project number' });
+
+    const folderCreation = await ensureProjectDirectory(projectNumber, tenantId);
+    return res.json({ success: folderCreation.success, folderCreation });
+  } catch (err) {
+    console.error('Error in retry-folder:', err);
+    return res.status(500).json({ error: err.message || 'Failed to create project folder' });
+  }
+});
+
 // --- Project drawings (PDF upload/list/serve/delete) ---
 
 // Helper: safe filename for drawing (no path traversal, PDF only)
@@ -696,7 +739,7 @@ router.post('/:id/drawings', authenticate, requireTenant, requireAdmin, uploadDr
     const projectNumber = project.project_number ?? project.projectNumber;
     if (!projectNumber) return res.status(500).json({ error: 'Project has no project number' });
 
-    await ensureProjectDirectory(projectNumber);
+    await ensureProjectDirectory(projectNumber, tenantId);
     const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
     if (!fs.existsSync(drawingsDir)) fs.mkdirSync(drawingsDir, { recursive: true });
 
