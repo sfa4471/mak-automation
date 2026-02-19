@@ -199,10 +199,10 @@ const ProctorSummary: React.FC = () => {
           liquidLimitLL: roundToWholeNumber(savedData.liquidLimitLL || ''), // Round on load
           plasticLimit: roundToWholeNumber(savedData.plasticLimit || ''), // Round on load
           plasticityIndex: '', // Always recalculate, don't use saved value
-          sampleDate: savedData.sampleDate || '',
-          calculatedBy: savedData.calculatedBy || '',
-          reviewedBy: savedData.reviewedBy || '',
-          checkedBy: savedData.checkedBy || '',
+          sampleDate: (savedData as any).sampleDate ?? (savedData as any).sample_date ?? '',
+          calculatedBy: (savedData as any).calculatedBy ?? (savedData as any).calculated_by ?? '',
+          reviewedBy: (savedData as any).reviewedBy ?? (savedData as any).reviewed_by ?? '',
+          checkedBy: (savedData as any).checkedBy ?? (savedData as any).checked_by ?? '',
           percentPassing200: savedData.percentPassing200 || '',
           passing200SummaryPct: (savedData as any).passing200SummaryPct || savedData.percentPassing200 || '', // Load summary from Page 1
           specificGravityG: savedData.specificGravityG || '',
@@ -318,6 +318,11 @@ const ProctorSummary: React.FC = () => {
           } else if (data.percentPassing200) {
             initialData.passing200SummaryPct = data.percentPassing200; // Fallback to legacy field
           }
+          // Load sample date and sign-off fields from draft/step1
+          initialData.sampleDate = data.sampleDate ?? '';
+          initialData.calculatedBy = data.calculatedBy ?? '';
+          initialData.reviewedBy = data.reviewedBy ?? '';
+          initialData.checkedBy = data.checkedBy ?? '';
         }
         
         // Always recalculate PI from LL and PL (never use saved PI value)

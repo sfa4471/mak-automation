@@ -1,18 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Task, taskTypeLabel } from '../api/tasks';
-import { projectsAPI, Project } from '../api/projects';
+import { projectsAPI, Project, ProjectDrawing } from '../api/projects';
 import './TaskDetailModal.css';
 
 interface TaskDetailModalProps {
   task: Task;
   onClose: () => void;
+  /** When true (technician dashboard), show only "View drawings" and list of PDFs instead of specs and project details link */
+  isTechnicianView?: boolean;
 }
 
-const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
+const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTechnicianView }) => {
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [loadingProject, setLoadingProject] = useState(true);
+  const [drawingsExpanded, setDrawingsExpanded] = useState(false);
+  const [openingDrawing, setOpeningDrawing] = useState<string | null>(null);
 
   useEffect(() => {
     const loadProject = async () => {
@@ -38,6 +42,23 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day);
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const drawings: ProjectDrawing[] = project?.drawings && Array.isArray(project.drawings) ? project.drawings : [];
+
+  const handleOpenDrawing = async (filename: string) => {
+    if (!task.projectId) return;
+    setOpeningDrawing(filename);
+    try {
+      const blob = await projectsAPI.getDrawingBlob(task.projectId, filename);
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      console.error('Error opening drawing:', err);
+    } finally {
+      setOpeningDrawing(null);
+    }
   };
 
   const formatFieldDates = (): string => {
@@ -265,31 +286,69 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
             </div>
           </div>
 
-          {/* Specifications Section */}
-          <div className="specs-section">
-            <h3>Specifications</h3>
-            {loadingProject ? (
-              <div className="specs-loading">Loading specifications...</div>
-            ) : (
-              <>
-                {/* Concrete Specs */}
-                <div className="specs-subsection">
-                  <h4>Concrete Specifications</h4>
-                  {renderConcreteSpecs()}
-                </div>
+          {/* Specifications Section - hidden for technician view */}
+          {!isTechnicianView && (
+            <div className="specs-section">
+              <h3>Specifications</h3>
+              {loadingProject ? (
+                <div className="specs-loading">Loading specifications...</div>
+              ) : (
+                <>
+                  <div className="specs-subsection">
+                    <h4>Concrete Specifications</h4>
+                    {renderConcreteSpecs()}
+                  </div>
+                  <div className="specs-subsection">
+                    <h4>Soil Specifications</h4>
+                    {renderSoilSpecs()}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
-                {/* Soil Specs */}
-                <div className="specs-subsection">
-                  <h4>Soil Specifications</h4>
-                  {renderSoilSpecs()}
+          {/* Technician: Drawings list (expandable) */}
+          {isTechnicianView && task.projectId && (
+            <div className="drawings-section" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="view-project-details-button"
+                onClick={() => setDrawingsExpanded((prev) => !prev)}
+                style={{ marginBottom: drawingsExpanded ? 12 : 0 }}
+              >
+                {drawingsExpanded ? 'Hide drawings' : 'View drawings'}
+              </button>
+              {drawingsExpanded && (
+                <div className="drawings-list-container" style={{ padding: '12px 0', borderTop: '1px solid #eee' }}>
+                  {loadingProject ? (
+                    <p className="specs-empty">Loading...</p>
+                  ) : drawings.length === 0 ? (
+                    <p className="specs-empty">No drawings uploaded.</p>
+                  ) : (
+                    <ul className="drawings-list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {drawings.map((d) => (
+                        <li key={d.filename} style={{ marginBottom: 8 }}>
+                          <button
+                            type="button"
+                            className="btn btn-link"
+                            onClick={() => handleOpenDrawing(d.filename)}
+                            disabled={openingDrawing === d.filename}
+                            style={{ padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                          >
+                            {openingDrawing === d.filename ? 'Opening…' : (d.displayName || d.filename)}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
-              </>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">
-          {task.projectId && (
+          {task.projectId && !isTechnicianView && (
             <button
               type="button"
               onClick={() => {

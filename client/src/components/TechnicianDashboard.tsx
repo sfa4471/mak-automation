@@ -544,6 +544,7 @@ const TechnicianDashboard: React.FC = () => {
         <TaskDetailModal
           task={selectedTaskForDetail}
           onClose={() => setSelectedTaskForDetail(null)}
+          isTechnicianView
         />
       )}
     </div>
