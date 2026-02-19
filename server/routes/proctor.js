@@ -1056,6 +1056,15 @@ router.post('/task/:taskId', authenticate, requireTenant, [
     // Check if record exists
     const existing = await db.get('proctor_data', { taskId: parseInt(taskId) });
 
+    // When updating, preserve sign-off fields (sample date, calculated/reviewed/checked by) if
+    // the request did not send them or sent empty — they are only edited on the Summary step,
+    // and ProctorForm (Step 1) sends empty strings when user clicks Next after having saved on Summary.
+    const hasSignOffValue = (v) => v !== undefined && v !== null && String(v).trim() !== '';
+    const sampleDateFinal = existing && !hasSignOffValue(sampleDate) ? (existing.sampleDate ?? existing.sample_date ?? null) : (sampleDate || null);
+    const calculatedByFinal = existing && !hasSignOffValue(calculatedBy) ? (existing.calculatedBy ?? existing.calculated_by ?? null) : (calculatedBy || null);
+    const reviewedByFinal = existing && !hasSignOffValue(reviewedBy) ? (existing.reviewedBy ?? existing.reviewed_by ?? null) : (reviewedBy || null);
+    const checkedByFinal = existing && !hasSignOffValue(checkedBy) ? (existing.checkedBy ?? existing.checked_by ?? null) : (checkedBy || null);
+
     const proctorData = {
       taskId: parseInt(taskId),
       projectName: projectName || null,
@@ -1076,10 +1085,10 @@ router.post('/task/:taskId', authenticate, requireTenant, [
       liquidLimitLL: liquidLimitLL || null,
       plasticLimit: plasticLimit || null,
       plasticityIndex: plasticityIndex || null,
-      sampleDate: sampleDate || null,
-      calculatedBy: calculatedBy || null,
-      reviewedBy: reviewedBy || null,
-      checkedBy: checkedBy || null,
+      sampleDate: sampleDateFinal,
+      calculatedBy: calculatedByFinal,
+      reviewedBy: reviewedByFinal,
+      checkedBy: checkedByFinal,
       percentPassing200: percentPassing200 || null,
       passing200: passing200Json,
       passing200SummaryPct: passing200SummaryPct || null,
