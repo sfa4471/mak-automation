@@ -9,6 +9,14 @@ const { generateAndSaveReportPdfForTask } = require('../jobs/sendApprovedReports
 
 const router = express.Router();
 
+/**
+ * JWT sets legacyDb when no tenants row was found at login (SQLite / pre-migration).
+ * On Supabase, tasks always have tenant_id — always filter and authorize by tenant even if legacyDb is wrongly true.
+ */
+function mustEnforceTenantOnTasks(legacyDb) {
+  return db.isSupabase() || !legacyDb;
+}
+
 // Helper function to log task history
 async function logTaskHistory(taskId, tenantId, actorRole, actorName, actorUserId, actionType, note) {
   try {
@@ -271,7 +279,7 @@ router.get('/', authenticate, requireTenant, async (req, res) => {
             projects:project_id(project_number, project_name)
           `)
           .order('created_at', { ascending: false });
-        if (!legacyDb) query = query.eq('tenant_id', tenantId);
+        if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
         const { data, error } = await query;
         if (error) throw error;
         tasks = (data || []).map(normalizeSupabaseTaskRow);
@@ -285,7 +293,7 @@ router.get('/', authenticate, requireTenant, async (req, res) => {
           `)
           .eq('assigned_technician_id', req.user.id)
           .order('created_at', { ascending: false });
-        if (!legacyDb) query = query.eq('tenant_id', tenantId);
+        if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
         const { data, error } = await query;
         if (error) throw error;
         tasks = (data || []).map(normalizeSupabaseTaskRow);
@@ -330,7 +338,7 @@ router.get('/project/:projectId', authenticate, requireTenant, async (req, res) 
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+    if (mustEnforceTenantOnTasks(req.legacyDb) && (project.tenant_id ?? project.tenantId) !== tenantId) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -343,7 +351,8 @@ router.get('/project/:projectId', authenticate, requireTenant, async (req, res) 
           *,
           users:assigned_technician_id(name, email)
         `)
-        .eq('project_id', projectId);
+        .eq('project_id', projectId)
+        .eq('tenant_id', tenantId);
       
       if (!isStaffReviewer(req.user.role)) {
         query = query.eq('assigned_technician_id', req.user.id);
@@ -553,9 +562,9 @@ router.get('/:id', authenticate, requireTenant, async (req, res) => {
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
-    if (!req.legacyDb) {
+    if (mustEnforceTenantOnTasks(req.legacyDb)) {
       const taskTenantId = task.tenant_id ?? task.tenantId;
-      if (taskTenantId != null && taskTenantId !== tenantId) {
+      if (taskTenantId != null && Number(taskTenantId) !== Number(tenantId)) {
         return res.status(403).json({ error: 'Access denied' });
       }
     }
@@ -793,14 +802,14 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+    if (mustEnforceTenantOnTasks(req.legacyDb) && (project.tenant_id ?? project.tenantId) !== tenantId) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
     if (assignedTechnicianId) {
-      const tech = req.legacyDb
-        ? await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN' })
-        : await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN', tenant_id: tenantId });
+      const tech = mustEnforceTenantOnTasks(req.legacyDb)
+        ? await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN', tenant_id: tenantId })
+        : await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN' });
       if (!tech) {
         return res.status(404).json({ error: 'Technician not found' });
       }
@@ -1039,7 +1048,7 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       if (error || !data) {
         return res.status(404).json({ error: 'Task not found' });
       }
-      if (!req.legacyDb && (data.tenant_id ?? data.tenantId) != null && (data.tenant_id ?? data.tenantId) !== req.tenantId) {
+      if (mustEnforceTenantOnTasks(req.legacyDb) && (data.tenant_id ?? data.tenantId) != null && Number(data.tenant_id ?? data.tenantId) !== Number(req.tenantId)) {
         return res.status(403).json({ error: 'Access denied' });
       }
       oldTask = {
@@ -1274,9 +1283,9 @@ router.delete('/:id', authenticate, requireTenant, requireAdmin, async (req, res
       }
     }
 
-    if (!req.legacyDb) {
+    if (mustEnforceTenantOnTasks(req.legacyDb)) {
       const rowTenant = existing.tenant_id ?? existing.tenantId;
-      if (rowTenant != null && rowTenant !== tenantId) {
+      if (rowTenant != null && Number(rowTenant) !== Number(tenantId)) {
         return res.status(403).json({ error: 'Access denied' });
       }
     }
@@ -1829,7 +1838,7 @@ router.get('/dashboard/today', authenticate, requireTenant, requireAdmin, async 
           users:assigned_technician_id(name, email),
           projects:project_id(project_number, project_name)
         `);
-      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
       
       if (error) throw error;
@@ -1938,7 +1947,7 @@ router.get('/dashboard/upcoming', authenticate, requireTenant, requireAdmin, asy
           projects:project_id(project_number, project_name)
         `)
         .neq('status', 'APPROVED');
-      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
       
       if (error) throw error;
@@ -2034,7 +2043,7 @@ router.get('/dashboard/overdue', authenticate, requireTenant, requireAdmin, asyn
         .not('due_date', 'is', null)
         .neq('status', 'APPROVED')
         .lt('due_date', today);
-      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
       
       if (error) throw error;
@@ -2098,7 +2107,7 @@ router.get('/dashboard/technician/today', authenticate, requireTenant, async (re
           projects:project_id(project_number, project_name)
         `)
         .eq('assigned_technician_id', req.user.id);
-      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
       
       if (error) throw error;
@@ -2214,7 +2223,7 @@ router.get('/dashboard/technician/upcoming', authenticate, requireTenant, async 
         `)
         .eq('assigned_technician_id', req.user.id)
         .neq('status', 'APPROVED');
-      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
       
       if (error) throw error;
@@ -2319,7 +2328,7 @@ router.get('/dashboard/technician/tomorrow', authenticate, requireTenant, async 
           projects:project_id(project_number, project_name)
         `)
         .eq('assigned_technician_id', req.user.id);
-      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
       
       if (error) throw error;
@@ -2414,7 +2423,7 @@ router.get('/dashboard/technician/open-reports', authenticate, requireTenant, as
         .eq('assigned_technician_id', req.user.id)
         .eq('field_completed', 1)
         .neq('status', 'APPROVED');
-      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
       
       if (error) throw error;
@@ -2592,7 +2601,7 @@ router.get('/dashboard/technician/activity', authenticate, requireTenant, async 
         .from('tasks')
         .select('id')
         .eq('assigned_technician_id', req.user.id);
-      if (!legacyDb) taskQuery = taskQuery.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) taskQuery = taskQuery.eq('tenant_id', tenantId);
       const { data: tasks, error: tasksError } = await taskQuery;
       
       if (tasksError) throw tasksError;
@@ -2614,7 +2623,7 @@ router.get('/dashboard/technician/activity', authenticate, requireTenant, async 
         .gte('timestamp', `${activityDate}T00:00:00`)
         .lt('timestamp', `${activityDate}T23:59:59`)
         .order('timestamp', { ascending: false });
-      if (!legacyDb) histQuery = histQuery.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) histQuery = histQuery.eq('tenant_id', tenantId);
       const { data, error } = await histQuery;
       
       if (error) throw error;
@@ -2698,7 +2707,7 @@ router.get('/dashboard/activity', authenticate, requireTenant, requireAdmin, asy
         .gte('timestamp', startOfDay)
         .lt('timestamp', `${activityDate}T23:59:59.999`)
         .order('timestamp', { ascending: false });
-      if (!legacyDb) historyQuery = historyQuery.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) historyQuery = historyQuery.eq('tenant_id', tenantId);
       const { data: historyEntries, error: historyError } = await historyQuery;
       
       if (historyError) throw historyError;
@@ -2725,7 +2734,7 @@ router.get('/dashboard/activity', authenticate, requireTenant, requireAdmin, asy
         .not('field_completed_at', 'is', null)
         .gte('field_completed_at', startOfDay)
         .lt('field_completed_at', `${activityDate}T23:59:59.999`);
-      if (!legacyDb) fieldQuery = fieldQuery.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) fieldQuery = fieldQuery.eq('tenant_id', tenantId);
       const { data: fieldCompletedTasks, error: fieldError } = await fieldQuery;
       
       if (!fieldError && fieldCompletedTasks) {
@@ -2803,7 +2812,7 @@ router.get('/dashboard/activity-old', authenticate, requireTenant, requireAdmin,
           users:assigned_technician_id(name, email),
           projects:project_id(project_number, project_name)
         `);
-      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
       
       if (error) throw error;

@@ -95,7 +95,8 @@ router.post('/login', [
     if (tenant && tenant.is_active === false && tenant.isActive === false) {
       return res.status(403).json({ error: 'Tenant account is inactive' });
     }
-    const isLegacyDb = tenant == null; // no tenants table or no row (e.g. main DB)
+    // SQLite without tenant rows: skip tenant filters. Supabase always has tenant_id on tasks — never mark legacyDb when using Supabase or tenant-scoped queries leak all tenants.
+    const isLegacyDb = tenant == null && !db.isSupabase();
     if (!tenant && tenantId == null) {
       tenantId = 1; // synthetic for legacy DB
     }
