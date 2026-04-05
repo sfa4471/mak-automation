@@ -9,7 +9,7 @@ const { supabase, isAvailable } = require('../db/supabase');
 const { authenticate } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { getPDFSavePath, savePDFToFile } = require('../utils/pdfFileManager');
-const { getTenant, getTenantAddress, getLogoBase64 } = require('../utils/tenantBranding');
+const { getTenant, getTenantAddress, getLogoBase64, getPdfFooterData, buildPdfFooterHtml } = require('../utils/tenantBranding');
 const { body, validationResult } = require('express-validator');
 
 // Helper function to escape HTML
@@ -126,211 +126,306 @@ function monotoneInterpolation(points) {
   return densePoints;
 }
 
-// Helper function to generate Proctor Curve Chart as SVG - MUST match UI exactly
+// Helper: dedupe and sort (no Set for ES5)
+function dedupeSort(arr) {
+  const sorted = arr.slice().sort((p, q) => p - q);
+  const out = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === 0 || sorted[i] > sorted[i - 1]) out.push(sorted[i]);
+  }
+  return out;
+}
+// Helper: minor ticks (3 lines between each major = 4 equal subdivisions)
+function ticksWithMinor(majorTicks) {
+  const round4 = (n) => Math.round(n * 10000) / 10000;
+  const out = [];
+  for (let i = 0; i < majorTicks.length; i++) {
+    out.push(round4(majorTicks[i]));
+    if (i < majorTicks.length - 1) {
+      const a = majorTicks[i];
+      const b = majorTicks[i + 1];
+      const step = (b - a) / 4;
+      out.push(round4(a + step), round4(a + 2 * step), round4(a + 3 * step));
+    }
+  }
+  return dedupeSort(out);
+}
+// Helper: clip ZAV points to yMax with intersection points (match UI)
+function clipZAVToYMax(points, yMax) {
+  const sorted = points.slice().sort((a, b) => a.x - b.x);
+  const out = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i];
+    const prev = i > 0 ? sorted[i - 1] : null;
+    const next = i < sorted.length - 1 ? sorted[i + 1] : null;
+    if (p.y <= yMax) {
+      out.push({ x: p.x, y: p.y });
+    } else {
+      if (prev && prev.y < yMax) {
+        const t = (yMax - prev.y) / (p.y - prev.y);
+        out.push({ x: prev.x + t * (p.x - prev.x), y: yMax });
+      }
+      if (next && next.y <= yMax) {
+        const t = (yMax - p.y) / (next.y - p.y);
+        out.push({ x: p.x + t * (next.x - p.x), y: yMax });
+      }
+    }
+  }
+  return out.sort((a, b) => a.x - b.x);
+}
+// Helper: clip ZAV to x domain [xMin, xMax] with intersection points at boundaries
+function clipZAVToXDomain(points, xMin, xMax) {
+  const sorted = points.slice().sort((a, b) => a.x - b.x);
+  const out = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i];
+    const prev = i > 0 ? sorted[i - 1] : null;
+    const next = i < sorted.length - 1 ? sorted[i + 1] : null;
+    if (p.x >= xMin && p.x <= xMax) {
+      out.push({ x: p.x, y: p.y });
+    } else {
+      if (p.x > xMax && prev && prev.x < xMax) {
+        const t = (xMax - prev.x) / (p.x - prev.x);
+        out.push({ x: xMax, y: prev.y + t * (p.y - prev.y) });
+      }
+      if (p.x < xMin && next && next.x >= xMin) {
+        const t = (xMin - p.x) / (next.x - p.x);
+        out.push({ x: xMin, y: p.y + t * (next.y - p.y) });
+      }
+    }
+  }
+  return out.sort((a, b) => a.x - b.x);
+}
+
+/**
+ * Coerce proctor_points / zav_points from DB (JSONB) or POST body into a point array.
+ * Bulk PDF uses req.body from proctor_data without the GET /task route's parsing step —
+ * values may be strings, {}, or other non-arrays; guard so .map never throws.
+ */
+function normalizeProctorPointsArray(raw) {
+  if (raw == null || raw === '') return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  if (typeof raw === 'object') return [];
+  return [];
+}
+
+// Helper function to generate Proctor Curve Chart as SVG - MUST match UI exactly (dynamic domains, grid, ZAV clip)
 function generateProctorChartSVG(reportData) {
-  // Helper to convert values to numbers (same as UI component)
   const toNum = (v) => {
     if (v === null || v === undefined) return NaN;
-    const s = String(v).trim().replace(/,/g, "");
-    if (s === "") return NaN;
+    const s = String(v).trim().replace(/,/g, '');
+    if (s === '') return NaN;
     return Number(s);
   };
 
-  const proctorPointsRaw = reportData.proctorPoints || [];
-  const zavPointsRaw = reportData.zavPoints || [];
+  const proctorPointsRaw = normalizeProctorPointsArray(reportData.proctorPoints);
+  const zavPointsRaw = normalizeProctorPointsArray(reportData.zavPoints);
   const omc = reportData.optimumMoisturePercent ? parseFloat(reportData.optimumMoisturePercent) : undefined;
   const maxDensity = reportData.maximumDryDensityPcf ? parseFloat(reportData.maximumDryDensityPcf) : undefined;
-  
-  // EXACT same data processing as UI component
+
   const cleanedProctorPoints = proctorPointsRaw
     .map(p => ({ x: toNum(p.x), y: toNum(p.y) }))
     .filter(p => !isNaN(p.x) && !isNaN(p.y))
     .sort((a, b) => a.x - b.x);
-  
+
   const cleanedZAVPoints = zavPointsRaw
     .map(p => ({ x: toNum(p.x), y: toNum(p.y) }))
     .filter(p => !isNaN(p.x) && !isNaN(p.y))
     .sort((a, b) => a.x - b.x);
-  
-  // Filter and clamp ZAV points - EXACT same logic as UI
-  const yAxisMin = 100; // Fixed Y-axis minimum (same as UI)
-  const yAxisMax = 112; // Fixed Y-axis maximum (same as UI)
-  const filteredZAVPoints = cleanedZAVPoints
+
+  // --- Dynamic Y domain (match UI: dataMaxY + 5, effectiveYMax = floor(max/2)*2) ---
+  const yValues = cleanedProctorPoints.map(p => p.y).filter(Number.isFinite);
+  if (maxDensity != null && !isNaN(maxDensity)) yValues.push(maxDensity);
+  const dataMaxY = yValues.length ? Math.max(...yValues) : 110;
+  const minY = yValues.length ? Math.min(...yValues) : 96;
+  const domainMax = dataMaxY + 5;
+  const padding = Math.max(1, (domainMax - minY) * 0.05);
+  const roundedMinY = Math.floor((minY - padding) / 2) * 2;
+  const domainMin = Math.max(0, roundedMinY);
+  const effectiveYMax = Math.floor(domainMax / 2) * 2;
+  const effectiveYDomain = [domainMin, effectiveYMax];
+
+  const yTicks = [];
+  const roundedMin = Math.ceil(domainMin / 2) * 2;
+  const roundedMax = Math.floor(effectiveYMax / 2) * 2;
+  for (let y = roundedMin; y <= roundedMax; y += 2) yTicks.push(y);
+  if (yTicks.length === 0) yTicks.push(roundedMin, roundedMax);
+  const yTicksWithMinor = ticksWithMinor(yTicks);
+
+  // --- Dynamic X domain (match UI: minX-2 gap, maxX+6, tick step 1 or 2) ---
+  const validMoistures = cleanedProctorPoints.map(p => p.x).filter(Number.isFinite);
+  let xDomain = [0, 25];
+  let xTicks = [0, 5, 10, 15, 20, 25];
+  let xTicksWithMinor = xTicks;
+  if (validMoistures.length > 0) {
+    const minX = Math.min(...validMoistures);
+    const maxX = Math.max(...validMoistures);
+    const xAxisMax = maxX + 6;
+    const range = xAxisMax - Math.max(0, minX - 2);
+    const tickStep = range <= 14 ? 1 : 2;
+    const xMinAligned = Math.max(0, Math.ceil((minX - 2) / tickStep) * tickStep);
+    const xMaxAligned = Math.ceil(xAxisMax / tickStep) * tickStep;
+    xTicks = [];
+    for (let x = xMinAligned; x <= xMaxAligned; x += tickStep) xTicks.push(x);
+    xDomain = [xMinAligned, xMaxAligned];
+    xTicksWithMinor = ticksWithMinor(xTicks);
+  }
+
+  // ZAV: clip to y max then to x-axis domain so curve does not extend past max x-axis value
+  const filteredZAV = cleanedZAVPoints
     .filter(p => p.x >= 0 && p.x <= 25)
     .map(p => ({ x: Math.max(0, Math.min(25, p.x)), y: p.y }))
-    .filter(p => p.y >= yAxisMin && p.y <= yAxisMax); // Exclude below Y-axis minimum and above Y-axis maximum
-  
-  // Use EXACT same axis domains as UI
-  const xDomain = [0, 25];
-  const yDomain = [100, 112];
-  const xTicks = [0, 5, 10, 15, 20, 25];
-  const yTicks = [100, 102, 104, 106, 108, 110, 112];
-  
-  // Chart dimensions - reduced height to fit on single page
-  // Letter page is ~612px x 792px (72 DPI) or ~816px x 1056px (96 DPI)
-  // Need to leave room for header, form fields, and margins (~350px header+form, ~40px margins = ~400px used)
+    .filter(p => p.y >= effectiveYDomain[0]);
+  const zavClippedY = clipZAVToYMax(filteredZAV, effectiveYMax);
+  const zavInPlot = clipZAVToXDomain(zavClippedY, xDomain[0], xDomain[1]);
+
   const width = 680;
-  const height = 380; // Reduced from 420 to ensure entire chart fits on Page 1 (792px - 400px = 392px max)
-  // Increased margins to prevent text clipping (top for ZAV label, bottom for x-axis, left for y-axis label)
-  const margin = { top: 35, right: 25, bottom: 55, left: 80 };
+  const height = 380;
+  // Extra top margin so max Y-axis label (e.g. 114) and ZAV curve are not cut off in PDF
+  const margin = { top: 50, right: 25, bottom: 55, left: 80 };
   const chartWidth = width - margin.left - margin.right;
   const chartHeight = height - margin.top - margin.bottom;
-  
-  // Scale functions
+
   const scaleX = (value) => margin.left + ((value - xDomain[0]) / (xDomain[1] - xDomain[0])) * chartWidth;
-  const scaleY = (value) => margin.top + chartHeight - ((value - yDomain[0]) / (yDomain[1] - yDomain[0])) * chartHeight;
-  
-  // Generate Proctor curve path - use monotone interpolation (same as Recharts)
+  const scaleY = (value) => margin.top + chartHeight - ((value - effectiveYDomain[0]) / (effectiveYDomain[1] - effectiveYDomain[0])) * chartHeight;
+
+  // --- Grid: grey solid; vertical only from effectiveYDomain (do not extend past top) ---
+  const yTop = scaleY(effectiveYDomain[1]);
+  const yBottom = scaleY(effectiveYDomain[0]);
+  const gridParts = [];
+  xTicksWithMinor.forEach(v => {
+    const x = scaleX(v);
+    gridParts.push(`<line x1="${x}" y1="${yTop}" x2="${x}" y2="${yBottom}" stroke="#d0d0d0" stroke-width="1"/>`);
+  });
+  yTicksWithMinor.forEach(v => {
+    const y = scaleY(v);
+    gridParts.push(`<line x1="${margin.left}" y1="${y}" x2="${margin.left + chartWidth}" y2="${y}" stroke="#d0d0d0" stroke-width="1"/>`);
+  });
+
+  // --- Proctor curve (monotone) ---
   let proctorPath = '';
   if (cleanedProctorPoints.length >= 2) {
-    // Use monotone interpolation to create smooth curve
     const smoothPoints = monotoneInterpolation(cleanedProctorPoints);
     const pathData = smoothPoints.map((p, i) => {
       const x = scaleX(p.x);
       const y = scaleY(p.y);
       return i === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
     }).join(' ');
-    // BLACK line, width 2 (same as UI)
     proctorPath = `<path d="${pathData}" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
   } else if (cleanedProctorPoints.length === 1) {
-    // Single point - just draw a dot
     const p = cleanedProctorPoints[0];
-    const x = scaleX(p.x);
-    const y = scaleY(p.y);
-    proctorPath = `<circle cx="${x}" cy="${y}" r="2" fill="#000" stroke="#000" stroke-width="1"/>`;
+    proctorPath = `<circle cx="${scaleX(p.x)}" cy="${scaleY(p.y)}" r="2" fill="#000" stroke="#000" stroke-width="1"/>`;
   }
-  
-  // Generate ZAV curve - use monotone interpolation for smoothness
-  // Clip ZAV points to y-axis max to prevent overflow
+
+  // --- ZAV curve (clipped to x-axis max and y-axis max in data space) ---
+  const plotLeft = margin.left;
+  const plotRight = margin.left + chartWidth;
   let zavPath = '';
-  if (filteredZAVPoints.length >= 2) {
-    // Clip any points that exceed y-axis max before interpolation
-    const clippedZAVPoints = filteredZAVPoints.map(p => ({
-      x: p.x,
-      y: Math.min(p.y, yAxisMax) // Clamp to y-axis max
-    }));
-    const smoothZAVPoints = monotoneInterpolation(clippedZAVPoints);
-    // Clip the path to y-axis max - filter and clamp points that exceed max
-    const clippedPathPoints = smoothZAVPoints
-      .map(p => ({ x: p.x, y: Math.min(p.y, yAxisMax) }))
-      .filter((p, i, arr) => {
-        // Only include points that are within bounds or help define the boundary
-        if (i === 0 || i === arr.length - 1) return true; // Always include first and last
-        return p.y <= yAxisMax;
-      });
-    
-    if (clippedPathPoints.length >= 2) {
-      const pathData = clippedPathPoints.map((p, i) => {
-        const x = scaleX(p.x);
-        const y = scaleY(Math.min(p.y, yAxisMax)); // Ensure y never exceeds max
-        return i === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
-      }).join(' ');
-      // BLACK line, width 2.5 (same as UI)
-      zavPath = `<path d="${pathData}" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
-    }
-  } else if (filteredZAVPoints.length === 1) {
-    const p = filteredZAVPoints[0];
-    const x = scaleX(p.x);
-    const y = scaleY(p.y);
-    zavPath = `<circle cx="${x}" cy="${y}" r="2" fill="#000" stroke="#000" stroke-width="1"/>`;
+  if (zavInPlot.length >= 2) {
+    const smoothZAV = monotoneInterpolation(zavInPlot);
+    const pathData = smoothZAV.map((p, i) => {
+      const x = scaleX(p.x);
+      const y = scaleY(p.y);
+      return i === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
+    }).join(' ');
+    zavPath = `<path d="${pathData}" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+  } else if (zavInPlot.length === 1) {
+    const p = zavInPlot[0];
+    zavPath = `<circle cx="${scaleX(p.x)}" cy="${scaleY(p.y)}" r="2" fill="#000" stroke="#000" stroke-width="1"/>`;
   }
-  
-  // Generate grid lines - same style as UI
-  const gridLines = [];
-  xTicks.forEach(tick => {
+
+  // --- X-axis: major ticks only (labels); short dash 1px ---
+  const xAxisTickY = margin.top + chartHeight;
+  const xAxisLabels = xTicks.map(tick => {
     const x = scaleX(tick);
-    gridLines.push(`<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${margin.top + chartHeight}" stroke="#d0d0d0" stroke-width="0.5" stroke-dasharray="1 1"/>`);
-    // Ensure x-axis tick labels have adequate bottom padding (at least 20px from bottom edge)
-    gridLines.push(`<text x="${x}" y="${height - margin.bottom + 20}" text-anchor="middle" font-size="11" font-weight="bold" fill="#000">${tick}</text>`);
-  });
-  
-  yTicks.forEach(tick => {
+    const dash = `<line x1="${x}" y1="${xAxisTickY}" x2="${x}" y2="${xAxisTickY + 1}" stroke="#000" stroke-width="1"/>`;
+    const label = `<text x="${x}" y="${height - margin.bottom + 20}" text-anchor="middle" font-size="11" font-weight="bold" fill="#000">${tick}</text>`;
+    return dash + label;
+  }).join('');
+
+  // --- Y-axis: all major ticks (no skipping) ---
+  const yAxisLabels = yTicks.map(tick => {
     const y = scaleY(tick);
-    gridLines.push(`<line x1="${margin.left}" y1="${y}" x2="${margin.left + chartWidth}" y2="${y}" stroke="#d0d0d0" stroke-width="0.5" stroke-dasharray="1 1"/>`);
-    // Ensure y-axis labels have adequate left padding (at least 15px from left edge)
-    gridLines.push(`<text x="${margin.left - 15}" y="${y + 4}" text-anchor="end" font-size="11" font-weight="bold" fill="#000">${tick}</text>`);
-  });
-  
-  // Reference lines - BLACK dashed (same as UI)
+    const dash = `<line x1="${margin.left - 6}" y1="${y}" x2="${margin.left}" y2="${y}" stroke="#000" stroke-width="1"/>`;
+    const label = `<text x="${margin.left - 10}" y="${y + 4}" text-anchor="end" font-size="11" font-weight="bold" fill="#000">${tick}</text>`;
+    return dash + label;
+  }).join('');
+
+  // Reference lines (OMC vertical, max density horizontal)
   let referenceLines = '';
-  if (omc !== undefined && !isNaN(omc) && omc >= 0 && omc <= 25) {
+  if (omc != null && !isNaN(omc) && omc >= 0 && omc <= 25) {
     const x = scaleX(omc);
-    referenceLines += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${margin.top + chartHeight}" stroke="#000" stroke-width="1.5" stroke-dasharray="5 5"/>`;
+    referenceLines += `<line x1="${x}" y1="${yTop}" x2="${x}" y2="${yBottom}" stroke="#000" stroke-width="1.5" stroke-dasharray="5 5"/>`;
   }
-  if (maxDensity !== undefined && !isNaN(maxDensity) && maxDensity >= yDomain[0] && maxDensity <= yDomain[1]) {
+  if (maxDensity != null && !isNaN(maxDensity) && maxDensity >= effectiveYDomain[0] && maxDensity <= effectiveYDomain[1]) {
     const y = scaleY(maxDensity);
     referenceLines += `<line x1="${margin.left}" y1="${y}" x2="${margin.left + chartWidth}" y2="${y}" stroke="#000" stroke-width="1.5" stroke-dasharray="5 5"/>`;
   }
-  
-  // Peak point marker (small filled triangle at OMC/Max intersection)
+
   let peakMarker = '';
-  if (omc !== undefined && maxDensity !== undefined && !isNaN(omc) && !isNaN(maxDensity) &&
-      omc >= 0 && omc <= 25 && maxDensity >= yDomain[0] && maxDensity <= yDomain[1]) {
+  if (omc != null && maxDensity != null && !isNaN(omc) && !isNaN(maxDensity) &&
+      omc >= 0 && omc <= 25 && maxDensity >= effectiveYDomain[0] && maxDensity <= effectiveYDomain[1]) {
     const px = scaleX(omc);
     const py = scaleY(maxDensity);
     peakMarker = `<path d="M ${px} ${py - 3} L ${px - 3} ${py + 3} L ${px + 3} ${py + 3} Z" fill="#000" stroke="#000" stroke-width="1"/>`;
   }
-  
-  // Proctor points - hollow triangles (same as UI)
+
   const proctorMarkers = cleanedProctorPoints.map(p => {
     const x = scaleX(p.x);
     const y = scaleY(p.y);
-    // Hollow triangle marker
     return `<path d="M ${x} ${y - 4} L ${x - 4} ${y + 4} L ${x + 4} ${y + 4} Z" fill="white" stroke="#000" stroke-width="1.5"/>`;
   }).join('');
-  
-  // ZAV label - positioned near curve (around moisture 17-20, same as UI)
-  // Offset above the curve to prevent overlap
+
   let zavLabel = '';
-  if (filteredZAVPoints.length > 0) {
-    const targetPoint = filteredZAVPoints.find(p => p.x >= 17 && p.x <= 20) || 
-                        filteredZAVPoints[Math.floor(filteredZAVPoints.length * 0.7)];
+  if (zavInPlot.length > 0) {
+    // Prefer a point on the lower part of the curve so label can sit clearly above it
+    const targetPoint = zavInPlot.find(p => p.x >= 14 && p.x <= 17) || zavInPlot.find(p => p.x >= 17 && p.x <= 20) || zavInPlot[Math.floor(zavInPlot.length * 0.7)];
     if (targetPoint) {
-      const labelX = scaleX(targetPoint.x);
+      let labelX = scaleX(targetPoint.x);
       const labelY = scaleY(targetPoint.y);
-      // Position label above the curve with adequate spacing (15px offset)
-      // Ensure it's at least 20px from top edge
-      const safeY = Math.max(labelY - 15, margin.top + 20);
-      zavLabel = `<text x="${labelX + 15}" y="${safeY}" font-size="11" font-weight="bold" fill="#000" text-anchor="start">Zero Air Voids</text>`;
+      const textWidthApprox = 95;
+      // Position label to the LEFT of the curve (text-anchor end) and well ABOVE so it never overlaps the diagonal
+      const labelOffsetX = 15;
+      const labelOffsetY = 32;
+      const labelEndX = Math.max(plotLeft + textWidthApprox, Math.min(labelX - labelOffsetX, plotRight - 5));
+      let safeY = Math.max(labelY - labelOffsetY, margin.top + 14);
+      safeY = Math.min(safeY, margin.top + chartHeight - 5);
+      zavLabel = `<text x="${labelEndX}" y="${safeY}" font-size="11" font-weight="bold" fill="#000" text-anchor="end">Zero Air Voids</text>`;
     }
   }
-  
-  // Axis labels - adjusted positions to ensure no clipping
-  // Bottom axis label positioned with adequate spacing from bottom edge (moved up slightly)
+
   const xAxisLabel = `<text x="${width / 2}" y="${height - margin.bottom + 35}" text-anchor="middle" font-size="12" font-weight="bold" fill="#000">% Moisture</text>`;
-  // Y-axis label positioned further left to avoid overlap with tick labels
-  const yAxisLabel = `<text x="${margin.left / 2 - 10}" y="${height / 2}" text-anchor="middle" font-size="12" font-weight="bold" fill="#000" transform="rotate(-90, ${margin.left / 2 - 10}, ${height / 2})">Dry Density (LBS. Cu. Ft.)</text>`;
-  
-  // Chart border
+  const yAxisLabelX = margin.left / 2 - 10;
+  const yAxisLabel = `<text x="${yAxisLabelX}" y="${height / 2}" text-anchor="middle" font-size="12" font-weight="bold" fill="#000" transform="rotate(-90, ${yAxisLabelX}, ${height / 2})">Dry Density (LBS. Cu. Ft.)</text>`;
+
   const chartBorder = `<rect x="${margin.left}" y="${margin.top}" width="${chartWidth}" height="${chartHeight}" fill="none" stroke="#000" stroke-width="1.5"/>`;
-  
+
   return `
-    <div id="proctor-chart" style="width: ${width}px; height: ${height}px; margin: 15px auto; padding: 15px; background: #fff; page-break-inside: avoid; break-inside: avoid;">
-      <svg width="${width}" height="${height}" style="background: white; font-family: Arial, sans-serif;">
-        <!-- Grid lines -->
-        ${gridLines.join('')}
-        
+    <div id="proctor-chart" style="width: ${width}px; height: ${height}px; margin: 15px auto; padding: 15px; background: #fff; page-break-inside: avoid; break-inside: avoid; overflow: visible;">
+      <svg width="${width}" height="${height}" style="background: white; font-family: Arial, sans-serif; overflow: visible;">
+        <!-- Grid (grey, solid; vertical clipped to y range) -->
+        ${gridParts.join('')}
         <!-- Chart border -->
         ${chartBorder}
-        
-        <!-- ZAV Curve (render first so it's behind) -->
+        <!-- Curves on top of grid -->
         ${zavPath}
-        
-        <!-- Proctor Curve -->
         ${proctorPath}
-        
         <!-- Reference lines -->
         ${referenceLines}
-        
-        <!-- Peak point marker -->
         ${peakMarker}
-        
-        <!-- Proctor markers (hollow triangles) -->
         ${proctorMarkers}
-        
-        <!-- ZAV Label -->
         ${zavLabel}
-        
+        <!-- Axis tick marks and labels -->
+        ${xAxisLabels}
+        ${yAxisLabels}
         <!-- Axis labels -->
         ${xAxisLabel}
         ${yAxisLabel}
@@ -343,7 +438,11 @@ function generateProctorChartSVG(reportData) {
 router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
   try {
     const { taskId } = req.params;
-    const reportData = req.body;
+    const reportData = req.body || {};
+    if (reportData && typeof reportData === 'object') {
+      reportData.proctorPoints = normalizeProctorPointsArray(reportData.proctorPoints);
+      reportData.zavPoints = normalizeProctorPointsArray(reportData.zavPoints);
+    }
     const isRegeneration = req.query.regenerate === 'true' || req.query.regen === 'true';
     
     // Get task and project information for file naming
@@ -411,10 +510,16 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
     const companyName = (pdfTenant?.name ?? pdfTenant?.company_name ?? '').trim() || 'Company';
     const addressLines = getTenantAddress(pdfTenant);
     const companyPhone = pdfTenant?.company_phone ?? pdfTenant?.companyPhone ?? '';
+    const companyEmail = pdfTenant?.company_email ?? pdfTenant?.companyEmail ?? '';
+    const phoneEmailLine = [companyPhone && `P: ${companyPhone}`, companyEmail && `E: ${companyEmail}`].filter(Boolean).join(' | ');
     const headerAddressHtml = [
       ...addressLines.split('\n').filter(Boolean).map(line => `<div>${escapeHtml(line)}</div>`),
-      companyPhone ? `<div>P: ${escapeHtml(companyPhone)}</div>` : ''
+      phoneEmailLine ? `<div>${escapeHtml(phoneEmailLine)}</div>` : ''
     ].filter(Boolean).join('\n      ') || '<div>—</div>';
+
+    // Shared PDF footer (bottom-right): firm name, signature, engineer name, title, firm reg, date (positioned further down/right in Proctor)
+    const proctorFooterData = await getPdfFooterData(pdfTenant, { reportDate: reportData.sampleDate });
+    const pdfFooterHtml = buildPdfFooterHtml(proctorFooterData, { bottom: '0.2in', right: '0.2in' });
 
     // Generate HTML template for Proctor report
     const html = `
@@ -434,6 +539,9 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
       background: white;
     }
     .page-container {
+      position: relative;
+      min-height: 11in;
+      width: 8.5in;
       max-width: 8.5in;
       margin: 0 auto;
       border: 2px solid #000;
@@ -626,6 +734,8 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
     <div class="chart-container">
       ${generateProctorChartSVG(reportData)}
     </div>
+
+    ${pdfFooterHtml}
   </div>
 </body>
 </html>
@@ -775,7 +885,7 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         .from('tasks')
         .select(`
           *,
-          projects:project_id(project_name, project_number)
+          projects:project_id(project_name, project_number, client_name)
         `)
         .eq('id', taskId)
         .eq('task_type', 'PROCTOR')
@@ -789,13 +899,14 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         ...data,
         projectName: data.projects?.project_name,
         projectNumber: data.projects?.project_number,
+        projectClientName: data.projects?.client_name ?? null,
         projects: undefined
       };
     } else {
       const sqliteDb = require('../database');
       task = await new Promise((resolve, reject) => {
         sqliteDb.get(
-          `SELECT t.*, p.projectName, p.projectNumber
+          `SELECT t.*, p.projectName, p.projectNumber, p.clientName AS projectClientName
            FROM tasks t
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.id = ? AND t.taskType = 'PROCTOR'`,
@@ -872,6 +983,11 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         plasticLimit: data.plasticLimit,
         plasticityIndex: data.plasticityIndex
       });
+
+      {
+        const saved = data.client != null ? String(data.client).trim() : '';
+        data.client = saved || (task.projectClientName || '');
+      }
       
       res.json(data);
     } else {
@@ -882,7 +998,7 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         projectNumber: task.projectNumber || '',
         sampledBy: 'MAK Lonestar Consulting, LLC',
         testMethod: 'ASTM D698',
-        client: '',
+        client: task.projectClientName || '',
         soilClassification: '',
         maximumDryDensityPcf: '',
         optimumMoisturePercent: '',

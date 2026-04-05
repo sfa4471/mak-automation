@@ -35,9 +35,12 @@
   background-color: #fff !important;
 }
 
-.recharts-cartesian-grid-horizontal line,
-.recharts-cartesian-grid-vertical line {
-  stroke: #e0e0e0;
+/* Proctor chart grid: black, visible lines */
+.proctor-chart-container .proctor-chart-grid line,
+.proctor-chart-container .recharts-cartesian-grid-horizontal line,
+.proctor-chart-container .recharts-cartesian-grid-vertical line {
+  stroke: #000 !important;
+  stroke-width: 1px;
 }
 
 /* Responsive */

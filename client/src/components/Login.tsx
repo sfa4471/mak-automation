@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Login.css';
 
@@ -66,7 +66,10 @@ const Login: React.FC = () => {
             {loading ? 'Logging in...' : 'Login'}
           </button>
           <p className="login-help-text">
-            Forgot your password? Contact your system administrator to reset it.
+            <Link to="/forgot-password" className="login-forgot-link">
+              Forgot your password?
+            </Link>
+            <span className="login-help-secondary"> You can request a reset link by email.</span>
           </p>
         </form>
       </div>

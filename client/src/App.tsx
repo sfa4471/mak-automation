@@ -2,6 +2,7 @@ import React, { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { TenantProvider } from './context/TenantContext';
+import { AppDialogProvider } from './context/AppDialogContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoadingSpinner from './components/LoadingSpinner';
@@ -34,6 +35,7 @@ function App() {
       <AuthProvider>
         <TenantProvider>
         <Router>
+        <AppDialogProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -65,7 +67,7 @@ function App() {
           <Route
             path="/admin/change-password"
             element={
-              <ProtectedRoute requireAdmin>
+              <ProtectedRoute requireAdminOrPm>
                 <ChangePassword />
               </ProtectedRoute>
             }
@@ -123,7 +125,7 @@ function App() {
           <Route
             path="/admin/tasks"
             element={
-              <ProtectedRoute requireAdmin>
+              <ProtectedRoute requireAdminOrPm>
                 <Suspense fallback={<LoadingSpinner fullScreen message="Loading tasks..." />}>
                   <TasksDashboard />
                 </Suspense>
@@ -222,6 +224,7 @@ function App() {
           />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
+        </AppDialogProvider>
         </Router>
         </TenantProvider>
       </AuthProvider>

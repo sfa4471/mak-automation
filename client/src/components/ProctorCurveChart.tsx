@@ -1,4 +1,4 @@
-  import React, { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -136,26 +136,21 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     const minY = Math.min(...validYs);
     const dataMaxY = Math.max(...validYs);
     
-    // Round maxY to next even number (with headroom)
-    // Formula: Math.ceil((dataMaxY + 1) / 2) * 2
-    // Examples: 68 → 70, 70 → 72, 69 → 70
-    const roundedMaxY = Math.ceil((dataMaxY + 1) / 2) * 2;
+    // Y-axis max = 5 + max Y value of the curve
+    const domainMax = dataMaxY + 5;
     
     // Round minY down to nearest even number (with padding)
-    const padding = Math.max(1, (roundedMaxY - minY) * 0.05); // 5% padding at bottom
+    const padding = Math.max(1, (domainMax - minY) * 0.05); // 5% padding at bottom
     const roundedMinY = Math.floor((minY - padding) / 2) * 2;
     
     // Ensure minY doesn't go below 0
     const domainMin = Math.max(0, roundedMinY);
-    const domainMax = roundedMaxY;
     
     const domain: [number, number] = [domainMin, domainMax];
     
     console.log('Calculated Y-axis domain:', {
       minY,
       dataMaxY,
-      roundedMaxY,
-      roundedMinY,
       domainMin,
       domainMax,
       finalDomain: domain
@@ -200,18 +195,17 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     const minX = Math.min(...validMoistures);
     const maxX = Math.max(...validMoistures);
     
-    // X-axis minimum: minX - 7, clamped to 0 (keep existing left margin rule)
-    const xAxisMin = Math.max(0, minX - 7);
-    
-    // X-axis maximum: maxX + 6 (right-side margin must be <= 6)
+    // X-axis maximum: maxX + 6 (right-side margin)
     const xAxisMax = maxX + 6;
+    // Left bound: gap between minX and first axis value must not exceed 2 (minX - firstAxisValue <= 2)
+    const xAxisMinTentative = Math.max(0, minX - 2);
     
     // Calculate range to determine tick step
-    const range = xAxisMax - xAxisMin;
+    const range = xAxisMax - xAxisMinTentative;
     const tickStep = range <= 14 ? 1 : 2;
     
-    // Align xMin down and xMax up to tick step boundaries (after computing xAxisMin/xAxisMax)
-    const xMinAligned = Math.floor(xAxisMin / tickStep) * tickStep;
+    // First axis value: smallest multiple of tickStep that is >= minX - 2 and >= 0 (so minX - xMinAligned <= 2)
+    const xMinAligned = Math.max(0, Math.ceil((minX - 2) / tickStep) * tickStep);
     const xMaxAligned = Math.ceil(xAxisMax / tickStep) * tickStep;
     
     // Generate ticks from xMinAligned to xMaxAligned with step tickStep
@@ -229,12 +223,13 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     console.log('Calculated X-axis domain and ticks:', {
       minX,
       maxX,
-      xAxisMin,
+      xAxisMinTentative,
       xAxisMax,
       range,
       tickStep,
       xMinAligned,
       xMaxAligned,
+      gapMinXToAxis: minX - xMinAligned,
       finalDomain: domain,
       ticks
     });
@@ -257,7 +252,36 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     );
   }, [filteredZAVPoints, yAxisMin, yAxisMax, xAxisMin, xAxisMax]);
 
-  // Prepare chart data - combine proctor and ZAV into single dataset
+  // Clip ZAV curve to displayed y-axis max (e.g. 114): cap y and add intersection points where curve crosses max
+  const effectiveYMaxForClip = yAxisDomain[1] != null ? Math.floor(Number(yAxisDomain[1]) / 2) * 2 : (yAxisDomain[1] as number);
+  const zavClippedForChart = useMemo(() => {
+    const yMax = effectiveYMaxForClip;
+    const points = zavFilteredForRender.slice().sort((a, b) => a.x - b.x);
+    if (points.length === 0) return [];
+    const out: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      const prev = i > 0 ? points[i - 1] : null;
+      const next = i < points.length - 1 ? points[i + 1] : null;
+      if (p.y <= yMax) {
+        out.push({ x: p.x, y: p.y });
+      } else {
+        if (prev && prev.y < yMax) {
+          const t = (yMax - prev.y) / (p.y - prev.y);
+          const xInt = prev.x + t * (p.x - prev.x);
+          out.push({ x: xInt, y: yMax });
+        }
+        if (next && next.y <= yMax) {
+          const t = (yMax - p.y) / (next.y - p.y);
+          const xInt = p.x + t * (next.x - p.x);
+          out.push({ x: xInt, y: yMax });
+        }
+      }
+    }
+    return out.sort((a, b) => a.x - b.x);
+  }, [zavFilteredForRender, effectiveYMaxForClip]);
+
+  // Prepare chart data - combine proctor and ZAV into single dataset (ZAV clipped to y-axis max)
   const chartData = useMemo(() => {
     const data: Array<{
       moisture: number;
@@ -271,10 +295,8 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
       data.push({ moisture: point.x, dryDensity: point.y });
     });
 
-    // Add ZAV points - merge with existing moisture values if close
-    // Use zavFilteredForRender to exclude points below Y-axis minimum
-    zavFilteredForRender.forEach(point => {
-      // Double-check: ensure moisture is >= 0
+    // Add ZAV points (clipped to y-axis max) - merge with existing moisture values if close
+    zavClippedForChart.forEach(point => {
       if (point.x < 0) return;
       const clampedMoisture = Math.max(0, point.x);
       const existing = data.find(d => Math.abs(d.moisture - clampedMoisture) < 0.1);
@@ -290,7 +312,7 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     console.log("filteredZAVPoints (min x):", filteredZAVPoints.length > 0 ? Math.min(...filteredZAVPoints.map(p => p.x)) : "none");
     return sorted;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedProctorPoints, zavFilteredForRender]);
+  }, [sortedProctorPoints, zavClippedForChart]);
 
   // Custom hollow triangle marker for Proctor points (guard against NaN from missing/invalid data)
   const HollowTriangleMarker = (props: any) => {
@@ -322,8 +344,10 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
   const xDomain = xAxisConfig.domain;
   const xTicks = xAxisConfig.ticks;
   
-  // Use dynamically calculated Y-axis domain
+  // Use dynamically calculated Y-axis domain; cap at displayed max so grid/border don't extend past top tick
   const yDomain = yAxisDomain;
+  const effectiveYMax = yDomain[1] != null ? Math.floor(Number(yDomain[1]) / 2) * 2 : yDomain[1];
+  const effectiveYDomain: [number, number] = [yDomain[0], effectiveYMax];
   
   // Generate Y-axis ticks with step size of 2 (MUST be before early return)
   const yTicks = useMemo(() => {
@@ -353,6 +377,46 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     return ticks;
   }, [yDomain]);
 
+  // Minor grid ticks: 3 equally spaced values between each pair of major ticks (4 equal subdivisions)
+  const round4 = (n: number) => Math.round(n * 10000) / 10000;
+  const dedupeSort = (arr: number[]) => {
+    const sorted = arr.slice().sort((p, q) => p - q);
+    const out: number[] = [];
+    for (let i = 0; i < sorted.length; i++) {
+      if (i === 0 || sorted[i] > sorted[i - 1]) out.push(sorted[i]);
+    }
+    return out;
+  };
+  const xTicksWithMinor = useMemo(() => {
+    const out: number[] = [];
+    const major = xTicks;
+    for (let i = 0; i < major.length; i++) {
+      out.push(round4(major[i]));
+      if (i < major.length - 1) {
+        const a = major[i];
+        const b = major[i + 1];
+        const step = (b - a) / 4;
+        out.push(round4(a + step), round4(a + 2 * step), round4(a + 3 * step));
+      }
+    }
+    return dedupeSort(out);
+  }, [xTicks]);
+
+  const yTicksWithMinor = useMemo(() => {
+    const out: number[] = [];
+    const major = yTicks;
+    for (let i = 0; i < major.length; i++) {
+      out.push(round4(major[i]));
+      if (i < major.length - 1) {
+        const a = major[i];
+        const b = major[i + 1];
+        const step = (b - a) / 4;
+        out.push(round4(a + step), round4(a + 2 * step), round4(a + 3 * step));
+      }
+    }
+    return dedupeSort(out);
+  }, [yTicks]);
+
   // Edge cases - check AFTER all hooks are called
   if (sortedProctorPoints.length < 2) {
     return (
@@ -371,22 +435,42 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
           data={chartData}
           margin={{ top: 20, right: 20, left: 75, bottom: 80 }}
         >
-          {/* Gridlines */}
-          <CartesianGrid 
-            stroke="#d0d0d0" 
-            strokeDasharray="1 1"
-            strokeWidth={0.5}
-            vertical={true}
-            horizontal={true}
-          />
+          {/* Grid: vertical lines clipped to displayed y range (do not extend past effectiveYMax); grey; behind curves */}
+          {xTicksWithMinor.map((v) => (
+            <ReferenceLine
+              key={`v-${v}`}
+              zIndex={0}
+              segment={[
+                { x: v, y: effectiveYDomain[0] },
+                { x: v, y: effectiveYDomain[1] }
+              ]}
+              stroke="#d0d0d0"
+              strokeWidth={1}
+            />
+          ))}
+          {yTicksWithMinor.map((v) => (
+            <ReferenceLine key={`h-${v}`} zIndex={0} y={v} stroke="#d0d0d0" strokeWidth={1} />
+          ))}
 
           <XAxis
             type="number"
             dataKey="moisture"
             domain={xDomain}
-            ticks={xTicks}
-            tick={{ fill: '#000', fontSize: 11, fontWeight: 'bold' }}
-            tickLine={{ stroke: '#000', strokeWidth: 1 }}
+            ticks={xTicksWithMinor}
+            tick={(props) => {
+              const { x, y, payload } = props;
+              const isMajor = xTicks.includes(payload.value);
+              if (!isMajor) return null;
+              return (
+                <g transform={`translate(${x},${y})`}>
+                  <line x1={0} y1={0} x2={0} y2={1} stroke="#000" strokeWidth={1} />
+                  <text x={0} y={10} fill="#000" fontSize={11} fontWeight="bold" textAnchor="middle">
+                    {payload.value}
+                  </text>
+                </g>
+              );
+            }}
+            tickLine={false}
             tickMargin={10}
             axisLine={{ stroke: '#000', strokeWidth: 1.5 }}
             label={{
@@ -398,16 +482,26 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
           />
           <YAxis
             type="number"
-            domain={yDomain}
+            domain={effectiveYDomain}
             ticks={yTicks}
-            tick={{ fill: '#000', fontSize: 11, fontWeight: 'bold' }}
-            tickLine={{ stroke: '#000', strokeWidth: 1 }}
+            tick={(props) => {
+              const { x, y, payload } = props;
+              return (
+                <g transform={`translate(${x},${y})`}>
+                  <line x1={-6} y1={0} x2={0} y2={0} stroke="#000" strokeWidth={1} />
+                  <text x={-10} y={4} fill="#000" fontSize={11} fontWeight="bold" textAnchor="end">
+                    {payload.value}
+                  </text>
+                </g>
+              );
+            }}
+            tickLine={false}
             axisLine={{ stroke: '#000', strokeWidth: 1.5 }}
             label={{ 
               value: 'Dry Density (LBS. Cu. Ft.)', 
               angle: -90, 
               position: 'insideLeft',
-              offset: 25,
+              offset: -10,
               style: { textAnchor: 'middle', fill: '#000', fontSize: 12, fontWeight: 'bold' }
             }}
           />
@@ -427,7 +521,7 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
             }}
           />
 
-          {/* Proctor Curve - solid black line with hollow triangles */}
+          {/* Proctor Curve - solid black line with hollow triangles (on top of grid) */}
           <Line
             type="monotone"
             dataKey="dryDensity"
@@ -438,9 +532,10 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
             activeDot={{ r: 4, fill: '#000' }}
             connectNulls={true}
             isAnimationActive={false}
+            zIndex={10}
           />
 
-          {/* ZAV Curve - thicker black line */}
+          {/* ZAV Curve - thicker black line (on top of grid) */}
           {filteredZAVPoints.length > 0 && (
             <Line
               type="monotone"
@@ -451,6 +546,7 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
               connectNulls={true}
               isAnimationActive={false}
               dot={false}
+              zIndex={10}
             />
           )}
 
@@ -468,12 +564,12 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
                   const x = props.cx !== undefined ? props.cx : props.x;
                   const y = props.cy !== undefined ? props.cy : props.y;
                   if (x !== null && y !== null && !isNaN(x) && !isNaN(y)) {
-                    // Position label above the curve with adequate spacing
+                    // Position label above the curve, slightly down and left so it doesn't overlap
                     return (
                       <g>
                         <text
-                          x={x + 15}
-                          y={y - 15}
+                          x={x + 12}
+                          y={y - 18}
                           fill="#000"
                           fontSize={11}
                           fontWeight="bold"

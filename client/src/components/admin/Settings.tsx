@@ -31,10 +31,15 @@ const Settings: React.FC = () => {
   const [tenantLoading, setTenantLoading] = useState(false);
   const [tenantSaving, setTenantSaving] = useState(false);
   const [tenantForm, setTenantForm] = useState<TenantMeUpdate>({});
+  const [signaturePreviewFailed, setSignaturePreviewFailed] = useState(false);
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    setSignaturePreviewFailed(false);
+  }, [tenant?.signatureUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,7 +128,7 @@ const Settings: React.FC = () => {
         <div className="settings-section">
           <h2>Company Profile</h2>
           <p className="settings-description">
-            Your company name, address, P.E. registration, and license holder. Used on reports and correspondence.
+            Your company name, address, firm registration, engineer name, title, and signature. Used on reports and correspondence.
           </p>
           {tenantLoading ? (
             <p className="form-help">Loading…</p>
@@ -168,16 +173,64 @@ const Settings: React.FC = () => {
                 <input className="form-input" type="url" value={tenantForm.companyWebsite ?? ''} onChange={(e) => updateTenantField('companyWebsite', e.target.value)} placeholder="https://..." />
               </div>
               <div className="form-group">
-                <label>P.E. registration number</label>
-                <input className="form-input" value={tenantForm.peFirmReg ?? ''} onChange={(e) => updateTenantField('peFirmReg', e.target.value)} placeholder="P.E. firm registration" />
+                <label>Firm registration number</label>
+                <input className="form-input" value={tenantForm.peFirmReg ?? ''} onChange={(e) => updateTenantField('peFirmReg', e.target.value)} placeholder="Firm registration number" />
               </div>
               <div className="form-group">
-                <label>License holder name</label>
-                <input className="form-input" value={tenantForm.licenseHolderName ?? ''} onChange={(e) => updateTenantField('licenseHolderName', e.target.value)} placeholder="License holder" />
+                <label>Engineer name</label>
+                <input className="form-input" value={tenantForm.licenseHolderName ?? ''} onChange={(e) => updateTenantField('licenseHolderName', e.target.value)} placeholder="Engineer name" />
               </div>
               <div className="form-group">
-                <label>License holder title</label>
-                <input className="form-input" value={tenantForm.licenseHolderTitle ?? ''} onChange={(e) => updateTenantField('licenseHolderTitle', e.target.value)} placeholder="e.g. P.E." />
+                <label>Title of Engineer</label>
+                <input className="form-input" value={tenantForm.licenseHolderTitle ?? ''} onChange={(e) => updateTenantField('licenseHolderTitle', e.target.value)} placeholder="e.g. Geotechnical Engineer" />
+              </div>
+              <div className="form-group">
+                <label>Enter your signature</label>
+                <div className="signature-upload-row">
+                  {tenant?.signatureUrl && (
+                    <div className="signature-preview-wrap">
+                      <div className="signature-preview-frame" aria-label="Signature preview">
+                        {signaturePreviewFailed ? (
+                          <span className="signature-preview-fallback">
+                            Preview unavailable — try uploading again or check that the server can serve files from its public folder.
+                          </span>
+                        ) : (
+                          <img
+                            className="signature-preview-img"
+                            src={`${getCurrentApiBaseUrl()}/${String(tenant.signatureUrl).replace(/^\/+/, '')}`}
+                            alt=""
+                            decoding="async"
+                            onError={() => setSignaturePreviewFailed(true)}
+                          />
+                        )}
+                      </div>
+                      <div className="form-help signature-preview-caption">Current signature</div>
+                    </div>
+                  )}
+                  <label className="btn btn-primary" style={{ marginBottom: 0 }}>
+                    {tenant?.signatureUrl ? 'Replace signature' : 'Upload signature'}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif,image/webp"
+                      style={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setMessage(null);
+                        try {
+                          await tenantsAPI.uploadSignature(file);
+                          const updated = await tenantsAPI.getMe();
+                          setTenant(updated);
+                          setMessage({ type: 'success', text: 'Signature uploaded.' });
+                        } catch (err: any) {
+                          setMessage({ type: 'error', text: err?.response?.data?.error || 'Failed to upload signature' });
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+                <small className="form-help">Image of your signature (used on PDF reports). JPEG, PNG, GIF or WebP.</small>
               </div>
               <div className="form-actions">
                 <button type="button" className="btn btn-primary" onClick={saveCompanyProfile} disabled={tenantSaving}>

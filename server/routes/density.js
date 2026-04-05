@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, isStaffReviewer } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
@@ -18,7 +18,7 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         .from('tasks')
         .select(`
           *,
-          projects:project_id(project_name, project_number, concrete_specs, soil_specs)
+          projects:project_id(project_name, project_number, concrete_specs, soil_specs, client_name)
         `)
         .eq('id', taskId)
         .eq('task_type', 'DENSITY_MEASUREMENT')
@@ -34,20 +34,24 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         projectNumber: data.projects?.project_number,
         concreteSpecs: data.projects?.concrete_specs,
         soilSpecs: data.projects?.soil_specs,
+        projectClientName: data.projects?.client_name ?? null,
         projects: undefined
       };
     } else {
       const sqliteDb = require('../database');
       task = await new Promise((resolve, reject) => {
         sqliteDb.get(
-          `SELECT t.*, p.projectName, p.projectNumber, p.concreteSpecs, p.soilSpecs
+          `SELECT t.*, p.projectName, p.projectNumber, p.concreteSpecs, p.soilSpecs, p.clientName
            FROM tasks t
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.id = ? AND t.taskType = 'DENSITY_MEASUREMENT'`,
           [taskId],
           (err, row) => {
             if (err) reject(err);
-            else resolve(row || null);
+            else if (row) {
+              row.projectClientName = row.clientName ?? null;
+              resolve(row);
+            } else resolve(null);
           }
         );
       });
@@ -134,12 +138,31 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       } else {
         data.proctors = data.proctors || [];
       }
+
+      if (typeof data.densSpecs === 'string') {
+        try {
+          data.densSpecs = JSON.parse(data.densSpecs || '[]');
+        } catch (e) {
+          data.densSpecs = [];
+        }
+      }
+      if (typeof data.moistSpecs === 'string') {
+        try {
+          data.moistSpecs = JSON.parse(data.moistSpecs || '[]');
+        } catch (e) {
+          data.moistSpecs = [];
+        }
+      }
       
       // Add project info, concreteSpecs, and soilSpecs
       data.projectName = task.projectName;
       data.projectNumber = task.projectNumber;
       data.projectConcreteSpecs = projectConcreteSpecs;
       data.projectSoilSpecs = projectSoilSpecs;
+      {
+        const saved = data.clientName != null ? String(data.clientName).trim() : '';
+        data.clientName = saved || (task.projectClientName || '');
+      }
       
       // Debug: Verify what's being sent to frontend
       console.log('Density report GET - Sending to frontend:', {
@@ -161,6 +184,16 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
           data.techName = tech.name || tech.email || '';
         }
       }
+
+      // Normalize array specs for client (dynamic columns): densSpecPercents, moistSpecRanges
+      data.densSpecPercents = (Array.isArray(data.densSpecs) && data.densSpecs.length > 0)
+        ? data.densSpecs
+        : (data.densSpecPercent != null && String(data.densSpecPercent).trim() !== '' ? [String(data.densSpecPercent)] : []);
+      data.moistSpecRanges = (Array.isArray(data.moistSpecs) && data.moistSpecs.length > 0)
+        ? data.moistSpecs
+        : (data.moistSpecMin != null || data.moistSpecMax != null
+          ? [{ min: data.moistSpecMin || '', max: data.moistSpecMax || '' }]
+          : []);
       
       res.json(data);
     } else {
@@ -182,7 +215,7 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         projectNumber: task.projectNumber,
         projectConcreteSpecs: projectConcreteSpecs,
         projectSoilSpecs: projectSoilSpecs,
-        clientName: '',
+        clientName: task.projectClientName || '',
         datePerformed: new Date().toISOString().split('T')[0],
         structure: '',
         structureType: '',
@@ -206,6 +239,8 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         densSpecPercent: '',
         moistSpecMin: '',
         moistSpecMax: '',
+        densSpecPercents: [],
+        moistSpecRanges: [],
         gaugeNo: '',
         stdDensityCount: '',
         stdMoistCount: '',
@@ -255,6 +290,8 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       densSpecPercent,
       moistSpecMin,
       moistSpecMax,
+      densSpecPercents,
+      moistSpecRanges,
       gaugeNo,
       stdDensityCount,
       stdMoistCount,
@@ -356,6 +393,14 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       }
     }
 
+    // Use array specs when provided; otherwise fall back to single values for backward compat
+    const densSpecsArray = Array.isArray(densSpecPercents) && densSpecPercents.length > 0
+      ? densSpecPercents
+      : (densSpecPercent != null && String(densSpecPercent).trim() !== '' ? [String(densSpecPercent)] : []);
+    const moistSpecsArray = Array.isArray(moistSpecRanges) && moistSpecRanges.length > 0
+      ? moistSpecRanges
+      : (moistSpecMin != null || moistSpecMax != null ? [{ min: moistSpecMin || '', max: moistSpecMax || '' }] : []);
+
     // Prepare data for insertion/update (omit tenantId when legacy DB has no tenant_id column)
     // For Supabase, JSONB fields accept arrays directly; for SQLite, we stringify
     const densityData = {
@@ -366,9 +411,11 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       structureType: structureType || null,
       testRows: testRows || [],
       proctors: proctors || [],
-      densSpecPercent: densSpecPercent || null,
-      moistSpecMin: moistSpecMin || null,
-      moistSpecMax: moistSpecMax || null,
+      densSpecPercent: densSpecsArray.length > 0 ? String(densSpecsArray[0]) : (densSpecPercent || null),
+      moistSpecMin: moistSpecsArray.length > 0 ? (moistSpecsArray[0].min ?? null) : (moistSpecMin || null),
+      moistSpecMax: moistSpecsArray.length > 0 ? (moistSpecsArray[0].max ?? null) : (moistSpecMax || null),
+      densSpecs: densSpecsArray,
+      moistSpecs: moistSpecsArray,
       gaugeNo: gaugeNo || null,
       stdDensityCount: stdDensityCount || null,
       stdMoistCount: stdMoistCount || null,
@@ -391,7 +438,8 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       lastEditedByUserId: req.user.id,
       updatedAt: new Date().toISOString()
     };
-    if (!req.legacyDb) densityData.tenantId = tenantId;
+    // Supabase rows require tenant_id; legacy JWT (legacyDb) still needs it when DB is Supabase.
+    if (tenantId != null && (!req.legacyDb || db.isSupabase())) densityData.tenantId = tenantId;
 
     const isTenantIdError = (err) => (err && err.message && /tenant_id/.test(err.message));
 
@@ -430,16 +478,13 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       
       if (updateStatus === 'READY_FOR_REVIEW') {
         taskUpdate.reportSubmitted = 1;
-        if (req.user.role === 'TECHNICIAN') {
-          taskUpdate.submittedAt = new Date().toISOString();
-        }
       }
       
       await db.update('tasks', taskUpdate, { id: taskId });
     }
 
     // Update task assignment if technician changed (admin only)
-    if (req.user.role === 'ADMIN' && assignedTechnicianId && assignedTechnicianId !== task.assignedTechnicianId) {
+    if (isStaffReviewer(req.user.role) && assignedTechnicianId && assignedTechnicianId !== task.assignedTechnicianId) {
       await db.update('tasks', {
         assignedTechnicianId: assignedTechnicianId,
         updatedAt: new Date().toISOString()

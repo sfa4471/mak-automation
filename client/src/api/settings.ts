@@ -191,4 +191,42 @@ export const settingsAPI = {
     );
     return response.data;
   },
+
+  /**
+   * Get auto-send approved reports nightly setting for current tenant.
+   * API: GET /api/settings/auto-send
+   */
+  getAutoSendEnabled: async (): Promise<{ success: boolean; enabled: boolean }> => {
+    const response = await api.get<{ success: boolean; enabled: boolean }>('/settings/auto-send');
+    return response.data;
+  },
+
+  /**
+   * Set auto-send enabled/disabled for current tenant.
+   * API: PATCH /api/settings/auto-send
+   */
+  setAutoSendEnabled: async (enabled: boolean): Promise<{ success: boolean; enabled: boolean }> => {
+    const response = await api.patch<{ success: boolean; enabled: boolean }>('/settings/auto-send', { enabled });
+    return response.data;
+  },
+
+  /**
+   * Get the email body template for auto-sent approved reports.
+   * API: GET /api/settings/auto-send-body
+   */
+  getAutoSendBodyTemplate: async (): Promise<{ success: boolean; bodyTemplate: string }> => {
+    const response = await api.get<{ success: boolean; bodyTemplate: string }>('/settings/auto-send-body');
+    return response.data;
+  },
+
+  /**
+   * Update the email body template for auto-sent approved reports.
+   * API: PATCH /api/settings/auto-send-body
+   */
+  setAutoSendBodyTemplate: async (bodyTemplate: string): Promise<{ success: boolean; bodyTemplate: string }> => {
+    const response = await api.patch<{ success: boolean; bodyTemplate: string }>('/settings/auto-send-body', {
+      bodyTemplate
+    });
+    return response.data;
+  }
 };

@@ -1,11 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useAppDialog } from '../../context/AppDialogContext';
 import { tasksAPI, Task, taskTypeLabel, TaskType } from '../../api/tasks';
+import { settingsAPI } from '../../api/settings';
+import RejectTaskModal from '../RejectTaskModal';
 import './TasksDashboard.css';
+
+/** Normalize task id from API (number or numeric string) for selection and bulk APIs. */
+function toPositiveTaskId(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : parseInt(String(value), 10);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return null;
+  return n;
+}
 
 const TasksDashboard: React.FC = () => {
   const { user, logout } = useAuth();
+  const { showAlert, showConfirm } = useAppDialog();
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeFilter, setActiveFilter] = useState<'today' | 'upcoming' | 'overdue' | 'activity'>('today');
@@ -16,17 +27,58 @@ const TasksDashboard: React.FC = () => {
   });
   const [upcomingDays, setUpcomingDays] = useState<number>(7);
   const [loading, setLoading] = useState(true);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [isBulkApproving, setIsBulkApproving] = useState(false);
+  const [approveModalBusy, setApproveModalBusy] = useState(false);
+
+  const [autoSendEnabled, setAutoSendEnabled] = useState<boolean | null>(null);
+  const [autoSendBodyTemplate, setAutoSendBodyTemplate] = useState<string>('');
+  const [isUpdatingAutoSend, setIsUpdatingAutoSend] = useState(false);
+  const [autoSendModalOpen, setAutoSendModalOpen] = useState(false);
+  const [autoSendModalMode, setAutoSendModalMode] = useState<'enable' | 'edit'>('enable');
+  const [autoSendDraftBody, setAutoSendDraftBody] = useState<string>('');
+  const [rejectModalTask, setRejectModalTask] = useState<Task | null>(null);
+  const [approveConfirm, setApproveConfirm] = useState<
+    | null
+    | { mode: 'single'; taskId: number }
+    | { mode: 'bulk'; count: number }
+  >(null);
+  const [notice, setNotice] = useState<{ variant: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
 
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFilter, selectedDate, upcomingDays]);
 
+  useEffect(() => {
+    // Load auto-send email settings once for this tenant.
+    const loadAutoSendSettings = async () => {
+      try {
+        const enabledResp = await settingsAPI.getAutoSendEnabled();
+        setAutoSendEnabled(Boolean(enabledResp.enabled));
+
+        const bodyResp = await settingsAPI.getAutoSendBodyTemplate();
+        setAutoSendBodyTemplate(bodyResp.bodyTemplate || '');
+      } catch (err) {
+        console.error('Error loading auto-send settings:', err);
+        setAutoSendEnabled(false);
+      }
+    };
+    loadAutoSendSettings();
+  }, []);
+
   const loadData = async () => {
     try {
       setLoading(true);
       // Clear tasks immediately when switching filters to avoid showing stale data
       setTasks([]);
+      setSelectedTaskIds(new Set());
       
       let data: Task[] = [];
       if (activeFilter === 'today') {
@@ -51,7 +103,7 @@ const TasksDashboard: React.FC = () => {
     const statusMap: { [key: string]: string } = {
       'ASSIGNED': 'Assigned',
       'IN_PROGRESS_TECH': 'In Progress',
-      'READY_FOR_REVIEW': 'Ready for Review',
+      'READY_FOR_REVIEW': 'Under review (PM / Admin)',
       'APPROVED': 'Approved',
       'REJECTED_NEEDS_FIX': 'Rejected - Needs Fix'
     };
@@ -67,6 +119,26 @@ const TasksDashboard: React.FC = () => {
       'REJECTED_NEEDS_FIX': 'status-rejected'
     };
     return classMap[status] || '';
+  };
+
+  const getPmReviewLabel = (pmReviewStatus?: string): string => {
+    const statusMap: Record<string, string> = {
+      'NOT_STARTED': 'In queue',
+      'REVIEWING': 'Reviewing',
+      'COMPLETED': 'Completed'
+    };
+    if (!pmReviewStatus) return '—';
+    return statusMap[pmReviewStatus] || pmReviewStatus;
+  };
+
+  const getPmReviewClass = (pmReviewStatus?: string): string => {
+    if (!pmReviewStatus) return '';
+    const classMap: Record<string, string> = {
+      'NOT_STARTED': 'pm-review-in-queue',
+      'REVIEWING': 'pm-review-reviewing',
+      'COMPLETED': 'pm-review-completed'
+    };
+    return classMap[pmReviewStatus] || '';
   };
 
   const formatDate = (dateString?: string): string => {
@@ -102,7 +174,12 @@ const TasksDashboard: React.FC = () => {
   };
 
   const isReportTask = (taskType: TaskType): boolean => {
-    return taskType === 'COMPRESSIVE_STRENGTH' || taskType === 'DENSITY_MEASUREMENT' || taskType === 'REBAR';
+    return (
+      taskType === 'COMPRESSIVE_STRENGTH' ||
+      taskType === 'DENSITY_MEASUREMENT' ||
+      taskType === 'REBAR' ||
+      taskType === 'PROCTOR'
+    );
   };
 
   const isFieldTask = (taskType: TaskType): boolean => {
@@ -154,8 +231,7 @@ const TasksDashboard: React.FC = () => {
     return null;
   };
 
-  const handleViewReport = (task: Task, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const navigateToReport = (task: Task) => {
     if (task.taskType === 'COMPRESSIVE_STRENGTH') {
       navigate(`/task/${task.id}/wp1`);
     } else if (task.taskType === 'DENSITY_MEASUREMENT') {
@@ -163,85 +239,202 @@ const TasksDashboard: React.FC = () => {
     } else if (task.taskType === 'REBAR') {
       navigate(`/task/${task.id}/rebar`);
     } else if (task.taskType === 'PROCTOR') {
-      navigate(`/task/${task.id}/proctor`);
+      navigate(`/task/${task.id}/proctor/summary`);
     }
+  };
+
+  const handleViewReport = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigateToReport(task);
   };
 
   const handleViewTask = (task: Task, e: React.MouseEvent) => {
     e.stopPropagation();
     // Placeholder for field tasks
-    alert(`${taskTypeLabel(task)} task details coming soon`);
+    void showAlert(`${taskTypeLabel(task)} task details are not available in this view yet.`, 'Coming soon');
   };
 
 
-  const handleApprove = async (taskId: number, e: React.MouseEvent) => {
+  const handleApproveClick = (taskId: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Are you sure you want to approve this task?')) {
-      return;
-    }
-    try {
-      await tasksAPI.approve(taskId);
-      loadData(); // Refresh the list
-    } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to approve task');
-    }
+    setApproveConfirm({ mode: 'single', taskId });
   };
 
-  // Helper function to convert MM-DD-YYYY to YYYY-MM-DD
-  const convertToISO = (dateStr: string): string | null => {
-    if (!dateStr) return null;
-    // Try to parse MM-DD-YYYY format
-    const parts = dateStr.split(/[-/]/);
-    if (parts.length === 3) {
-      const month = parts[0].padStart(2, '0');
-      const day = parts[1].padStart(2, '0');
-      const year = parts[2];
-      // Validate it's a valid date
-      const date = new Date(`${year}-${month}-${day}`);
-      if (!isNaN(date.getTime())) {
-        return `${year}-${month}-${day}`;
+  const handleBulkApproveClick = () => {
+    if (selectedTaskIds.size === 0) return;
+    setApproveConfirm({ mode: 'bulk', count: selectedTaskIds.size });
+  };
+
+  const runApproveSingle = async (taskId: number) => {
+    setApproveModalBusy(true);
+    try {
+      const updated = await tasksAPI.approve(taskId);
+      setApproveConfirm(null);
+      let message =
+        'The report has been approved. The assigned technician has been notified.';
+      const pdf = updated.pdf;
+      if (pdf && !pdf.skipped) {
+        if (pdf.success === false) {
+          message += ` PDF was not generated (${pdf.error || 'unknown error'}).`;
+        } else if (!pdf.saved) {
+          message +=
+            ' PDF was not saved to the workflow folder (check server path / permissions).';
+          if (pdf.saveError) message += ` ${pdf.saveError}`;
+        }
       }
+      setNotice({
+        variant: 'success',
+        message,
+      });
+      await loadData();
+    } catch (err: any) {
+      const msg =
+        err.response?.data?.error ||
+        'We could not approve this report. Please try again or contact support if the problem continues.';
+      setNotice({ variant: 'error', message: msg });
+    } finally {
+      setApproveModalBusy(false);
     }
-    // If already in YYYY-MM-DD format, return as-is
-    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      return dateStr;
-    }
-    return null;
   };
 
-  const handleReject = async (task: Task, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const remarks = prompt('Enter rejection remarks (required):');
-    if (!remarks || remarks.trim() === '') {
-      return;
-    }
-    
-    const resubmissionDateInput = prompt('Enter resubmission due date (MM-DD-YYYY, required):');
-    if (!resubmissionDateInput || resubmissionDateInput.trim() === '') {
-      return;
-    }
+  const runBulkApprove = async () => {
+    const ids = Array.from(selectedTaskIds);
+    if (ids.length === 0) return;
 
-    const resubmissionDate = convertToISO(resubmissionDateInput.trim());
-    if (!resubmissionDate) {
-      alert('Invalid date format. Please use MM-DD-YYYY format.');
-      return;
-    }
-
+    setIsBulkApproving(true);
     try {
-      await tasksAPI.reject(task.id, {
-        rejectionRemarks: remarks,
-        resubmissionDueDate: resubmissionDate
-      });
-      loadData(); // Refresh the list
+      const result = await tasksAPI.bulkApprove(ids);
+      setApproveConfirm(null);
+
+      const { totals, results } = result;
+      const firstSaveError = results?.find((r) => r.status === 'ERROR' && r.error)?.error;
+      const saveErrorHint = firstSaveError ? ` ${firstSaveError}` : '';
+
+      if (totals.approved === 0) {
+        const parts: string[] = [];
+        if (totals.skippedWrongStatus) {
+          parts.push(
+            `${totals.skippedWrongStatus} not in "ready for review" status`
+          );
+        }
+        if (totals.notFound) parts.push(`${totals.notFound} not found`);
+        if (totals.forbidden) parts.push(`${totals.forbidden} could not be accessed`);
+        if (totals.errors) parts.push(`${totals.errors} failed to update in the database`);
+        const detail = parts.length ? ` (${parts.join('; ')})` : '';
+        setNotice({
+          variant: 'error',
+          message: `No reports were approved${detail}.${saveErrorHint} Refresh the list and try again, or approve reports individually.`,
+        });
+      } else {
+        let msg = `Successfully approved ${totals.approved} report${totals.approved === 1 ? '' : 's'}. Technicians have been notified where applicable.`;
+        if (totals.skippedWrongStatus > 0 || totals.notFound > 0 || totals.errors > 0) {
+          const skipped =
+            totals.skippedWrongStatus + totals.notFound + totals.forbidden + totals.errors;
+          msg += ` ${skipped} item${skipped === 1 ? '' : 's'} could not be approved (wrong status, missing, or database error).`;
+          if (firstSaveError) msg += ` ${firstSaveError}`;
+        }
+        const approvedRows = results?.filter((r) => r.status === 'APPROVED') || [];
+        const pdfGenFailed = approvedRows.filter(
+          (r) => r.pdf && !r.pdf.skipped && r.pdf.success === false
+        ).length;
+        const pdfNotSaved = approvedRows.filter(
+          (r) =>
+            r.pdf &&
+            !r.pdf.skipped &&
+            r.pdf.success === true &&
+            !r.pdf.saved
+        ).length;
+        if (pdfGenFailed > 0) {
+          const firstPdfErr = approvedRows.find(
+            (r) => r.pdf && !r.pdf.skipped && r.pdf.success === false
+          )?.pdf?.error;
+          msg += ` ${pdfGenFailed} PDF${pdfGenFailed === 1 ? '' : 's'} could not be generated (approvals are still saved).`;
+          if (firstPdfErr) msg += ` Detail: ${firstPdfErr}`;
+        }
+        if (pdfNotSaved > 0) {
+          msg += ` ${pdfNotSaved} PDF${pdfNotSaved === 1 ? '' : 's'} did not save to the workflow folder (check path settings).`;
+        }
+        setNotice({ variant: 'success', message: msg });
+      }
+      await loadData();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to reject task');
+      const msg =
+        err.response?.data?.error ||
+        'We could not complete bulk approval. Please try again or contact support if the problem continues.';
+      setNotice({ variant: 'error', message: msg });
+    } finally {
+      setIsBulkApproving(false);
     }
+  };
+
+  const openAutoSendBodyModal = (mode: 'enable' | 'edit') => {
+    setAutoSendModalMode(mode);
+    setAutoSendDraftBody(autoSendBodyTemplate);
+    setAutoSendModalOpen(true);
+  };
+
+  const applyAutoSendBodyAndToggle = async (enabled: boolean) => {
+    setIsUpdatingAutoSend(true);
+    try {
+      // Save (or update) body template first, then toggle enabled.
+      await settingsAPI.setAutoSendBodyTemplate(autoSendDraftBody);
+      await settingsAPI.setAutoSendEnabled(enabled);
+
+      setAutoSendEnabled(enabled);
+      setAutoSendBodyTemplate(autoSendDraftBody);
+      setAutoSendModalOpen(false);
+    } catch (err: any) {
+      console.error('Error updating auto-send settings:', err);
+      await showAlert(err?.response?.data?.error || 'Auto-send settings could not be updated.', 'Settings error');
+    } finally {
+      setIsUpdatingAutoSend(false);
+    }
+  };
+
+  const handleToggleAutoSend = async (enabled: boolean) => {
+    if (isUpdatingAutoSend) return;
+
+    if (enabled) {
+      // Per requirement: when admin enables it, prompt for email body (with draft).
+      openAutoSendBodyModal('enable');
+      return;
+    }
+
+    // Turning OFF is immediate.
+    setIsUpdatingAutoSend(true);
+    try {
+      await settingsAPI.setAutoSendEnabled(false);
+      setAutoSendEnabled(false);
+    } catch (err: any) {
+      console.error('Error disabling auto-send:', err);
+      await showAlert(err?.response?.data?.error || 'Auto-send could not be disabled.', 'Settings error');
+    } finally {
+      setIsUpdatingAutoSend(false);
+    }
+  };
+
+  const handleRejectClick = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRejectModalTask(task);
   };
 
 
   const handleEditTask = (task: Task, e: React.MouseEvent) => {
     e.stopPropagation();
     navigate(`/task/${task.id}/edit`, { state: { returnPath: '/admin/tasks' } });
+  };
+
+  const handleDeleteTask = async (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (task.status === 'APPROVED') return;
+    const delOk = await showConfirm(`Delete ${taskTypeLabel(task)}? This cannot be undone.`, 'Delete task');
+    if (!delOk) return;
+    try {
+      await tasksAPI.delete(task.id);
+      await loadData();
+    } catch (err: any) {
+      await showAlert(err?.response?.data?.error || 'The task could not be deleted.', 'Delete failed');
+    }
   };
 
   const getTaskActions = (task: Task): React.ReactNode => {
@@ -261,6 +454,19 @@ const TasksDashboard: React.FC = () => {
       </button>
     );
 
+    if (task.status !== 'APPROVED') {
+      actions.push(
+        <button
+          key="delete"
+          onClick={(e) => handleDeleteTask(task, e)}
+          className="action-button action-reject"
+          title="Delete this task"
+        >
+          Delete
+        </button>
+      );
+    }
+
     if (isReport) {
       // Report tasks: View Report, Approve, Reject based on status
       if (task.status === 'READY_FOR_REVIEW' || task.status === 'APPROVED') {
@@ -271,7 +477,9 @@ const TasksDashboard: React.FC = () => {
             className="action-button action-view"
             title="View Report"
           >
-            View Report
+            {task.taskType === 'PROCTOR' && task.status === 'READY_FOR_REVIEW'
+              ? 'Open summary'
+              : 'View Report'}
           </button>
         );
       }
@@ -280,7 +488,10 @@ const TasksDashboard: React.FC = () => {
         actions.push(
           <button
             key="approve"
-            onClick={(e) => handleApprove(task.id, e)}
+            onClick={(e) => {
+              const tid = toPositiveTaskId(task.id);
+              if (tid != null) handleApproveClick(tid, e);
+            }}
             className="action-button action-approve"
             title="Approve Task"
           >
@@ -290,7 +501,7 @@ const TasksDashboard: React.FC = () => {
         actions.push(
           <button
             key="reject"
-            onClick={(e) => handleReject(task, e)}
+            onClick={(e) => handleRejectClick(task, e)}
             className="action-button action-reject"
             title="Reject Task"
           >
@@ -334,6 +545,63 @@ const TasksDashboard: React.FC = () => {
       </header>
 
       <div className="tasks-dashboard-content">
+        {notice && (
+          <div
+            className={`tasks-dashboard-notice tasks-dashboard-notice--${notice.variant}`}
+            role="status"
+          >
+            {notice.message}
+            <button
+              type="button"
+              className="tasks-dashboard-notice-dismiss"
+              onClick={() => setNotice(null)}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        <div className="auto-send-panel">
+          <div className="auto-send-title">Auto-send approved reports nightly</div>
+          {autoSendEnabled === null ? (
+            <div className="auto-send-loading">Loading...</div>
+          ) : (
+            <div className="auto-send-controls">
+              <label className="radio-option">
+                <input
+                  type="radio"
+                  name="auto-send"
+                  checked={autoSendEnabled === true}
+                  onChange={() => handleToggleAutoSend(true)}
+                  disabled={isUpdatingAutoSend}
+                />
+                On
+              </label>
+              <label className="radio-option">
+                <input
+                  type="radio"
+                  name="auto-send"
+                  checked={autoSendEnabled === false}
+                  onChange={() => handleToggleAutoSend(false)}
+                  disabled={isUpdatingAutoSend}
+                />
+                Off
+              </label>
+
+              {autoSendEnabled && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => openAutoSendBodyModal('edit')}
+                  disabled={isUpdatingAutoSend}
+                >
+                  Edit Email Body
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="filter-tabs">
           <button
             className={`filter-tab ${activeFilter === 'today' ? 'active' : ''}`}
@@ -392,6 +660,21 @@ const TasksDashboard: React.FC = () => {
         )}
 
         <div className="tasks-table-container">
+          <div className="bulk-approve-bar">
+            <div className="bulk-approve-meta">
+              Selected: <strong>{selectedTaskIds.size}</strong>
+            </div>
+            <button
+              type="button"
+              className="btn-primary bulk-approve-button"
+              disabled={selectedTaskIds.size === 0 || isBulkApproving}
+              onClick={handleBulkApproveClick}
+              title="Approve all selected tasks (one-click)"
+            >
+              {isBulkApproving ? 'Approving...' : 'Approve selected'}
+            </button>
+          </div>
+
           {tasks.length === 0 && !loading ? (
             <div className="empty-state">
               <p>No tasks found for the selected filter.</p>
@@ -400,11 +683,13 @@ const TasksDashboard: React.FC = () => {
             <table key={activeFilter} className="tasks-table">
               <thead>
                 <tr>
+                  <th className="select-col">Select</th>
                   <th>Project</th>
                   <th>Technician</th>
                   <th>Task</th>
                   <th>Field Dates</th>
                   <th>Status</th>
+                  <th>PM Review</th>
                   <th>Report Due Date</th>
                   <th>Actions</th>
                 </tr>
@@ -413,12 +698,35 @@ const TasksDashboard: React.FC = () => {
                 {tasks.map((task) => {
                   const badges = getTaskBadges(task);
                   const isReport = isReportTask(task.taskType);
-                  
+                  const canBulkApprove = task.status === 'READY_FOR_REVIEW';
+                  const rowTaskId = toPositiveTaskId(task.id);
+
                   return (
                     <tr
                       key={task.id}
-                      className="task-row"
+                      className={`task-row${isReport ? ' task-row-clickable' : ''}`}
+                      onClick={() => {
+                        if (isReport) navigateToReport(task);
+                      }}
+                      title={isReport ? 'Open report' : undefined}
                     >
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={rowTaskId != null && selectedTaskIds.has(rowTaskId)}
+                          disabled={!canBulkApprove || rowTaskId == null}
+                          onChange={(e) => {
+                            if (rowTaskId == null) return;
+                            const checked = e.target.checked;
+                            setSelectedTaskIds(prev => {
+                              const next = new Set(prev);
+                              if (checked) next.add(rowTaskId);
+                              else next.delete(rowTaskId);
+                              return next;
+                            });
+                          }}
+                        />
+                      </td>
                       <td>
                         <div className="project-cell">
                           <span className="project-number">{task.projectNumber}</span>
@@ -464,6 +772,11 @@ const TasksDashboard: React.FC = () => {
                           {getStatusLabel(task.status)}
                         </span>
                       </td>
+                      <td>
+                        <span className={`pm-review-badge ${getPmReviewClass(task.pm_review_status)}`}>
+                          {getPmReviewLabel(task.pm_review_status)}
+                        </span>
+                      </td>
                       <td>{formatDate(task.dueDate)}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         {getTaskActions(task)}
@@ -476,6 +789,140 @@ const TasksDashboard: React.FC = () => {
           )}
         </div>
       </div>
+
+      <RejectTaskModal
+        isOpen={rejectModalTask !== null}
+        contextLine={
+          rejectModalTask
+            ? `${rejectModalTask.projectNumber ?? '—'} · ${taskTypeLabel(rejectModalTask)}`
+            : undefined
+        }
+        onClose={() => setRejectModalTask(null)}
+        onSubmit={async (payload) => {
+          if (!rejectModalTask) return;
+          await tasksAPI.reject(rejectModalTask.id, payload);
+          loadData();
+        }}
+      />
+
+      {approveConfirm && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="approve-confirm-title"
+          onClick={() => {
+            if (!isBulkApproving && !approveModalBusy) setApproveConfirm(null);
+          }}
+        >
+          <div className="modal modal-confirm" onClick={(e) => e.stopPropagation()}>
+            <h2 id="approve-confirm-title" className="modal-title">
+              Confirm approval
+            </h2>
+            <p className="modal-confirm-body">
+              {approveConfirm.mode === 'single' ? (
+                <>
+                  This will mark the report as <strong>approved</strong>. The assigned technician will be notified.
+                  Continue?
+                </>
+              ) : (
+                <>
+                  You are about to approve <strong>{approveConfirm.count}</strong> report
+                  {approveConfirm.count === 1 ? '' : 's'} that are ready for review. Assigned technicians will be
+                  notified where applicable. Continue?
+                </>
+              )}
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setApproveConfirm(null)}
+                disabled={isBulkApproving || approveModalBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={isBulkApproving || approveModalBusy}
+                onClick={() => {
+                  if (approveConfirm.mode === 'single') {
+                    void runApproveSingle(approveConfirm.taskId);
+                  } else {
+                    void runBulkApprove();
+                  }
+                }}
+              >
+                {approveConfirm.mode === 'bulk' && isBulkApproving
+                  ? 'Approving...'
+                  : approveConfirm.mode === 'single' && approveModalBusy
+                    ? 'Approving...'
+                    : 'Approve'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {autoSendModalOpen && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            setAutoSendModalOpen(false);
+            if (autoSendModalMode === 'enable') {
+              // If they closed without saving during "enable", keep it OFF.
+              setAutoSendEnabled(false);
+            }
+          }}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2 className="modal-title">
+              {autoSendModalMode === 'enable'
+                ? 'Enable Auto-send & Email Body'
+                : 'Edit Auto-send Email Body'}
+            </h2>
+            <textarea
+              className="modal-textarea"
+              value={autoSendDraftBody}
+              onChange={(e) => setAutoSendDraftBody(e.target.value)}
+              rows={10}
+            />
+            <div className="modal-help">
+              {`Placeholders: {{companyName}}, {{clientName}}, {{projectNumber}}, {{date}}, {{reportCount}}`}
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setAutoSendModalOpen(false)}
+                disabled={isUpdatingAutoSend}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => applyAutoSendBodyAndToggle(true)}
+                disabled={isUpdatingAutoSend}
+              >
+                {autoSendModalMode === 'enable' ? 'Save & Enable' : 'Save'}
+              </button>
+              {autoSendModalMode === 'enable' && (
+                <button
+                  type="button"
+                  className="btn-danger"
+                  onClick={async () => applyAutoSendBodyAndToggle(false)}
+                  disabled={isUpdatingAutoSend}
+                  title="Save body but keep auto-send disabled"
+                >
+                  Save Body Only
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

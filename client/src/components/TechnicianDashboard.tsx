@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useAppDialog } from '../context/AppDialogContext';
 import { useTenant } from '../context/TenantContext';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
@@ -9,6 +10,7 @@ import './TechnicianDashboard.css';
 
 const TechnicianDashboard: React.FC = () => {
   const { user, logout } = useAuth();
+  const { showAlert, showConfirm } = useAppDialog();
   const { tenant } = useTenant();
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -87,7 +89,7 @@ const TechnicianDashboard: React.FC = () => {
       navigate(`/task/${task.id}/proctor`);
     } else {
       // Placeholder for other task types
-      alert('This task type is not yet implemented');
+      void showAlert('This task type is not available yet.', 'Not available');
     }
   };
 
@@ -98,7 +100,10 @@ const TechnicianDashboard: React.FC = () => {
       loadData();
     } catch (error: any) {
       console.error('Error marking field complete:', error);
-      alert(`Error: ${error.response?.data?.error || error.message || 'Failed to mark field work as complete'}`);
+      await showAlert(
+        error.response?.data?.error || error.message || 'Field work could not be marked complete. Please try again.',
+        'Error'
+      );
     }
   };
 
@@ -122,16 +127,18 @@ const TechnicianDashboard: React.FC = () => {
   };
 
   const handleClearAllNotifications = async () => {
-    if (!window.confirm('Clear all notifications? This will mark them all as read.')) {
-      return;
-    }
+    const clearOk = await showConfirm(
+      'Clear all notifications? This removes every notification from your list.',
+      'Clear notifications'
+    );
+    if (!clearOk) return;
     try {
-      await notificationsAPI.markAllAsRead();
+      await notificationsAPI.clearAll();
       setUnreadCount(0);
-      setNotifications(prev => prev.map(n => ({ ...n, isRead: 1 })));
+      setNotifications([]);
     } catch (error: any) {
       console.error('Error clearing notifications:', error);
-      alert('Failed to clear notifications. Please try again.');
+      await showAlert('Notifications could not be cleared. Please try again.', 'Error');
     }
   };
 
@@ -139,7 +146,7 @@ const TechnicianDashboard: React.FC = () => {
     const statusMap: { [key: string]: string } = {
       'ASSIGNED': 'Assigned',
       'IN_PROGRESS_TECH': 'In Progress',
-      'READY_FOR_REVIEW': 'Ready for Review',
+      'READY_FOR_REVIEW': 'Under review (PM / Admin)',
       'APPROVED': 'Approved',
       'REJECTED_NEEDS_FIX': 'Rejected - Needs Fix'
     };

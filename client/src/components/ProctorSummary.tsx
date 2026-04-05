@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { tasksAPI, Task } from '../api/tasks';
+import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { proctorAPI } from '../api/proctor';
 import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
+import RejectTaskModal from './RejectTaskModal';
 import { getCurrentApiBaseUrl, getApiPathPrefix } from '../api/api';
+import { useAppDialog } from '../context/AppDialogContext';
 import './ProctorSummary.css';
 
 const DEFAULT_LOGO = '/MAK logo_consulting.jpg';
@@ -50,7 +52,8 @@ interface ProctorSummaryData {
 const ProctorSummary: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, isAdmin } = useAuth();
+  const { user, isStaffReviewer } = useAuth();
+  const { showAlert, showConfirm } = useAppDialog();
   const [task, setTask] = useState<Task | null>(null);
   const [tenant, setTenant] = useState<TenantMe | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,7 +61,9 @@ const ProctorSummary: React.FC = () => {
   const [error, setError] = useState('');
   const [pdfSaveNotice, setPdfSaveNotice] = useState('');
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const lastSavedDataRef = useRef<string>('');
+  const latestSummaryDataRef = useRef<ProctorSummaryData | null>(null);
 
   const [summaryData, setSummaryData] = useState<ProctorSummaryData>({
     projectName: '',
@@ -84,6 +89,10 @@ const ProctorSummary: React.FC = () => {
     proctorPoints: [],
     zavPoints: []
   });
+
+  useEffect(() => {
+    latestSummaryDataRef.current = summaryData;
+  }, [summaryData]);
 
   // Round a value to nearest whole number
   const roundToWholeNumber = useCallback((value: string): string => {
@@ -143,23 +152,6 @@ const ProctorSummary: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Recalculate PI whenever LL or PL changes
-  useEffect(() => {
-    const calculatedPI = calculatePlasticityIndex(
-      summaryData.liquidLimitLL,
-      summaryData.plasticLimit
-    );
-    // Always update PI to the calculated value
-    // This ensures PI is always correct and never shows stale values
-    setSummaryData(prev => {
-      // Only update if the calculated value is different from current
-      if (prev.plasticityIndex !== calculatedPI) {
-        return { ...prev, plasticityIndex: calculatedPI };
-      }
-      return prev;
-    });
-  }, [summaryData.liquidLimitLL, summaryData.plasticLimit, calculatePlasticityIndex]);
-
   const loadData = async () => {
     try {
       setLoading(true);
@@ -209,12 +201,16 @@ const ProctorSummary: React.FC = () => {
           proctorPoints: savedData.proctorPoints || [],
           zavPoints: savedData.zavPoints || []
         };
+
+        if (!initialData.percentPassing200 && initialData.passing200SummaryPct) {
+          initialData.percentPassing200 = initialData.passing200SummaryPct;
+        }
         
-        // Always recalculate PI from LL and PL (never use saved PI value)
-        initialData.plasticityIndex = calculatePlasticityIndex(
-          initialData.liquidLimitLL,
-          initialData.plasticLimit
-        );
+        {
+          const autoPI = calculatePlasticityIndex(initialData.liquidLimitLL, initialData.plasticLimit);
+          const savedPI = savedData.plasticityIndex != null ? String(savedData.plasticityIndex).trim() : '';
+          initialData.plasticityIndex = autoPI !== '' ? autoPI : savedPI;
+        }
         
         console.log('Loaded Proctor data from DB - PI calculation:', {
           liquidLimitLL: initialData.liquidLimitLL,
@@ -325,12 +321,15 @@ const ProctorSummary: React.FC = () => {
           initialData.checkedBy = data.checkedBy ?? '';
         }
         
-        // Always recalculate PI from LL and PL (never use saved PI value)
-        // This ensures PI is always calculated with correct rounding rules
-        initialData.plasticityIndex = calculatePlasticityIndex(
-          initialData.liquidLimitLL,
-          initialData.plasticLimit
-        );
+        if (!initialData.percentPassing200 && initialData.passing200SummaryPct) {
+          initialData.percentPassing200 = initialData.passing200SummaryPct;
+        }
+
+        {
+          const autoPI = calculatePlasticityIndex(initialData.liquidLimitLL, initialData.plasticLimit);
+          const savedPI = data?.plasticityIndex != null ? String(data.plasticityIndex).trim() : '';
+          initialData.plasticityIndex = autoPI !== '' ? autoPI : savedPI;
+        }
         
         console.log('Loaded Proctor data - PI calculation:', {
           liquidLimitLL: initialData.liquidLimitLL,
@@ -362,15 +361,18 @@ const ProctorSummary: React.FC = () => {
   const handleFieldChange = (field: keyof ProctorSummaryData, value: string) => {
     setSummaryData(prev => {
       const updated = { ...prev, [field]: value };
-      
-      // Auto-calculate PI when LL or PL changes
+
+      if (field === 'plasticityIndex') {
+        return updated;
+      }
+
       if (field === 'liquidLimitLL' || field === 'plasticLimit') {
-        // Use the new value for the field being changed, and current value for the other
         const ll = field === 'liquidLimitLL' ? value : prev.liquidLimitLL;
         const pl = field === 'plasticLimit' ? value : prev.plasticLimit;
-        updated.plasticityIndex = calculatePlasticityIndex(ll, pl);
+        const autoPI = calculatePlasticityIndex(ll, pl);
+        updated.plasticityIndex = autoPI !== '' ? autoPI : prev.plasticityIndex;
       }
-      
+
       return updated;
     });
   };
@@ -447,11 +449,74 @@ const ProctorSummary: React.FC = () => {
       localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(reportData));
       
       setSaving(false);
-      alert('Proctor data saved successfully!');
+      await showAlert('Your Proctor data has been saved.', 'Saved');
     } catch (err: any) {
       console.error('Error saving Proctor data:', err);
       setError(err.response?.data?.error || 'Failed to save');
       setSaving(false);
+    }
+  };
+
+  const handleSendToAdmin = async () => {
+    if (!task || isStaffReviewer()) return;
+    const sendOk = await showConfirm(
+      'Send this Proctor report to the administrator for review? You will not be able to edit it until an administrator responds.',
+      'Submit for review'
+    );
+    if (!sendOk) return;
+    setSaving(true);
+    setError('');
+    try {
+      const sd = latestSummaryDataRef.current ?? summaryData;
+      const reportData = {
+        projectName: sd.projectName,
+        projectNumber: sd.projectNumber,
+        sampledBy: sd.sampledBy,
+        testMethod: sd.testMethod,
+        client: sd.client,
+        soilClassification: sd.soilClassification,
+        maximumDryDensityPcf: sd.maximumDryDensityPcf,
+        optimumMoisturePercent: sd.optimumMoisturePercent,
+        correctedDryDensityPcf: sd.correctedDryDensityPcf || '',
+        correctedMoistureContentPercent: sd.correctedMoistureContentPercent || '',
+        liquidLimitLL: roundToWholeNumber(sd.liquidLimitLL),
+        plasticLimit: roundToWholeNumber(sd.plasticLimit),
+        plasticityIndex: sd.plasticityIndex,
+        sampleDate: sd.sampleDate,
+        calculatedBy: sd.calculatedBy,
+        reviewedBy: sd.reviewedBy,
+        checkedBy: sd.checkedBy,
+        percentPassing200: sd.passing200SummaryPct || sd.percentPassing200 || '',
+        passing200SummaryPct: sd.passing200SummaryPct || '',
+        specificGravityG: sd.specificGravityG,
+        proctorPoints: sd.proctorPoints || [],
+        zavPoints: sd.zavPoints || []
+      };
+      await proctorAPI.saveByTask(task.id, reportData);
+      await tasksAPI.updateStatus(task.id, 'READY_FOR_REVIEW');
+      localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(reportData));
+      const updated = await tasksAPI.get(task.id);
+      setTask(updated);
+      navigate('/technician/dashboard');
+    } catch (err: any) {
+      console.error('Error sending Proctor report to admin:', err);
+      const msg = err.response?.data?.error || err.message || 'Failed to send report for review.';
+      setError(msg);
+      await showAlert(msg, 'Submission failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!task) return;
+    const ok = await showConfirm('Approve this Proctor report?', 'Approve report');
+    if (!ok) return;
+    try {
+      await tasksAPI.approve(task.id);
+      await loadData();
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'The report could not be approved.', 'Approval failed');
     }
   };
 
@@ -578,7 +643,10 @@ const ProctorSummary: React.FC = () => {
           setPdfSaveNotice(result.savedToConfiguredPath ? '' : 'PDF downloaded. To save automatically to your workflow folder, run the app locally (npm run dev) and set Workflow path in Settings.');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
-          alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
+          await showAlert(
+            `The PDF was generated, but saving to the server folder failed.\n\nDetails: ${result.saveError}\n\nThe PDF will still download to your device.`,
+            'PDF generated'
+          );
           setPdfSaveNotice('');
         } else if (result.saved && result.savedToConfiguredPath === false && !result.saveError) {
           setPdfSaveNotice('PDF downloaded. To save automatically to your workflow folder, run the app locally (npm run dev) and set Workflow path in Settings.');
@@ -689,7 +757,10 @@ const ProctorSummary: React.FC = () => {
       console.error('PDF generation error:', err);
       const errorMessage = err.message || err.response?.data?.error || 'Failed to generate PDF';
       setError(errorMessage);
-      alert(`Error generating PDF: ${errorMessage}\n\nCheck the browser console and server logs for details.`);
+      await showAlert(
+        `The PDF could not be generated.\n\nDetails: ${errorMessage}\n\nIf this continues, check the browser console and server logs, or contact support.`,
+        'PDF error'
+      );
       setSaving(false);
     }
   };
@@ -702,7 +773,9 @@ const ProctorSummary: React.FC = () => {
     return <div className="proctor-summary-container">Task not found.</div>;
   }
 
-  const isEditable = task.status !== 'APPROVED' && (isAdmin() || (task.assignedTechnicianId === user?.id && task.status !== 'READY_FOR_REVIEW'));
+  const isEditable =
+    task.status !== 'APPROVED' &&
+    (isStaffReviewer() || (task.assignedTechnicianId === user?.id && task.status !== 'READY_FOR_REVIEW'));
 
   // Calculate OMC and Max Density values for chart (using corrected values if available, otherwise original)
   const omcValue = summaryData.correctedMoistureContentPercent 
@@ -721,6 +794,7 @@ const ProctorSummary: React.FC = () => {
     : null;
 
   return (
+    <>
     <div className="proctor-summary-container">
       {/* Single header row: logo left, buttons + address right, all inline */}
       <div className="proctor-summary-header summary-page-header">
@@ -798,6 +872,30 @@ const ProctorSummary: React.FC = () => {
                   className="btn-primary"
                 >
                   Create PDF
+                </button>
+                {!isStaffReviewer() && (
+                  <button
+                    type="button"
+                    onClick={handleSendToAdmin}
+                    className="btn-primary"
+                    disabled={saving || task.status === 'READY_FOR_REVIEW'}
+                  >
+                    {saving ? 'Sending…' : 'Send to admin for review'}
+                  </button>
+                )}
+              </>
+            )}
+            {task.status === 'READY_FOR_REVIEW' && isStaffReviewer() && (
+              <>
+                <button type="button" onClick={handleApprove} className="btn-success">
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRejectModalOpen(true)}
+                  className="btn-danger"
+                >
+                  Reject
                 </button>
               </>
             )}
@@ -911,13 +1009,26 @@ const ProctorSummary: React.FC = () => {
               />
             </div>
             <div className="summary-field-row">
+              <label>Plastic Limit (PL):</label>
+              <input
+                type="text"
+                value={summaryData.plasticLimit}
+                onChange={(e) => handleFieldChange('plasticLimit', e.target.value)}
+                onBlur={(e) => handleBlur(e, 'plasticLimit')}
+                onKeyDown={(e) => handleKeyDown(e, 'plasticLimit')}
+                readOnly={!isEditable}
+                className={!isEditable ? 'readonly' : ''}
+              />
+            </div>
+            <div className="summary-field-row">
               <label>Plasticity Index (PI):</label>
               <input
                 type="text"
                 value={summaryData.plasticityIndex}
-                readOnly
-                className="calculated"
-                title="Auto-calculated: Rounded(LL) - Rounded(PL)"
+                onChange={(e) => handleFieldChange('plasticityIndex', e.target.value)}
+                readOnly={!isEditable}
+                className={!isEditable ? 'readonly calculated' : 'calculated'}
+                title="Auto-calculated from LL and PL when both are entered; you may enter a value directly if results are already known."
               />
             </div>
           </div>
@@ -967,10 +1078,14 @@ const ProctorSummary: React.FC = () => {
               <label>% Passing #200 Sieve:</label>
               <input
                 type="text"
-                value={summaryData.percentPassing200}
-                onChange={(e) => handleFieldChange('percentPassing200', e.target.value)}
+                value={summaryData.passing200SummaryPct || summaryData.percentPassing200}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSummaryData((prev) => ({ ...prev, percentPassing200: v, passing200SummaryPct: v }));
+                }}
                 readOnly={!isEditable}
                 className={!isEditable ? 'readonly' : ''}
+                title="Enter manually or use values carried forward from the Proctor test worksheet when available."
               />
             </div>
             <div className="summary-field-row">
@@ -992,6 +1107,20 @@ const ProctorSummary: React.FC = () => {
         </div>
       </div>
     </div>
+    <RejectTaskModal
+      isOpen={rejectModalOpen}
+      contextLine={
+        task ? `${task.projectNumber ?? '—'} · ${taskTypeLabel(task)}` : undefined
+      }
+      onClose={() => setRejectModalOpen(false)}
+      onSubmit={async (payload) => {
+        if (!task) return;
+        await tasksAPI.reject(task.id, payload);
+        setRejectModalOpen(false);
+        await loadData();
+      }}
+    />
+    </>
   );
 };
 

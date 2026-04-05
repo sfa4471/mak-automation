@@ -163,13 +163,12 @@ const CreateTask: React.FC = () => {
           </div>
 
           <div className="form-group">
-            <label htmlFor="dueDate">Report Due Date *</label>
+            <label htmlFor="dueDate">Report Due Date</label>
             <input
               type="date"
               id="dueDate"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              required
             />
             <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>
               Deadline for report/PDF delivery
@@ -202,7 +201,6 @@ const CreateTask: React.FC = () => {
               id="scheduledStartDate"
               value={scheduledStartDate}
               onChange={(e) => setScheduledStartDate(e.target.value)}
-              min={new Date().toISOString().split('T')[0]}
             />
             <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>
               When the task is scheduled to begin (optional)

@@ -1,12 +1,20 @@
 import api from './api';
 
+/** Single moisture range (min–max). */
+export interface MoistureRange {
+  min?: string;
+  max?: string;
+}
+
 export interface SoilSpecRow {
-  // Density measurement properties for Soil Specs
+  // Density measurement properties for Soil Specs (legacy: single value)
   densityPct?: string;
-  moistureRange?: {
-    min?: string;
-    max?: string;
-  };
+  /** Multiple density values per structure type. Normalize from densityPct when only legacy present. */
+  densityPcts?: string[];
+  // Moisture range (legacy: single range)
+  moistureRange?: MoistureRange;
+  /** Multiple moisture ranges per structure type. Normalize from moistureRange when only legacy present. */
+  moistureRanges?: MoistureRange[];
 }
 
 export interface ConcreteSpecRow {
@@ -20,6 +28,30 @@ export interface ConcreteSpecRow {
 
 export interface SoilSpecs {
   [structureType: string]: SoilSpecRow;
+}
+
+/** Normalize a soil spec row to array form (densityPcts, moistureRanges). Legacy single values become one-element arrays. */
+export function normalizeSoilSpecRow(spec: SoilSpecRow | undefined): SoilSpecRow {
+  if (!spec) return { densityPcts: [''], moistureRanges: [{ min: '', max: '' }] };
+  const densityPcts =
+    spec.densityPcts && spec.densityPcts.length > 0
+      ? [...spec.densityPcts]
+      : spec.densityPct !== undefined && spec.densityPct !== null && String(spec.densityPct).trim() !== ''
+        ? [String(spec.densityPct)]
+        : [''];
+  const moistureRanges =
+    spec.moistureRanges && spec.moistureRanges.length > 0
+      ? spec.moistureRanges.map(r => ({ ...r }))
+      : spec.moistureRange && (spec.moistureRange.min !== undefined || spec.moistureRange.max !== undefined)
+        ? [{ min: spec.moistureRange.min ?? '', max: spec.moistureRange.max ?? '' }]
+        : [{ min: '', max: '' }];
+  return {
+    ...spec,
+    densityPcts,
+    moistureRanges,
+    ...(spec.densityPct !== undefined && { densityPct: spec.densityPct }),
+    ...(spec.moistureRange && { moistureRange: spec.moistureRange })
+  };
 }
 
 export interface ConcreteSpecs {
@@ -72,6 +104,7 @@ export interface Project {
   id: number;
   projectNumber: string;
   projectName: string;
+  clientName?: string;
   customerEmails?: string[];
   ccEmails?: string[];
   bccEmails?: string[];
@@ -96,6 +129,7 @@ export interface CreateProjectRequest {
   /** Optional; server auto-generates when not provided (e.g. from tenant counter). */
   projectNumber?: string;
   projectName: string;
+  clientName?: string;
   customerEmails?: string[];
   ccEmails?: string[];
   bccEmails?: string[];

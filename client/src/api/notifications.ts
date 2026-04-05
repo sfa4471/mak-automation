@@ -8,6 +8,7 @@ export interface Notification {
   isRead: number; // 0 or 1
   relatedWorkPackageId?: number;
   relatedProjectId?: number;
+  relatedTaskId?: number;
   workPackageName?: string;
   workPackageType?: string;
   projectNumber?: string;
@@ -32,6 +33,11 @@ export const notificationsAPI = {
 
   markAllAsRead: async (): Promise<void> => {
     await api.put('/notifications/mark-all-read');
+  },
+
+  /** Delete all notifications for the current user (clear all) */
+  clearAll: async (): Promise<void> => {
+    await api.delete('/notifications/clear-all');
   },
 };
 

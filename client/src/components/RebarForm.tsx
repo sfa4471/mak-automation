@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { rebarAPI, RebarReport } from '../api/rebar';
-import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
+import { tasksAPI, Task, TaskHistoryEntry, taskTypeLabel } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
 import { getApiPathPrefix } from '../api/api';
+import { useAppDialog } from '../context/AppDialogContext';
 import ProjectHomeButton from './ProjectHomeButton';
+import RejectTaskModal from './RejectTaskModal';
 import './RebarForm.css';
 
 const RebarForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, isAdmin } = useAuth();
+  const { user, isStaffReviewer } = useAuth();
+  const { showAlert, showConfirm } = useAppDialog();
   const [task, setTask] = useState<Task | null>(null);
   const [formData, setFormData] = useState<RebarReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,9 +24,15 @@ const RebarForm: React.FC = () => {
   const [error, setError] = useState('');
   const [technicians, setTechnicians] = useState<User[]>([]);
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const lastSavedDataRef = useRef<string>('');
+  const latestFormDataRef = useRef<RebarReport | null>(null);
+
+  useEffect(() => {
+    if (formData) latestFormDataRef.current = formData;
+  }, [formData]);
 
   useEffect(() => {
     loadData();
@@ -118,7 +127,7 @@ const RebarForm: React.FC = () => {
         task.id,
         data,
         updateStatus ? status : undefined,
-        isAdmin() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
+        isStaffReviewer() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
       );
       setSaveStatus('saved');
       setLastSaved(new Date());
@@ -159,8 +168,9 @@ const RebarForm: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
-      const res = await rebarAPI.saveByTask(task.id, formData);
-      lastSavedDataRef.current = JSON.stringify(formData);
+      const data = latestFormDataRef.current ?? formData;
+      const res = await rebarAPI.saveByTask(task.id, data);
+      lastSavedDataRef.current = JSON.stringify(data);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -180,16 +190,22 @@ const RebarForm: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
-      const res = await rebarAPI.saveByTask(task.id, formData, 'IN_PROGRESS_TECH');
+      // Prevent a queued auto-save from writing stale data after this explicit save.
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      const data = latestFormDataRef.current ?? formData;
+      const res = await rebarAPI.saveByTask(task.id, data, 'IN_PROGRESS_TECH');
       await tasksAPI.updateStatus(task.id, 'IN_PROGRESS_TECH');
-      lastSavedDataRef.current = JSON.stringify(formData);
+      lastSavedDataRef.current = JSON.stringify(data);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
       if (res && typeof (res as { id?: number }).id === 'number') {
         setFormData(prev => prev ? { ...prev, id: (res as { id: number }).id } : null);
       }
-      alert('Update saved! Status set to "In Progress"');
+      await showAlert('Your update has been saved. Task status is now In Progress.', 'Saved');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save update');
       setSaveStatus('idle');
@@ -200,62 +216,48 @@ const RebarForm: React.FC = () => {
 
   const handleSendToAdmin = async () => {
     if (!formData || !task) return;
-    if (!window.confirm('Send this report to admin for review? You will not be able to edit it until admin responds.')) {
-      return;
+    const ok = await showConfirm(
+      'Send this report to the administrator for review? You will not be able to edit it until an administrator responds.',
+      'Submit for review'
+    );
+    if (!ok) return;
+    setSaving(true);
+    setSaveStatus('saving');
+    try {
+      // Prevent a queued auto-save from writing stale data after submission.
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      const data = latestFormDataRef.current ?? formData;
+      const res = await rebarAPI.saveByTask(task.id, data);
+      await tasksAPI.updateStatus(task.id, 'READY_FOR_REVIEW');
+      if (res && typeof (res as { id?: number }).id === 'number' && data) {
+        setFormData(prev => prev ? { ...prev, id: (res as { id: number }).id } : null);
+      }
+      lastSavedDataRef.current = JSON.stringify(data);
+      setSaveStatus('saved');
+      setLastSaved(new Date());
+      setTimeout(() => setSaveStatus('idle'), 2000);
+      navigate('/technician/dashboard');
+    } catch (err: any) {
+      console.error('Error sending report to admin:', err);
+      setError(err.response?.data?.error || 'Failed to send report for review.');
+      setSaveStatus('idle');
+      await showAlert(err.response?.data?.error || 'The report could not be submitted for review. Please try again.', 'Submission failed');
+    } finally {
+      setSaving(false);
     }
-    await saveData(formData, true, 'READY_FOR_REVIEW');
-    navigate('/technician/dashboard');
   };
 
   const handleApprove = async () => {
-    if (!window.confirm('Approve this report?')) return;
+    const approveOk = await showConfirm('Approve this report?', 'Approve report');
+    if (!approveOk) return;
     try {
       await tasksAPI.approve(task!.id);
       await loadData();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to approve report');
-    }
-  };
-
-  // Helper function to convert MM-DD-YYYY to YYYY-MM-DD
-  const convertToISO = (dateStr: string): string | null => {
-    if (!dateStr) return null;
-    // Try to parse MM-DD-YYYY format
-    const parts = dateStr.split(/[-/]/);
-    if (parts.length === 3) {
-      const month = parts[0].padStart(2, '0');
-      const day = parts[1].padStart(2, '0');
-      const year = parts[2];
-      // Validate it's a valid date
-      const date = new Date(`${year}-${month}-${day}`);
-      if (!isNaN(date.getTime())) {
-        return `${year}-${month}-${day}`;
-      }
-    }
-    // If already in YYYY-MM-DD format, return as-is
-    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      return dateStr;
-    }
-    return null;
-  };
-
-  const handleReject = async () => {
-    const remarks = prompt('Enter rejection remarks (required):');
-    if (!remarks || remarks.trim() === '') return;
-    const resubmissionDateInput = prompt('Enter resubmission due date (MM-DD-YYYY, required):');
-    if (!resubmissionDateInput || resubmissionDateInput.trim() === '') return;
-    
-    const resubmissionDate = convertToISO(resubmissionDateInput.trim());
-    if (!resubmissionDate) {
-      alert('Invalid date format. Please use MM-DD-YYYY format.');
-      return;
-    }
-    
-    try {
-      await tasksAPI.reject(task!.id, { rejectionRemarks: remarks, resubmissionDueDate: resubmissionDate });
-      await loadData();
-    } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to reject report');
+      await showAlert(err.response?.data?.error || 'The report could not be approved.', 'Approval failed');
     }
   };
 
@@ -263,7 +265,7 @@ const RebarForm: React.FC = () => {
     if (!task) return;
     if (!formData) {
       setError('No form data. Please wait for the form to load.');
-      alert('No form data. Please wait for the form to load, then try again.');
+      await showAlert('The form is still loading. Please wait a moment, then try again.', 'Not ready');
       return;
     }
     setLastSavedPath(null); // Clear previous saved path
@@ -271,7 +273,7 @@ const RebarForm: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) {
-        alert('Authentication required. Please log in again.');
+        await showAlert('Your session has expired or you are not signed in. Please log in again.', 'Authentication required');
         return;
       }
       // Always save first so the PDF server has a row to read (server looks up rebar_reports by taskId)
@@ -282,7 +284,10 @@ const RebarForm: React.FC = () => {
       } catch (saveErr: any) {
         const saveMsg = saveErr.response?.data?.error || saveErr.message || 'Save failed';
         setError(saveMsg);
-        alert(`Cannot generate PDF until the form is saved.\n\nPlease save the form first, then try again.\n\nError: ${saveMsg}`);
+        await showAlert(
+          `The report must be saved before a PDF can be generated.\n\nPlease save the form, then try again.\n\nDetails: ${saveMsg}`,
+          'Save required'
+        );
         return;
       }
 
@@ -326,10 +331,13 @@ const RebarForm: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          alert('PDF created.');
+          await showAlert('The PDF was created successfully.', 'PDF ready');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
-          alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
+          await showAlert(
+            `The PDF was generated, but saving the file to the server folder failed.\n\nDetails: ${result.saveError}\n\nThe PDF will still download to your device.`,
+            'PDF generated'
+          );
         }
 
         if (result.pdfBase64) {
@@ -369,7 +377,7 @@ const RebarForm: React.FC = () => {
       console.error('PDF generation error:', err);
       const errorMessage = err.message || 'Unknown error';
       setError(errorMessage);
-      alert('Failed to download PDF: ' + errorMessage);
+      await showAlert(`The PDF could not be downloaded.\n\nDetails: ${errorMessage}`, 'PDF error');
     }
   };
 
@@ -381,7 +389,9 @@ const RebarForm: React.FC = () => {
     return <div className="rebar-form-container">Report not found.</div>;
   }
 
-  const isEditable = task.status !== 'APPROVED' && (isAdmin() || (task.assignedTechnicianId === user?.id && task.status !== 'READY_FOR_REVIEW'));
+  const isEditable =
+    task.status !== 'APPROVED' &&
+    (isStaffReviewer() || (task.assignedTechnicianId === user?.id && task.status !== 'READY_FOR_REVIEW'));
 
   return (
     <div className="rebar-form-container">
@@ -393,12 +403,16 @@ const RebarForm: React.FC = () => {
             onSave={handleSimpleSave}
             saving={saving}
           />
-          <button type="button" onClick={() => navigate(isAdmin() ? '/dashboard' : '/technician/dashboard')} className="btn-secondary">
+          <button
+            type="button"
+            onClick={() => navigate(user?.role === 'TECHNICIAN' ? '/technician/dashboard' : '/dashboard')}
+            className="btn-secondary"
+          >
             Back
           </button>
           {isEditable && (
             <>
-              {isAdmin() ? (
+              {isStaffReviewer() ? (
                 <button type="button" onClick={handleManualSave} className="btn-primary" disabled={saving}>
                   {saving ? 'Saving...' : 'Save'}
                 </button>
@@ -414,12 +428,12 @@ const RebarForm: React.FC = () => {
               )}
             </>
           )}
-          {task.status === 'READY_FOR_REVIEW' && isAdmin() && (
+          {task.status === 'READY_FOR_REVIEW' && isStaffReviewer() && (
             <>
               <button type="button" onClick={handleApprove} className="btn-success">
                 Approve
               </button>
-              <button type="button" onClick={handleReject} className="btn-danger">
+              <button type="button" onClick={() => setRejectModalOpen(true)} className="btn-danger">
                 Reject
               </button>
             </>
@@ -529,53 +543,32 @@ const RebarForm: React.FC = () => {
           />
         </div>
 
-        {/* Method of Test (static) */}
+        {/* Method of Test (editable) */}
         <div className="form-field-inline">
-          <label>METHOD OF TEST:</label>
-          <span className="static-text">Applicable ACI Recommendations and ASTM Standards</span>
+          <label htmlFor="methodOfTest">METHOD OF TEST:</label>
+          <input
+            type="text"
+            id="methodOfTest"
+            value={formData.methodOfTest || ''}
+            onChange={(e) => handleFieldChange('methodOfTest', e.target.value)}
+            readOnly={!isEditable}
+            className={!isEditable ? 'readonly' : ''}
+            placeholder="e.g., Applicable ACI Recommendations and ASTM Standards"
+          />
         </div>
 
-        {/* Results / Remarks section */}
-        <div className="form-section">
-          <label className="section-label">Results / Remarks:</label>
-          
-          <div className="prefilled-paragraph">
-            On the above-mentioned date, a representative of MAK Lonestar Consulting observed reinforcing steel placed at the following location:
-          </div>
-
-          <div className="form-row">
-            <div className="form-field full-width">
-              <label htmlFor="locationDetail">Location Detail:</label>
-              <textarea
-                id="locationDetail"
-                value={formData.locationDetail || ''}
-                onChange={(e) => handleFieldChange('locationDetail', e.target.value)}
-                readOnly={!isEditable}
-                className={!isEditable ? 'readonly' : ''}
-                rows={3}
-                placeholder="• [Enter location detail here]"
-              />
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-field full-width">
-              <label htmlFor="wireMeshSpec">Wire Mesh Spec:</label>
-              <input
-                type="text"
-                id="wireMeshSpec"
-                value={formData.wireMeshSpec || ''}
-                onChange={(e) => handleFieldChange('wireMeshSpec', e.target.value)}
-                readOnly={!isEditable}
-                className={!isEditable ? 'readonly' : ''}
-                placeholder="e.g., 6x6-10/10"
-              />
-            </div>
-          </div>
-
-          <div className="prefilled-paragraph">
-            The wire mesh was checked for <strong>{formData.wireMeshSpec || '[wire mesh spec]'}</strong> wire mesh spec and was placed as per the drawings and specifications. No discrepancies noted at the time of inspection.
-          </div>
+        {/* Results / Remarks — single text box for client-entered text */}
+        <div className="form-section results-remarks-section">
+          <label className="section-label" htmlFor="resultRemarks">Results / Remarks:</label>
+          <textarea
+            id="resultRemarks"
+            value={formData.resultRemarks || ''}
+            onChange={(e) => handleFieldChange('resultRemarks', e.target.value)}
+            readOnly={!isEditable}
+            className={!isEditable ? 'readonly' : ''}
+            rows={4}
+            placeholder="Enter results and remarks here..."
+          />
         </div>
 
         {/* Drawings */}
@@ -658,6 +651,17 @@ const RebarForm: React.FC = () => {
           </div>
         </div>
       )}
+
+      <RejectTaskModal
+        isOpen={rejectModalOpen}
+        contextLine={task ? `${task.projectNumber ?? '—'} · ${taskTypeLabel(task)}` : undefined}
+        onClose={() => setRejectModalOpen(false)}
+        onSubmit={async (payload) => {
+          if (!task) return;
+          await tasksAPI.reject(task.id, payload);
+          await loadData();
+        }}
+      />
     </div>
   );
 };

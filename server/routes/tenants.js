@@ -45,6 +45,7 @@ function toTenantResponse(tenant) {
     licenseHolderName: tenant.licenseHolderName ?? tenant.license_holder_name ?? null,
     licenseHolderTitle: tenant.licenseHolderTitle ?? tenant.license_holder_title ?? null,
     logoPath: tenant.logoPath ?? tenant.logo_path ?? null,
+    signatureUrl: tenant.signatureUrl ?? tenant.signature_url ?? null,
     apiBaseUrl: apiBaseUrl && String(apiBaseUrl).trim() ? String(apiBaseUrl).trim() : null
   };
 }
@@ -88,7 +89,8 @@ router.put('/me', authenticate, requireAdmin, [
   body('peFirmReg').optional().trim(),
   body('licenseHolderName').optional().trim(),
   body('licenseHolderTitle').optional().trim(),
-  body('name').optional().trim()
+  body('name').optional().trim(),
+  body('signatureUrl').optional().trim()
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -110,7 +112,7 @@ router.put('/me', authenticate, requireAdmin, [
     const allowed = [
       'companyAddress', 'companyCity', 'companyState', 'companyZip',
       'companyPhone', 'companyEmail', 'companyWebsite', 'companyContactName',
-      'peFirmReg', 'licenseHolderName', 'licenseHolderTitle', 'name'
+      'peFirmReg', 'licenseHolderName', 'licenseHolderTitle', 'name', 'signatureUrl'
     ];
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
@@ -123,7 +125,7 @@ router.put('/me', authenticate, requireAdmin, [
       return res.json(toTenantResponse(tenant));
     }
 
-    const optionalKeys = ['companyContactName', 'peFirmReg', 'licenseHolderName', 'licenseHolderTitle'];
+    const optionalKeys = ['companyContactName', 'peFirmReg', 'licenseHolderName', 'licenseHolderTitle', 'signatureUrl'];
     try {
       await db.update('tenants', updates, { id: tenantId });
     } catch (err) {
@@ -211,6 +213,60 @@ router.post('/logo', authenticate, requireAdmin, async (req, res, next) => {
   } catch (err) {
     console.error('POST /api/tenants/logo error:', err);
     res.status(500).json({ error: 'Failed to save logo' });
+  }
+});
+
+// Signature upload: save to public/tenants/{tenantId}/signature.{ext}, set tenants.signature_url
+const signatureStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const tenantId = req.tenantIdForSignature;
+    if (!tenantId) return cb(new Error('Tenant not resolved'));
+    const dir = path.join(uploadDir, String(tenantId));
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = (path.extname(file.originalname) || '').toLowerCase() || '.png';
+    const safe = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext) ? ext : '.png';
+    cb(null, 'signature' + safe);
+  }
+});
+const uploadSignature = multer({
+  storage: signatureStorage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(jpeg|png|gif|webp)$/i.test(file.mimetype);
+    cb(null, !!ok);
+  }
+});
+
+router.post('/signature', authenticate, requireAdmin, async (req, res, next) => {
+  const tenantId = await getTenantIdForUser(req);
+  if (tenantId == null) {
+    return res.status(404).json({ error: 'No tenant associated with this user' });
+  }
+  req.tenantIdForSignature = tenantId;
+  next();
+}, uploadSignature.single('signature'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No signature file uploaded' });
+    }
+    const tenantId = await getTenantIdForUser(req);
+    const relativePath = `tenants/${tenantId}/signature${path.extname(req.file.filename)}`;
+    await db.update('tenants', {
+      signatureUrl: relativePath,
+      updatedAt: new Date().toISOString()
+    }, { id: tenantId });
+
+    res.json({
+      success: true,
+      signatureUrl: relativePath,
+      url: `/tenants/${tenantId}/signature${path.extname(req.file.filename)}`
+    });
+  } catch (err) {
+    console.error('POST /api/tenants/signature error:', err);
+    res.status(500).json({ error: 'Failed to save signature' });
   }
 });
 

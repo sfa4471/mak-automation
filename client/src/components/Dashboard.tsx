@@ -1,16 +1,19 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useAppDialog } from '../context/AppDialogContext';
 import { useTenant } from '../context/TenantContext';
 import { getCurrentApiBaseUrl } from '../api/api';
 import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
+import RejectTaskModal from './RejectTaskModal';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin, isStaffReviewer, isTechnician, logout } = useAuth();
+  const { showAlert, showConfirm } = useAppDialog();
   const { tenant } = useTenant();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -21,15 +24,15 @@ const Dashboard: React.FC = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [rejectModalTask, setRejectModalTask] = useState<Task | null>(null);
 
   useEffect(() => {
-    // Redirect technicians to their dashboard
-    if (user && !isAdmin()) {
+    if (user && isTechnician()) {
       navigate('/technician/dashboard');
       return;
     }
     loadData();
-  }, [user, isAdmin, navigate]);
+  }, [user, isTechnician, isStaffReviewer, navigate]);
 
   const loadData = async () => {
     try {
@@ -58,8 +61,7 @@ const Dashboard: React.FC = () => {
       });
       setWorkPackages(wpMap);
 
-      // Load notifications for admin
-      if (isAdmin()) {
+      if (isStaffReviewer()) {
         const notifs = await notificationsAPI.list();
         setNotifications(notifs);
         const count = await notificationsAPI.getUnreadCount();
@@ -79,7 +81,7 @@ const Dashboard: React.FC = () => {
       'Assigned': 'Assigned',
       'In Progress': 'In Progress',
       'IN_PROGRESS_TECH': 'In Progress',
-      'READY_FOR_REVIEW': 'Ready for Review',
+      'READY_FOR_REVIEW': 'Under review (PM / Admin)',
       'Submitted': 'Submitted',
       'APPROVED': 'Approved',
       'Approved': 'Approved',
@@ -132,7 +134,44 @@ const Dashboard: React.FC = () => {
     if (wp.type === 'WP1') {
       navigate(`/workpackage/${wp.id}/wp1`);
     } else {
-      alert('This work package is not yet implemented');
+      void showAlert('This work package type is not available yet.', 'Not available');
+    }
+  };
+
+  const isReportTask = (task: Task) =>
+    task.taskType === 'COMPRESSIVE_STRENGTH' ||
+    task.taskType === 'DENSITY_MEASUREMENT' ||
+    task.taskType === 'REBAR' ||
+    task.taskType === 'PROCTOR';
+
+  const handleApprove = async (taskId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const ok = await showConfirm('Approve this task?', 'Approve task');
+    if (!ok) return;
+    try {
+      await tasksAPI.approve(taskId);
+      loadData();
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'The task could not be approved.', 'Approval failed');
+    }
+  };
+
+  const handleRejectClick = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRejectModalTask(task);
+  };
+
+  const handleDeleteTask = async (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (task.status === 'APPROVED') return;
+    const label = taskTypeLabel(task);
+    const delOk = await showConfirm(`Delete ${label}? This cannot be undone.`, 'Delete task');
+    if (!delOk) return;
+    try {
+      await tasksAPI.delete(task.id);
+      loadData();
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'The task could not be deleted.', 'Delete failed');
     }
   };
 
@@ -146,21 +185,23 @@ const Dashboard: React.FC = () => {
     } else if (task.taskType === 'PROCTOR') {
       navigate(`/task/${task.id}/proctor`);
     } else {
-      alert('This task type is not yet implemented');
+      void showAlert('This task type is not available yet.', 'Not available');
     }
   };
 
   const handleClearAllNotifications = async () => {
-    if (!window.confirm('Clear all notifications? This will mark them all as read.')) {
-      return;
-    }
+    const clearOk = await showConfirm(
+      'Clear all notifications? This removes every notification from your list.',
+      'Clear notifications'
+    );
+    if (!clearOk) return;
     try {
-      await notificationsAPI.markAllAsRead();
+      await notificationsAPI.clearAll();
       setUnreadCount(0);
-      setNotifications(prev => prev.map(n => ({ ...n, isRead: 1 })));
+      setNotifications([]);
     } catch (error: any) {
       console.error('Error clearing notifications:', error);
-      alert('Failed to clear notifications. Please try again.');
+      await showAlert('Notifications could not be cleared. Please try again.', 'Error');
     }
   };
 
@@ -204,7 +245,7 @@ const Dashboard: React.FC = () => {
           <h1>{tenant?.name ?? user?.tenantName ?? 'Dashboard'}</h1>
         </div>
         <div className="header-actions">
-          {isAdmin() && (
+          {isStaffReviewer() && (
             <div className="notifications-container" style={{ position: 'relative' }}>
               <button
                 className="notifications-button"
@@ -286,9 +327,15 @@ const Dashboard: React.FC = () => {
                             if (!notif.isRead) {
                               await notificationsAPI.markAsRead(notif.id);
                               setUnreadCount(prev => Math.max(0, prev - 1));
-                              setNotifications(prev => prev.map(n => 
+                              setNotifications(prev => prev.map(n =>
                                 n.id === notif.id ? { ...n, isRead: 1 } : n
                               ));
+                            }
+                            const taskId = (notif as { relatedTaskId?: number }).relatedTaskId;
+                            if (taskId) {
+                              navigate('/admin/tasks');
+                              setShowNotifications(false);
+                              return;
                             }
                             if (notif.relatedWorkPackageId) {
                               navigate(`/workpackage/${notif.relatedWorkPackageId}/wp1`);
@@ -336,40 +383,48 @@ const Dashboard: React.FC = () => {
       </header>
 
       <div className="dashboard-content">
-        {isAdmin() && (
+        {isStaffReviewer() && (
           <div className="dashboard-actions">
-            <button
-              onClick={() => navigate('/admin/create-project')}
-              className="primary-button"
-            >
-              Create New Project
-            </button>
-            <button
-              onClick={() => navigate('/admin/technicians')}
-              className="secondary-button"
-            >
-              Manage Technicians
-            </button>
+            {isAdmin() && (
+              <>
+                <button
+                  onClick={() => navigate('/admin/create-project')}
+                  className="primary-button"
+                >
+                  Create New Project
+                </button>
+                <button
+                  onClick={() => navigate('/admin/technicians')}
+                  className="secondary-button"
+                >
+                  Manage Technicians
+                </button>
+              </>
+            )}
             <button
               onClick={() => navigate('/admin/tasks')}
               className="secondary-button"
             >
               Tasks Dashboard
             </button>
-            <button
-              onClick={() => navigate('/admin/settings')}
-              className="secondary-button"
-            >
-              ⚙️ Settings
-            </button>
+            {isAdmin() && (
+              <button
+                onClick={() => navigate('/admin/settings')}
+                className="secondary-button"
+              >
+                ⚙️ Settings
+              </button>
+            )}
           </div>
         )}
 
         <div className="projects-list">
-          <h2>{isAdmin() ? 'All Projects' : 'My Assigned Projects'}</h2>
+          <h2>{isStaffReviewer() ? 'All Projects' : 'My Assigned Projects'}</h2>
           {projects.length === 0 ? (
             <div className="empty-state">
-              {isAdmin() ? 'No projects yet. Create your first project!' : 'No assigned projects.'}
+              {isStaffReviewer()
+                ? 'No projects yet.' + (isAdmin() ? ' Create your first project!' : '')
+                : 'No assigned projects.'}
             </div>
           ) : (
             projects.map((project) => {
@@ -392,7 +447,7 @@ const Dashboard: React.FC = () => {
                     </div>
                     <div className="project-header-actions">
                       <span className="accordion-toggle">{isExpanded ? '▼' : '▶'}</span>
-                      {isAdmin() && (
+                      {isStaffReviewer() && (
                         <>
                           <button
                             onClick={(e) => {
@@ -404,15 +459,17 @@ const Dashboard: React.FC = () => {
                           >
                             Project Details
                           </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/admin/create-task/${project.id}`);
-                            }}
-                            className="create-task-button-primary"
-                          >
-                            Create Task
-                          </button>
+                          {isAdmin() && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/admin/create-task/${project.id}`);
+                              }}
+                              className="create-task-button-primary"
+                            >
+                              Create Task
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
@@ -439,23 +496,56 @@ const Dashboard: React.FC = () => {
                                   <span className="task-technician">Assigned to: {task.assignedTechnicianName}</span>
                                 )}
                               </div>
-                              {isAdmin() && (
-                                <button
-                                  className="edit-task-button-secondary"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigate(`/task/${task.id}/edit`, { state: { returnPath: '/dashboard' } });
-                                  }}
-                                >
-                                  Edit Task
-                                </button>
+                              {isStaffReviewer() && (
+                                <>
+                                  {isAdmin() && (
+                                    <>
+                                      <button
+                                        className="edit-task-button-secondary"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          navigate(`/task/${task.id}/edit`, { state: { returnPath: '/dashboard' } });
+                                        }}
+                                      >
+                                        Edit Task
+                                      </button>
+                                      {task.status !== 'APPROVED' && (
+                                        <button
+                                          className="edit-task-button-secondary"
+                                          style={{ background: '#6c757d', color: 'white', borderColor: '#6c757d' }}
+                                          onClick={(e) => handleDeleteTask(task, e)}
+                                        >
+                                          Delete
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                  {task.status === 'READY_FOR_REVIEW' && isReportTask(task) && (
+                                    <>
+                                      <button
+                                        className="edit-task-button-secondary"
+                                        style={{ background: '#28a745', color: 'white', borderColor: '#28a745' }}
+                                        onClick={(e) => handleApprove(task.id, e)}
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        className="edit-task-button-secondary"
+                                        style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
+                                        onClick={(e) => handleRejectClick(task, e)}
+                                      >
+                                        Reject
+                                      </button>
+                                    </>
+                                  )}
+                                </>
                               )}
                             </div>
                           ))}
                         </div>
                       ) : (
                         <div className="no-tasks-message">
-                          No tasks yet. {isAdmin() && 'Click "Create Task" to add one.'}
+                          No tasks yet. {isAdmin() ? 'Click "Create Task" to add one.' : ''}
                         </div>
                       )}
                     </div>
@@ -467,6 +557,20 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
+      <RejectTaskModal
+        isOpen={rejectModalTask !== null}
+        contextLine={
+          rejectModalTask
+            ? `${rejectModalTask.projectNumber ?? '—'} · ${taskTypeLabel(rejectModalTask)}`
+            : undefined
+        }
+        onClose={() => setRejectModalTask(null)}
+        onSubmit={async (payload) => {
+          if (!rejectModalTask) return;
+          await tasksAPI.reject(rejectModalTask.id, payload);
+          loadData();
+        }}
+      />
     </div>
   );
 };

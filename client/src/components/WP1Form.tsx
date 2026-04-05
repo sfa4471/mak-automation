@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
 import { ConcreteSpecs, projectsAPI } from '../api/projects';
 import { getApiPathPrefix } from '../api/api';
+import { useAppDialog } from '../context/AppDialogContext';
 import ProjectHomeButton from './ProjectHomeButton';
 import './WP1Form.css';
 
@@ -14,7 +15,8 @@ const WP1Form: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, isAdmin } = useAuth();
+  const { user, isStaffReviewer } = useAuth();
+  const { showAlert, showConfirm } = useAppDialog();
   const isTaskRoute = location.pathname.startsWith('/task/');
   const [workPackage, setWorkPackage] = useState<any>(null);
   const [task, setTask] = useState<Task | null>(null);
@@ -33,6 +35,35 @@ const WP1Form: React.FC = () => {
   const [concreteSpecs, setConcreteSpecs] = useState<ConcreteSpecs>({});
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const lastSavedDataRef = useRef<string>('');
+  const latestFormDataRef = useRef<WP1Data | null>(null);
+
+  useEffect(() => {
+    latestFormDataRef.current = formData;
+  }, [formData]);
+
+  /** Match debounced auto-save rounding so "Send to admin" persists the same values technicians see after save. */
+  const roundWp1DataForSave = useCallback((data: WP1Data): WP1Data => {
+    const roundedData = { ...data };
+    if (roundedData.cylinders && roundedData.cylinders.length > 0) {
+      roundedData.cylinders = roundedData.cylinders.map((cyl) => {
+        const roundedCyl = { ...cyl };
+        if (roundedCyl.totalLoad !== undefined && roundedCyl.totalLoad !== null) {
+          roundedCyl.totalLoad = Math.round(roundedCyl.totalLoad);
+        }
+        if (roundedCyl.totalLoad !== undefined && roundedCyl.totalLoad !== null && roundedCyl.crossSectionalArea) {
+          const load = roundedCyl.totalLoad;
+          const area = parseFloat(roundedCyl.crossSectionalArea);
+          if (load > 0 && area > 0) {
+            roundedCyl.compressiveStrength = Math.round(load / area);
+          }
+        } else if (roundedCyl.compressiveStrength !== undefined && roundedCyl.compressiveStrength !== null) {
+          roundedCyl.compressiveStrength = Math.round(roundedCyl.compressiveStrength);
+        }
+        return roundedCyl;
+      });
+    }
+    return roundedData;
+  }, []);
 
   // Helper function to calculate Date Tested from Placement Date + Age Days
   const calculateDateTested = React.useCallback((placementDateStr: string | undefined, ageDaysStr: string | undefined): string => {
@@ -424,7 +455,7 @@ const WP1Form: React.FC = () => {
       if (isTaskRoute) {
         // If technician changed, find the technician ID
         let saveData = formData;
-        if (formData.technician && isAdmin()) {
+        if (formData.technician && isStaffReviewer()) {
           const selectedTech = technicians.find(t => (t.name || t.email) === formData.technician);
           if (selectedTech) {
             saveData = { ...formData, assignedTechnicianId: selectedTech.id };
@@ -439,7 +470,7 @@ const WP1Form: React.FC = () => {
     } catch (err: any) {
       throw new Error(err.response?.data?.error || 'Failed to save');
     }
-  }, [formData, isTaskRoute, isAdmin, technicians, id]);
+  }, [formData, isTaskRoute, isStaffReviewer, technicians, id]);
 
   const debouncedSave = useCallback((data: WP1Data) => {
     if (saveTimeoutRef.current) {
@@ -449,33 +480,12 @@ const WP1Form: React.FC = () => {
     setSaveStatus('saving');
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        // Round totalLoad and compressiveStrength to whole numbers before saving
-        const roundedData = { ...data };
-        if (roundedData.cylinders && roundedData.cylinders.length > 0) {
-          roundedData.cylinders = roundedData.cylinders.map(cyl => {
-            const roundedCyl = { ...cyl };
-            // Round totalLoad to whole number
-            if (roundedCyl.totalLoad !== undefined && roundedCyl.totalLoad !== null) {
-              roundedCyl.totalLoad = Math.round(roundedCyl.totalLoad);
-            }
-            // Round compressiveStrength to whole number (or recalculate from rounded load)
-            if (roundedCyl.totalLoad !== undefined && roundedCyl.totalLoad !== null && roundedCyl.crossSectionalArea) {
-              const load = roundedCyl.totalLoad;
-              const area = parseFloat(roundedCyl.crossSectionalArea);
-              if (load > 0 && area > 0) {
-                roundedCyl.compressiveStrength = Math.round(load / area);
-              }
-            } else if (roundedCyl.compressiveStrength !== undefined && roundedCyl.compressiveStrength !== null) {
-              roundedCyl.compressiveStrength = Math.round(roundedCyl.compressiveStrength);
-            }
-            return roundedCyl;
-          });
-        }
-        
+        const roundedData = roundWp1DataForSave(data);
+
         if (isTaskRoute) {
           // If technician changed, find the technician ID
           let saveData = roundedData;
-          if (roundedData.technician && isAdmin()) {
+          if (roundedData.technician && isStaffReviewer()) {
             const selectedTech = technicians.find(t => (t.name || t.email) === roundedData.technician);
             if (selectedTech) {
               saveData = { ...roundedData, assignedTechnicianId: selectedTech.id };
@@ -495,7 +505,7 @@ const WP1Form: React.FC = () => {
         setSaveStatus('idle');
       }
     }, 800);
-  }, [id, isTaskRoute, isAdmin, technicians]);
+  }, [id, isTaskRoute, isStaffReviewer, technicians, roundWp1DataForSave]);
 
   // Handle structure selection - auto-populate specs from Concrete Specs
   const handleStructureChange = (structureType: string) => {
@@ -586,7 +596,7 @@ const WP1Form: React.FC = () => {
     setFormData(newData);
     
     // If technician is changed and we're on a task route, we need to find the technician ID
-    if (field === 'technician' && isTaskRoute && isAdmin() && value) {
+    if (field === 'technician' && isTaskRoute && isStaffReviewer() && value) {
       const selectedTech = technicians.find(t => (t.name || t.email) === value);
       if (selectedTech) {
         // Include the technician ID in the save payload
@@ -692,30 +702,32 @@ const WP1Form: React.FC = () => {
     debouncedSave(newData);
   };
 
-  const handleDeleteSpecimenSet = (setIndex: number) => {
+  const handleDeleteSpecimenSet = async (setIndex: number) => {
     if (setIndex === 0) {
-      alert('Cannot delete the first specimen set');
+      await showAlert('The first specimen set cannot be deleted.', 'Cannot delete');
       return;
     }
-    
-    if (window.confirm(`Are you sure you want to delete Specimen Set ${setIndex + 1}?`)) {
-      const startIndex = setIndex * 5;
-      const newCylinders = [
-        ...formData.cylinders.slice(0, startIndex),
-        ...formData.cylinders.slice(startIndex + 5)
-      ];
-      
-      // Renumber cylinders after deletion
-      newCylinders.forEach((cyl, idx) => {
-        const expectedSetIndex = Math.floor(idx / 5);
-        const expectedCylinderInSet = (idx % 5) + 1;
-        cyl.cylinderNumber = expectedSetIndex * 5 + expectedCylinderInSet;
-      });
-      
-      const newData = { ...formData, cylinders: newCylinders };
-      setFormData(newData);
-      debouncedSave(newData);
-    }
+
+    const delOk = await showConfirm(
+      `Delete Specimen Set ${setIndex + 1}? This cannot be undone.`,
+      'Delete specimen set'
+    );
+    if (!delOk) return;
+
+    const startIndex = setIndex * 5;
+    const newCylinders = [
+      ...formData.cylinders.slice(0, startIndex),
+      ...formData.cylinders.slice(startIndex + 5),
+    ];
+
+    newCylinders.forEach((cyl, idx) => {
+      const expectedSetIndex = Math.floor(idx / 5);
+      cyl.cylinderNumber = expectedSetIndex * 5 + (idx % 5) + 1;
+    });
+
+    const newData = { ...formData, cylinders: newCylinders };
+    setFormData(newData);
+    debouncedSave(newData);
   };
 
   const handleSpecimenSetInfoChange = (setIndex: number, field: 'specimenNo' | 'specimenQty' | 'specimenType', value: string) => {
@@ -749,21 +761,21 @@ const WP1Form: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
+      const rounded = roundWp1DataForSave(latestFormDataRef.current ?? formData);
       if (isTaskRoute) {
-        // If technician changed, find the technician ID
-        let saveData = formData;
-        if (formData.technician && isAdmin()) {
-          const selectedTech = technicians.find(t => (t.name || t.email) === formData.technician);
+        let saveData = rounded;
+        if (rounded.technician && isStaffReviewer()) {
+          const selectedTech = technicians.find(t => (t.name || t.email) === rounded.technician);
           if (selectedTech) {
-            saveData = { ...formData, assignedTechnicianId: selectedTech.id };
+            saveData = { ...rounded, assignedTechnicianId: selectedTech.id };
           }
         }
         await wp1API.saveByTask(parseInt(id!), saveData);
       } else {
-        await workPackagesAPI.saveWP1(parseInt(id!), formData);
+        await workPackagesAPI.saveWP1(parseInt(id!), rounded);
       }
       // Update last saved snapshot
-      lastSavedDataRef.current = JSON.stringify(formData);
+      lastSavedDataRef.current = JSON.stringify(rounded);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -779,19 +791,24 @@ const WP1Form: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
+      // Prevent a queued auto-save from writing stale data after this explicit save.
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      const rounded = roundWp1DataForSave(latestFormDataRef.current ?? formData);
       if (isTaskRoute) {
-        // For tasks, use wp1API
-        await wp1API.saveByTask(parseInt(id!), { ...formData, updateStatus: 'IN_PROGRESS_TECH' });
+        await wp1API.saveByTask(parseInt(id!), { ...rounded, updateStatus: 'IN_PROGRESS_TECH' });
         await tasksAPI.updateStatus(parseInt(id!), 'IN_PROGRESS_TECH');
       } else {
-        // For workpackages (backward compatibility)
-        await workPackagesAPI.saveWP1(parseInt(id!), formData, 'IN_PROGRESS_TECH');
+        await workPackagesAPI.saveWP1(parseInt(id!), rounded, 'IN_PROGRESS_TECH');
         await workPackagesAPI.updateStatus(parseInt(id!), 'IN_PROGRESS_TECH');
       }
+      lastSavedDataRef.current = JSON.stringify(rounded);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
-      alert('Update saved! Status set to "In Progress"');
+      await showAlert('Your update has been saved. Status is now In Progress.', 'Saved');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save update');
     } finally {
@@ -801,25 +818,32 @@ const WP1Form: React.FC = () => {
 
   const handleSendUpdateToAdmin = async () => {
     // Technician: Save and set status to READY_FOR_REVIEW
-    if (!window.confirm('Send this work package to Admin for review? You will not be able to edit it after sending.')) {
-      return;
-    }
+    const sendOk = await showConfirm(
+      'Send this work package to the administrator for review? You will not be able to edit it after submitting.',
+      'Submit for review'
+    );
+    if (!sendOk) return;
     setSaving(true);
     setSaveStatus('saving');
     try {
+      // Prevent a queued auto-save from writing stale data after submission.
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      const rounded = roundWp1DataForSave(latestFormDataRef.current ?? formData);
       if (isTaskRoute) {
-        // For tasks, use wp1API
-        await wp1API.saveByTask(parseInt(id!), { ...formData, updateStatus: 'READY_FOR_REVIEW' });
+        await wp1API.saveByTask(parseInt(id!), { ...rounded, updateStatus: 'READY_FOR_REVIEW' });
         await tasksAPI.updateStatus(parseInt(id!), 'READY_FOR_REVIEW');
       } else {
-        // For workpackages (backward compatibility)
-        await workPackagesAPI.saveWP1(parseInt(id!), formData, 'READY_FOR_REVIEW');
+        await workPackagesAPI.saveWP1(parseInt(id!), rounded, 'READY_FOR_REVIEW');
         await workPackagesAPI.updateStatus(parseInt(id!), 'READY_FOR_REVIEW');
       }
+      lastSavedDataRef.current = JSON.stringify(rounded);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
-      alert('Work package sent to Admin for review!');
+      await showAlert('Your work package has been sent for administrator review.', 'Submitted');
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to send update');
@@ -831,7 +855,7 @@ const WP1Form: React.FC = () => {
   const _handleSubmit = async () => {
     try {
       await workPackagesAPI.updateStatus(parseInt(id!), 'Submitted');
-      alert('Work package submitted successfully!');
+      await showAlert('The work package was submitted successfully.', 'Submitted');
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to submit');
@@ -846,7 +870,7 @@ const WP1Form: React.FC = () => {
   const handleGeneratePDF = async () => {
     if (!formData) {
       setError('No form data. Please wait for the form to load.');
-      alert('No form data. Please wait for the form to load, then try again.');
+      await showAlert('The form is still loading. Please wait a moment, then try again.', 'Not ready');
       return;
     }
     setLastSavedPath(null); // Clear previous saved path
@@ -854,7 +878,7 @@ const WP1Form: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) {
-        alert('Authentication required. Please log in again.');
+        await showAlert('Your session has expired or you are not signed in. Please log in again.', 'Authentication required');
         return;
       }
       // Ensure report is persisted so the PDF server can find it (server looks up wp1_data by taskId/workPackageId)
@@ -862,7 +886,7 @@ const WP1Form: React.FC = () => {
         try {
           if (isTaskRoute) {
             let saveData = formData;
-            if (formData.technician && isAdmin()) {
+            if (formData.technician && isStaffReviewer()) {
               const selectedTech = technicians.find(t => (t.name || t.email) === formData.technician);
               if (selectedTech) saveData = { ...formData, assignedTechnicianId: selectedTech.id };
             }
@@ -877,7 +901,10 @@ const WP1Form: React.FC = () => {
         } catch (saveErr: any) {
           const saveMsg = saveErr.response?.data?.error || saveErr.message || 'Save failed';
           setError(saveMsg);
-          alert(`Cannot generate PDF until the form is saved.\n\nPlease save the form first, then try Generate PDF again.\n\nError: ${saveMsg}`);
+          await showAlert(
+            `The form must be saved before a PDF can be generated.\n\nPlease save, then use Generate PDF again.\n\nDetails: ${saveMsg}`,
+            'Save required'
+          );
           return;
         }
       }
@@ -912,10 +939,13 @@ const WP1Form: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          alert('PDF created.');
+          await showAlert('The PDF was created successfully.', 'PDF ready');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
-          alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
+          await showAlert(
+            `The PDF was generated, but saving the file to the server folder failed.\n\nDetails: ${result.saveError}\n\nThe PDF will still download to your device.`,
+            'PDF generated'
+          );
         }
 
         if (result.pdfBase64) {
@@ -957,7 +987,10 @@ const WP1Form: React.FC = () => {
       console.error('PDF generation error:', err);
       const errorMessage = err.message || err.response?.data?.error || 'Failed to generate PDF';
       setError(errorMessage);
-      alert(`Error generating PDF: ${errorMessage}\n\nCheck the browser console and server logs for details.`);
+      await showAlert(
+        `The PDF could not be generated.\n\nDetails: ${errorMessage}\n\nIf this continues, check the browser console and server logs, or contact support.`,
+        'PDF error'
+      );
     }
   };
 

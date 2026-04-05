@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { densityAPI, DensityReport, TestRow, ProctorRow } from '../api/density';
-import { tasksAPI, Task, TaskHistoryEntry, ProctorTask } from '../api/tasks';
+import { tasksAPI, Task, TaskHistoryEntry, ProctorTask, taskTypeLabel } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
-import { SoilSpecRow } from '../api/projects';
+import { SoilSpecRow, normalizeSoilSpecRow } from '../api/projects';
 import { proctorAPI } from '../api/proctor';
+import { getApiPathPrefix } from '../api/api';
+import { useAppDialog } from '../context/AppDialogContext';
 import ProjectHomeButton from './ProjectHomeButton';
+import RejectTaskModal from './RejectTaskModal';
 import './DensityReportForm.css';
 
 // Note: We no longer use fallback structure types - only show structure types
@@ -32,7 +35,8 @@ const formatStructureName = (structureName: string): string => {
 const DensityReportForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, isAdmin } = useAuth();
+  const { user, isStaffReviewer } = useAuth();
+  const { showAlert, showConfirm } = useAppDialog();
   const [task, setTask] = useState<Task | null>(null);
   const [formData, setFormData] = useState<DensityReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,6 +47,7 @@ const DensityReportForm: React.FC = () => {
   const [technicians, setTechnicians] = useState<User[]>([]);
   const [moistSpecRange, setMoistSpecRange] = useState<string>('');
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null);
   const [proctorTasks, setProctorTasks] = useState<ProctorTask[]>([]);
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -50,6 +55,10 @@ const DensityReportForm: React.FC = () => {
   const proctorCacheRef = useRef<{ [key: string]: any }>({}); // Cache proctor fetches by "projectId:proctorNo"
   const hasAutoPopulatedRef = useRef<boolean>(false); // Track if we've already auto-populated on load
   const latestFormDataRef = useRef<DensityReport | null>(null); // Track latest formData for immediate saves
+
+  useEffect(() => {
+    if (formData) latestFormDataRef.current = formData;
+  }, [formData]);
 
   useEffect(() => {
     loadData();
@@ -336,13 +345,15 @@ const DensityReportForm: React.FC = () => {
     if (!dryDensity || !proctorNo || !proctors || proctors.length === 0) return '';
     
     const dry = parseFloat(dryDensity);
-    const proctorNum = parseInt(proctorNo);
+    const proctorNum = parseInt(String(proctorNo).trim(), 10);
     
     // Validate inputs
-    if (isNaN(dry) || isNaN(proctorNum) || proctorNum < 1 || proctorNum > 6) return '';
+    if (isNaN(dry) || isNaN(proctorNum) || proctorNum < 1) return '';
     
-    // Lookup the proctor by Proctor No (array is 0-indexed, so Proctor No 6 = index 5)
-    const proctor = proctors[proctorNum - 1];
+    // Prefer row whose stored Proctor No matches (supports manual / reordered summary rows)
+    const proctor =
+      proctors.find((p) => String(p.proctorNo) === String(proctorNum)) ||
+      (proctorNum <= 6 ? proctors[proctorNum - 1] : undefined);
     if (!proctor || !proctor.maxDensity || proctor.maxDensity.trim() === '') return '';
     
     const maxDensity = parseFloat(proctor.maxDensity);
@@ -562,68 +573,117 @@ const DensityReportForm: React.FC = () => {
     debouncedSave(updatedData);
   };
 
+  /**
+   * Number of spec columns: max of (project template for structure) and (saved report arrays).
+   * Relying only on the project caused admin/review views to show a single column when
+   * projectSoilSpecs was missing, stale, or key-mismatched — hiding multi-spec data already saved on the report.
+   */
+  const getSpecColumnCount = (): number => {
+    if (!formData) return 1;
+    let fromProject = 1;
+    if (
+      formData.projectSoilSpecs &&
+      typeof formData.projectSoilSpecs === 'object' &&
+      !Array.isArray(formData.projectSoilSpecs)
+    ) {
+      const structureType = formData.structureType || formData.structure;
+      if (structureType) {
+        let spec = formData.projectSoilSpecs[structureType] as SoilSpecRow | undefined;
+        if (!spec) {
+          const lower = structureType.trim().toLowerCase();
+          for (const key of Object.keys(formData.projectSoilSpecs)) {
+            if (key.trim().toLowerCase() === lower) {
+              spec = formData.projectSoilSpecs[key] as SoilSpecRow;
+              break;
+            }
+          }
+        }
+        const normalized = normalizeSoilSpecRow(spec);
+        const d = (normalized.densityPcts || []).length;
+        const m = (normalized.moistureRanges || []).length;
+        fromProject = Math.max(1, d, m);
+      }
+    }
+    const savedD = formData.densSpecPercents?.length ?? 0;
+    const savedM = formData.moistSpecRanges?.length ?? 0;
+    const rawD = Array.isArray(formData.densSpecs) ? formData.densSpecs.length : 0;
+    const rawM = Array.isArray(formData.moistSpecs) ? formData.moistSpecs.length : 0;
+    return Math.max(fromProject, savedD, savedM, rawD, rawM, 1);
+  };
+
+  const updateSpecDensity = (index: number, value: string) => {
+    if (!formData) return;
+    const arr = [...(formData.densSpecPercents || [])];
+    while (arr.length <= index) arr.push('');
+    arr[index] = value;
+    const updatedData = {
+      ...formData,
+      densSpecPercents: arr,
+      densSpecPercent: index === 0 ? value : formData.densSpecPercent,
+      specDensityPct: index === 0 ? value : formData.specDensityPct
+    };
+    setFormData(updatedData);
+    latestFormDataRef.current = updatedData;
+    debouncedSave(updatedData);
+  };
+
+  const updateSpecMoisture = (index: number, field: 'min' | 'max', value: string) => {
+    if (!formData) return;
+    const arr = [...(formData.moistSpecRanges || [])];
+    while (arr.length <= index) arr.push({ min: '', max: '' });
+    arr[index] = { ...(arr[index] || { min: '', max: '' }), [field]: value };
+    const updatedData = {
+      ...formData,
+      moistSpecRanges: arr,
+      moistSpecMin: index === 0 ? String(arr[0].min ?? '') : formData.moistSpecMin,
+      moistSpecMax: index === 0 ? String(arr[0].max ?? '') : formData.moistSpecMax
+    };
+    setFormData(updatedData);
+    if (index === 0) setMoistSpecRange(value ? `${arr[0].min} to ${arr[0].max}`.replace(' to ', ' to ').trim() : '');
+    latestFormDataRef.current = updatedData;
+    debouncedSave(updatedData);
+  };
+
   // Handle structure selection - auto-fill specs from project soil specs (for density reports)
   const handleStructureChange = (structureType: string) => {
     if (!formData) return;
     
     let updatedData = { ...formData, structureType, structure: structureType };
+    let densSpecPercents: string[] = [];
+    let moistSpecRanges: Array<{ min?: string; max?: string }> = [];
     
-    // Auto-fill specs from project soil specs if available
     if (formData.projectSoilSpecs && typeof formData.projectSoilSpecs === 'object' && !Array.isArray(formData.projectSoilSpecs)) {
-      const soilSpecs = formData.projectSoilSpecs;
-      
-      // Try direct lookup first
-      let selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType] as SoilSpecRow | undefined;
-      
-      // If direct lookup fails, try case-insensitive and trimmed lookup
+      let selectedSpec: SoilSpecRow | undefined = formData.projectSoilSpecs[structureType] as SoilSpecRow | undefined;
       if (!selectedSpec) {
         const normalizedStructureType = structureType.trim().toLowerCase();
-        for (const key in soilSpecs) {
+        for (const key in formData.projectSoilSpecs) {
           if (key.trim().toLowerCase() === normalizedStructureType) {
-            selectedSpec = soilSpecs[key] as SoilSpecRow;
+            selectedSpec = formData.projectSoilSpecs[key] as SoilSpecRow;
             break;
           }
         }
       }
       
-      // Auto-fill specs if available
       if (selectedSpec && typeof selectedSpec === 'object') {
-        // Handle both camelCase (densityPct) and snake_case (density_pct) formats
-        const densityPct = (selectedSpec as any).densityPct || (selectedSpec as any).density_pct;
-        if (densityPct !== undefined && densityPct !== null && densityPct !== '') {
-          updatedData = { ...updatedData, densSpecPercent: String(densityPct), specDensityPct: String(densityPct) };
-        }
-        
-        // Handle both camelCase (moistureRange) and snake_case (moisture_range) formats
-        const moistureRange = (selectedSpec as any).moistureRange || (selectedSpec as any).moisture_range;
-        if (moistureRange && typeof moistureRange === 'object') {
-          const min = moistureRange.min || '';
-          const max = moistureRange.max || '';
-          updatedData = { ...updatedData, moistSpecMin: min, moistSpecMax: max };
-          
-          // Update moisture range display
-          if (min && max) {
-            setMoistSpecRange(`${min} to ${max}`);
-          } else if (min || max) {
-            setMoistSpecRange(min || max);
-          } else {
-            setMoistSpecRange('');
-          }
-        } else {
-          // Clear moisture range if not in spec
-          updatedData = { ...updatedData, moistSpecMin: '', moistSpecMax: '' };
-          setMoistSpecRange('');
-        }
-      } else {
-        // Clear specs if structure has no specs
-        updatedData = { ...updatedData, densSpecPercent: '', specDensityPct: '', moistSpecMin: '', moistSpecMax: '' };
-        setMoistSpecRange('');
+        const normalized = normalizeSoilSpecRow(selectedSpec);
+        densSpecPercents = [...(normalized.densityPcts || [''])];
+        moistSpecRanges = (normalized.moistureRanges || [{ min: '', max: '' }]).map(r => ({ ...r }));
+        if (densSpecPercents.length === 0) densSpecPercents = [''];
+        if (moistSpecRanges.length === 0) moistSpecRanges = [{ min: '', max: '' }];
       }
-    } else {
-      // No project soil specs available
-      updatedData = { ...updatedData, densSpecPercent: '', specDensityPct: '', moistSpecMin: '', moistSpecMax: '' };
-      setMoistSpecRange('');
     }
+    
+    updatedData = {
+      ...updatedData,
+      densSpecPercents,
+      moistSpecRanges,
+      densSpecPercent: densSpecPercents[0] ?? '',
+      specDensityPct: densSpecPercents[0] ?? '',
+      moistSpecMin: String(moistSpecRanges[0]?.min ?? ''),
+      moistSpecMax: String(moistSpecRanges[0]?.max ?? '')
+    };
+    setMoistSpecRange(moistSpecRanges[0]?.min != null && moistSpecRanges[0]?.max != null
+      ? `${moistSpecRanges[0].min} to ${moistSpecRanges[0].max}` : '');
     
     setFormData(updatedData);
     debouncedSave(updatedData);
@@ -674,6 +734,14 @@ const DensityReportForm: React.FC = () => {
     return currentData !== lastSavedDataRef.current;
   }, [formData, task, saveStatus]);
 
+  const buildDensitySavePayload = useCallback((data: DensityReport) => ({
+    ...data,
+    clientName: data.clientName || '',
+    datePerformed: data.datePerformed || '',
+    structure: data.structure || data.structureType || '',
+    structureType: data.structureType || data.structure || ''
+  }), []);
+
   const debouncedSave = useCallback((data: DensityReport) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -708,14 +776,7 @@ const DensityReportForm: React.FC = () => {
       setSaving(true);
       setSaveStatus('saving');
       
-      // Ensure header fields are included in save payload
-      const savePayload = {
-        ...data,
-        clientName: data.clientName || '',
-        datePerformed: data.datePerformed || '',
-        structure: data.structure || data.structureType || '',
-        structureType: data.structureType || data.structure || ''
-      };
+      const savePayload = buildDensitySavePayload(data);
       
       // Debug: Log save payload to verify header fields are included
       console.log('Saving density report with header fields:', {
@@ -729,7 +790,7 @@ const DensityReportForm: React.FC = () => {
         task.id,
         savePayload,
         updateStatus ? status : undefined,
-        isAdmin() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
+        isStaffReviewer() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
       );
       
       // Update formData with saved response to ensure we have the latest data
@@ -757,7 +818,19 @@ const DensityReportForm: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
-      await densityAPI.saveByTask(task.id, formData);
+      const data = latestFormDataRef.current ?? formData;
+      const savePayload = buildDensitySavePayload(data);
+      const saved = await densityAPI.saveByTask(
+        task.id,
+        savePayload,
+        undefined,
+        isStaffReviewer() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
+      );
+      if (saved) {
+        setFormData(saved);
+        latestFormDataRef.current = saved;
+      }
+      lastSavedDataRef.current = JSON.stringify(savePayload);
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -775,12 +848,29 @@ const DensityReportForm: React.FC = () => {
     setSaving(true);
     setSaveStatus('saving');
     try {
-      await densityAPI.saveByTask(task.id, formData, 'IN_PROGRESS_TECH');
+      // Prevent a queued auto-save from writing stale data after this explicit save.
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      const data = latestFormDataRef.current ?? formData;
+      const savePayload = buildDensitySavePayload(data);
+      const saved = await densityAPI.saveByTask(
+        task.id,
+        savePayload,
+        'IN_PROGRESS_TECH',
+        isStaffReviewer() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
+      );
+      if (saved) {
+        setFormData(saved);
+        latestFormDataRef.current = saved;
+      }
+      lastSavedDataRef.current = JSON.stringify(savePayload);
       await tasksAPI.updateStatus(task.id, 'IN_PROGRESS_TECH');
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
-      alert('Update saved! Status set to "In Progress"');
+      await showAlert('Your update has been saved. Task status is now In Progress.', 'Saved');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save update');
       setSaveStatus('idle');
@@ -791,62 +881,55 @@ const DensityReportForm: React.FC = () => {
 
   const handleSendToAdmin = async () => {
     if (!formData || !task) return;
-    if (!window.confirm('Send this report to admin for review? You will not be able to edit it until admin responds.')) {
-      return;
+    const ok = await showConfirm(
+      'Send this report to the administrator for review? You will not be able to edit it until an administrator responds.',
+      'Submit for review'
+    );
+    if (!ok) return;
+    setSaving(true);
+    setSaveStatus('saving');
+    try {
+      // Prevent a queued auto-save from writing stale data after submission.
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      const data = latestFormDataRef.current ?? formData;
+      const savePayload = buildDensitySavePayload(data);
+      const saved = await densityAPI.saveByTask(
+        task.id,
+        savePayload,
+        undefined,
+        isStaffReviewer() && data.techName ? technicians.find(t => (t.name || t.email) === data.techName)?.id : undefined
+      );
+      await tasksAPI.updateStatus(task.id, 'READY_FOR_REVIEW');
+      if (saved) {
+        setFormData(saved);
+        latestFormDataRef.current = saved;
+      }
+      lastSavedDataRef.current = JSON.stringify(savePayload);
+      setSaveStatus('saved');
+      setLastSaved(new Date());
+      setTimeout(() => setSaveStatus('idle'), 2000);
+      navigate('/technician/dashboard');
+    } catch (err: any) {
+      console.error('Error sending report to admin:', err);
+      setError(err.response?.data?.error || 'Failed to send report for review.');
+      setSaveStatus('idle');
+      await showAlert(err.response?.data?.error || 'The report could not be submitted for review. Please try again.', 'Submission failed');
+    } finally {
+      setSaving(false);
     }
-    await saveData(formData, true, 'READY_FOR_REVIEW');
-    navigate('/technician/dashboard');
   };
 
   const handleApprove = async () => {
-    if (!window.confirm('Approve this report?')) return;
+    const approveOk = await showConfirm('Approve this report?', 'Approve report');
+    if (!approveOk) return;
     try {
       await tasksAPI.approve(task!.id);
       await loadData();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to approve report');
-    }
-  };
-
-  // Helper function to convert MM-DD-YYYY to YYYY-MM-DD
-  const convertToISO = (dateStr: string): string | null => {
-    if (!dateStr) return null;
-    // Try to parse MM-DD-YYYY format
-    const parts = dateStr.split(/[-/]/);
-    if (parts.length === 3) {
-      const month = parts[0].padStart(2, '0');
-      const day = parts[1].padStart(2, '0');
-      const year = parts[2];
-      // Validate it's a valid date
-      const date = new Date(`${year}-${month}-${day}`);
-      if (!isNaN(date.getTime())) {
-        return `${year}-${month}-${day}`;
-      }
-    }
-    // If already in YYYY-MM-DD format, return as-is
-    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      return dateStr;
-    }
-    return null;
-  };
-
-  const handleReject = async () => {
-    const remarks = prompt('Enter rejection remarks (required):');
-    if (!remarks || remarks.trim() === '') return;
-    const resubmissionDateInput = prompt('Enter resubmission due date (MM-DD-YYYY, required):');
-    if (!resubmissionDateInput || resubmissionDateInput.trim() === '') return;
-    
-    const resubmissionDate = convertToISO(resubmissionDateInput.trim());
-    if (!resubmissionDate) {
-      alert('Invalid date format. Please use MM-DD-YYYY format.');
-      return;
-    }
-    
-    try {
-      await tasksAPI.reject(task!.id, { rejectionRemarks: remarks, resubmissionDueDate: resubmissionDate });
-      await loadData();
-    } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to reject report');
+      await showAlert(err.response?.data?.error || 'The report could not be approved.', 'Approval failed');
     }
   };
 
@@ -854,7 +937,7 @@ const DensityReportForm: React.FC = () => {
     if (!task) return;
     if (!formData) {
       setError('No form data. Please wait for the form to load.');
-      alert('No form data. Please wait for the form to load, then try again.');
+      await showAlert('The form is still loading. Please wait a moment, then try again.', 'Not ready');
       return;
     }
     setLastSavedPath(null); // Clear previous saved path
@@ -862,7 +945,7 @@ const DensityReportForm: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) {
-        alert('Authentication required. Please log in again.');
+        await showAlert('Your session has expired or you are not signed in. Please log in again.', 'Authentication required');
         return;
       }
       // Ensure report is persisted so the PDF server can find it (server looks up by taskId in density_reports)
@@ -875,12 +958,14 @@ const DensityReportForm: React.FC = () => {
         } catch (saveErr: any) {
           const saveMsg = saveErr.response?.data?.error || saveErr.message || 'Save failed';
           setError(saveMsg);
-          alert(`Cannot generate PDF until the form is saved.\n\nPlease save the form first, then try Download PDF again.\n\nError: ${saveMsg}`);
+          await showAlert(
+            `The report must be saved before a PDF can be generated.\n\nPlease save the form, then use Download PDF again.\n\nDetails: ${saveMsg}`,
+            'Save required'
+          );
           return;
         }
       }
 
-      const { getApiPathPrefix } = require('../api/api');
       const pdfUrl = getApiPathPrefix() + `/pdf/density/${task.id}`;
 
       const response = await fetch(pdfUrl, {
@@ -914,10 +999,13 @@ const DensityReportForm: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          alert('PDF created.');
+          await showAlert('The PDF was created successfully.', 'PDF ready');
         } else if (result.saveError) {
           setError(`PDF generated but save failed: ${result.saveError}`);
-          alert(`PDF generated but save failed: ${result.saveError}\n\nPDF will still be downloaded.`);
+          await showAlert(
+            `The PDF was generated, but saving the file to the server folder failed.\n\nDetails: ${result.saveError}\n\nThe PDF will still download to your device.`,
+            'PDF generated'
+          );
         }
 
         if (result.pdfBase64) {
@@ -958,7 +1046,7 @@ const DensityReportForm: React.FC = () => {
       console.error('PDF download error:', err);
       const errorMessage = err.message || 'Unknown error';
       setError(errorMessage);
-      alert('Failed to download PDF: ' + errorMessage);
+      await showAlert(`The PDF could not be downloaded.\n\nDetails: ${errorMessage}`, 'PDF error');
     }
   };
 
@@ -979,7 +1067,10 @@ const DensityReportForm: React.FC = () => {
     return <div className="density-form-error">Report not found.</div>;
   }
 
-  const canEdit = task.status !== 'READY_FOR_REVIEW' && task.status !== 'APPROVED';
+  const canEdit =
+    task.status !== 'APPROVED' &&
+    (isStaffReviewer() ||
+      (task.assignedTechnicianId === user?.id && task.status !== 'READY_FOR_REVIEW'));
   const isReadyForReview = task.status === 'READY_FOR_REVIEW';
   const _isApproved = task.status === 'APPROVED';
 
@@ -1004,7 +1095,7 @@ const DensityReportForm: React.FC = () => {
           )}
           {canEdit && (
             <>
-              {!isAdmin() ? (
+              {!isStaffReviewer() ? (
                 <>
                   <button onClick={handleSaveUpdate} disabled={saving} className="save-button">
                     {saving ? 'Saving...' : 'Save Update'}
@@ -1018,10 +1109,10 @@ const DensityReportForm: React.FC = () => {
               )}
             </>
           )}
-          {isAdmin() && isReadyForReview && (
+          {isStaffReviewer() && isReadyForReview && (
             <>
               <button onClick={handleApprove} className="approve-button">Approve</button>
-              <button onClick={handleReject} className="reject-button">Reject</button>
+              <button type="button" onClick={() => setRejectModalOpen(true)} className="reject-button">Reject</button>
             </>
           )}
           <button onClick={() => navigate(-1)} className="back-button">Back</button>
@@ -1029,6 +1120,11 @@ const DensityReportForm: React.FC = () => {
       </header>
 
       <div className="density-form-content">
+        <datalist id="density-proctor-nos">
+          {proctorTasks.map((pt) => (
+            <option key={pt.id} value={String(pt.proctorNo)} />
+          ))}
+        </datalist>
         {/* Header Section */}
         <div className="form-section header-section">
           <h2>Report Header</h2>
@@ -1191,16 +1287,19 @@ const DensityReportForm: React.FC = () => {
                       />
                     </td>
                     <td>
-                      <select
-                        value={row.proctorNo}
+                      <input
+                        type="number"
+                        min={1}
+                        max={99}
+                        step={1}
+                        className="proctor-no-input"
+                        list="density-proctor-nos"
+                        value={row.proctorNo === '' || row.proctorNo == null ? '' : row.proctorNo}
                         onChange={(e) => updateTestRow(index, 'proctorNo', e.target.value)}
                         disabled={!canEdit}
-                      >
-                        <option value="">—</option>
-                        {proctorTasks.map((pt) => (
-                          <option key={pt.id} value={String(pt.proctorNo)}>Proctor #{pt.proctorNo}</option>
-                        ))}
-                      </select>
+                        placeholder="No."
+                        title="Enter a Proctor number. Pick from the list if a workflow Proctor exists, or type any number and enter values in Proctor Summary."
+                      />
                     </td>
                     <td>
                       <input
@@ -1235,26 +1334,28 @@ const DensityReportForm: React.FC = () => {
                 {formData.proctors.map((proctor, index) => (
                   <tr key={index}>
                     <td>
-                      <select
-                        value={proctor.proctorNo.toString()}
-                        onChange={(e) => updateProctor(index, 'proctorNo', e.target.value)}
+                      <input
+                        type="number"
+                        min={1}
+                        max={99}
+                        step={1}
+                        className="proctor-no-input"
+                        list="density-proctor-nos"
+                        value={proctor.proctorNo != null && proctor.proctorNo > 0 ? proctor.proctorNo : ''}
+                        onChange={(e) => void updateProctor(index, 'proctorNo', e.target.value)}
                         disabled={!canEdit}
-                      >
-                        <option value="">—</option>
-                        {proctorTasks.map((pt) => (
-                          <option key={pt.id} value={String(pt.proctorNo)}>
-                            {pt.proctorNo}
-                          </option>
-                        ))}
-                      </select>
+                        placeholder="No."
+                        title="Enter Proctor number. If a Proctor workflow exists for this project, values below fill automatically; otherwise enter Description, Opt. Moisture, and Max Density manually."
+                      />
                     </td>
                     <td>
                       <input
                         type="text"
                         value={proctor.description}
-                        readOnly
-                        className="calculated"
-                        title="Auto-generated from Proctor No and Soil Classification"
+                        onChange={(e) => void updateProctor(index, 'description', e.target.value)}
+                        readOnly={!canEdit}
+                        className={!canEdit ? 'readonly' : ''}
+                        title="Filled from Proctor workflow when available; you may edit when entering manual Proctor data."
                       />
                     </td>
                     <td>
@@ -1287,26 +1388,59 @@ const DensityReportForm: React.FC = () => {
           <div className="specs-methods-grid">
             <div className="specs-box">
               <h3>Specs</h3>
-              <div className="form-group">
-                <label>Dens. (%)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={formData.densSpecPercent}
-                  onChange={(e) => updateField('densSpecPercent', e.target.value)}
-                  disabled={!canEdit}
-                />
-              </div>
-              <div className="form-group">
-                <label>Moist. (%) Range</label>
-                <input
-                  type="text"
-                  placeholder="e.g., -2 to +2"
-                  value={moistSpecRange}
-                  onChange={(e) => updateMoistSpecRange(e.target.value)}
-                  disabled={!canEdit}
-                />
-                <small>Enter range as text (e.g., "-2 to +2" or "-2 to 2")</small>
+              <div className="specs-dynamic-columns">
+                {(() => {
+                  const N = getSpecColumnCount();
+                  const specLabel = (i: number) => (N > 1 ? `(${String.fromCharCode(97 + i)}) ` : '');
+                  const densArr = formData.densSpecPercents ?? (formData.densSpecPercent != null ? [formData.densSpecPercent] : []);
+                  const moistArr = formData.moistSpecRanges ?? (formData.moistSpecMin != null || formData.moistSpecMax != null ? [{ min: formData.moistSpecMin ?? '', max: formData.moistSpecMax ?? '' }] : []);
+                  const densPadded = [...densArr];
+                  const moistPadded = [...moistArr];
+                  while (densPadded.length < N) densPadded.push('');
+                  while (moistPadded.length < N) moistPadded.push({ min: '', max: '' });
+                  return (
+                    <>
+                      <div className="specs-row specs-density-row">
+                        {Array.from({ length: N }, (_, i) => (
+                          <div key={`d-${i}`} className="form-group specs-col">
+                            <label>{specLabel(i)}Dens. (%)</label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={densPadded[i] ?? ''}
+                              onChange={(e) => updateSpecDensity(i, e.target.value)}
+                              disabled={!canEdit}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <div className="specs-row specs-moisture-row">
+                        {Array.from({ length: N }, (_, i) => (
+                          <div key={`m-${i}`} className="form-group specs-col specs-moisture-col">
+                            <label>{specLabel(i)}Moist. (%) Range</label>
+                            <div className="moisture-minmax">
+                              <input
+                                type="text"
+                                placeholder="Min"
+                                value={moistPadded[i]?.min ?? ''}
+                                onChange={(e) => updateSpecMoisture(i, 'min', e.target.value)}
+                                disabled={!canEdit}
+                              />
+                              <span>-</span>
+                              <input
+                                type="text"
+                                placeholder="Max"
+                                value={moistPadded[i]?.max ?? ''}
+                                onChange={(e) => updateSpecMoisture(i, 'max', e.target.value)}
+                                disabled={!canEdit}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
 
@@ -1454,7 +1588,7 @@ const DensityReportForm: React.FC = () => {
         <div className="form-actions-bottom">
           {canEdit && (
             <>
-              {!isAdmin() ? (
+              {!isStaffReviewer() ? (
                 <>
                   <button onClick={handleSaveUpdate} disabled={saving} className="save-button">
                     {saving ? 'Saving...' : 'Save Update'}
@@ -1468,10 +1602,10 @@ const DensityReportForm: React.FC = () => {
               )}
             </>
           )}
-          {isAdmin() && isReadyForReview && (
+          {isStaffReviewer() && isReadyForReview && (
             <>
               <button onClick={handleApprove} className="approve-button">Approve</button>
-              <button onClick={handleReject} className="reject-button">Reject</button>
+              <button type="button" onClick={() => setRejectModalOpen(true)} className="reject-button">Reject</button>
             </>
           )}
           <button onClick={handleDownloadPdf} className="pdf-button">Download PDF</button>
@@ -1522,6 +1656,17 @@ const DensityReportForm: React.FC = () => {
           </div>
         )}
       </div>
+
+      <RejectTaskModal
+        isOpen={rejectModalOpen}
+        contextLine={task ? `${task.projectNumber ?? '—'} · ${taskTypeLabel(task)}` : undefined}
+        onClose={() => setRejectModalOpen(false)}
+        onSubmit={async (payload) => {
+          if (!task) return;
+          await tasksAPI.reject(task.id, payload);
+          await loadData();
+        }}
+      />
     </div>
   );
 };

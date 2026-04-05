@@ -20,6 +20,7 @@ export interface TenantMe {
   licenseHolderName: string | null;
   licenseHolderTitle: string | null;
   logoPath: string | null;
+  signatureUrl: string | null;
   /** When set, frontend uses this URL for all API calls so folder/PDFs run on client's backend (their PC). */
   apiBaseUrl: string | null;
 }
@@ -58,6 +59,17 @@ export const tenantsAPI = {
     formData.append('logo', file);
     const response = await api.post<{ success: boolean; logoPath?: string; url?: string }>(
       '/tenants/logo',
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    return response.data;
+  },
+
+  uploadSignature: async (file: File): Promise<{ success: boolean; signatureUrl?: string; url?: string }> => {
+    const formData = new FormData();
+    formData.append('signature', file);
+    const response = await api.post<{ success: boolean; signatureUrl?: string; url?: string }>(
+      '/tenants/signature',
       formData,
       { headers: { 'Content-Type': 'multipart/form-data' } }
     );

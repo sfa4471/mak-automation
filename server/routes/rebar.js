@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, isStaffReviewer } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { logTaskHistory } = require('./tasks');
 
@@ -19,7 +19,7 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         .from('tasks')
         .select(`
           *,
-          projects:project_id(project_name, project_number)
+          projects:project_id(project_name, project_number, client_name)
         `)
         .eq('id', taskId)
         .eq('task_type', 'REBAR')
@@ -33,6 +33,7 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         ...data,
         projectName: data.projects?.project_name,
         projectNumber: data.projects?.project_number,
+        projectClientName: data.projects?.client_name ?? null,
         assignedTechnicianId: data.assigned_technician_id ?? data.assignedTechnicianId,
         projects: undefined
       };
@@ -40,14 +41,17 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       const sqliteDb = require('../database');
       task = await new Promise((resolve, reject) => {
         sqliteDb.get(
-          `SELECT t.*, p.projectName, p.projectNumber
+          `SELECT t.*, p.projectName, p.projectNumber, p.clientName
            FROM tasks t
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.id = ? AND t.taskType = 'REBAR'`,
           [taskId],
           (err, row) => {
             if (err) reject(err);
-            else resolve(row || null);
+            else if (row) {
+              row.projectClientName = row.clientName ?? null;
+              resolve(row);
+            } else resolve(null);
           }
         );
       });
@@ -66,11 +70,19 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
 
     const data = await db.get('rebar_reports', { taskId });
 
+    const defaultMethodOfTest = 'Applicable ACI Recommendations and ASTM Standards';
+
     if (data) {
       // Add project info
       data.projectName = task.projectName;
       data.projectNumber = task.projectNumber;
-      
+      {
+        const saved = data.clientName != null ? String(data.clientName).trim() : '';
+        data.clientName = saved || (task.projectClientName || '');
+      }
+      data.methodOfTest = data.methodOfTest ?? defaultMethodOfTest;
+      data.resultRemarks = data.resultRemarks ?? '';
+
       // If technicianId is missing but task has assigned technician, use that
       if (!data.technicianId && assignedId) {
         data.technicianId = assignedId;
@@ -97,10 +109,12 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         taskId: parseInt(taskId),
         projectName: task.projectName,
         projectNumber: task.projectNumber,
-        clientName: '',
+        clientName: task.projectClientName || '',
         reportDate: today,
         inspectionDate: today,
         generalContractor: '',
+        methodOfTest: defaultMethodOfTest,
+        resultRemarks: '',
         locationDetail: '',
         wireMeshSpec: '',
         drawings: '',
@@ -123,6 +137,8 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       reportDate,
       inspectionDate,
       generalContractor,
+      methodOfTest,
+      resultRemarks,
       locationDetail,
       wireMeshSpec,
       drawings,
@@ -139,7 +155,7 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         .from('tasks')
         .select(`
           *,
-          projects:project_id(project_name, project_number)
+          projects:project_id(project_name, project_number, client_name)
         `)
         .eq('id', taskId)
         .eq('task_type', 'REBAR')
@@ -153,20 +169,24 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         ...data,
         projectName: data.projects?.project_name,
         projectNumber: data.projects?.project_number,
+        projectClientName: data.projects?.client_name ?? null,
         projects: undefined
       };
     } else {
       const sqliteDb = require('../database');
       task = await new Promise((resolve, reject) => {
         sqliteDb.get(
-          `SELECT t.*, p.projectName, p.projectNumber
+          `SELECT t.*, p.projectName, p.projectNumber, p.clientName
            FROM tasks t
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.id = ? AND t.taskType = 'REBAR'`,
           [taskId],
           (err, row) => {
             if (err) reject(err);
-            else resolve(row || null);
+            else if (row) {
+              row.projectClientName = row.clientName ?? null;
+              resolve(row);
+            } else resolve(null);
           }
         );
       });
@@ -198,12 +218,15 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
     }
 
     // Prepare data for insertion/update (omit tenantId when legacy DB has no tenant_id column)
+    const defaultMethodOfTest = 'Applicable ACI Recommendations and ASTM Standards';
     const rebarData = {
       taskId,
       clientName: clientName || null,
       reportDate: reportDate || null,
       inspectionDate: inspectionDate || null,
       generalContractor: generalContractor || null,
+      methodOfTest: methodOfTest != null && String(methodOfTest).trim() !== '' ? String(methodOfTest).trim() : defaultMethodOfTest,
+      resultRemarks: resultRemarks != null ? String(resultRemarks).trim() : null,
       locationDetail: locationDetail || null,
       wireMeshSpec: wireMeshSpec || null,
       drawings: drawings || null,
@@ -211,7 +234,7 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       techName: finalTechName || null,
       updatedAt: new Date().toISOString()
     };
-    if (!req.legacyDb) rebarData.tenantId = tenantId;
+    if (tenantId != null && (!req.legacyDb || db.isSupabase())) rebarData.tenantId = tenantId;
 
     // Retry without tenantId if DB doesn't have tenant_id column (e.g. schema not migrated)
     const isLikelyTenantColumnError = (err) =>
@@ -264,21 +287,26 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       
       if (updateStatus === 'READY_FOR_REVIEW') {
         taskUpdate.reportSubmitted = 1;
-        if (req.user.role === 'TECHNICIAN') {
-          taskUpdate.submittedAt = new Date().toISOString();
-        }
       }
       
       await db.update('tasks', taskUpdate, { id: taskId });
       
       // Log history
       if (updateStatus === 'READY_FOR_REVIEW') {
-        await logTaskHistory(taskId, req.user.role, req.user.name || req.user.email || 'User', req.user.id, 'SUBMITTED', 'Report submitted for review');
+        await logTaskHistory(
+          taskId,
+          req.tenantId ?? null,
+          req.user.role,
+          req.user.name || req.user.email || 'User',
+          req.user.id,
+          'SUBMITTED',
+          'Report submitted for review'
+        );
       }
     }
 
     // Update assigned technician if provided (admin can change)
-    if (assignedTechnicianId !== undefined && req.user.role === 'ADMIN') {
+    if (assignedTechnicianId !== undefined && isStaffReviewer(req.user.role)) {
       await db.update('tasks', {
         assignedTechnicianId: assignedTechnicianId || null
       }, { id: taskId });

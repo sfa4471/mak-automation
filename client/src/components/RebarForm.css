@@ -251,6 +251,16 @@
   margin: 20px 0;
 }
 
+/* Results/Remarks: no min-height so spacing to Drawings is dynamic (no large empty gap) */
+.results-remarks-section {
+  margin-bottom: 16px;
+}
+
+.results-remarks-section textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .section-label {
   display: block;
   font-weight: bold;

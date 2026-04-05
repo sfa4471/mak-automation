@@ -49,6 +49,9 @@ db.serialize(() => {
     db.run(`ALTER TABLE projects ADD COLUMN drawings TEXT DEFAULT '[]'`, (err) => {
       if (err && !/duplicate column name/i.test(err.message)) console.error('Adding projects.drawings:', err.message);
     });
+    db.run(`ALTER TABLE projects ADD COLUMN clientName TEXT`, (err) => {
+      if (err && !/duplicate column name/i.test(err.message)) console.error('Adding projects.clientName:', err.message);
+    });
   });
 
   // Work Packages table (deprecated - use tasks instead, kept for backward compatibility)
@@ -92,6 +95,12 @@ db.serialize(() => {
     FOREIGN KEY (assignedTechnicianId) REFERENCES users(id),
     FOREIGN KEY (lastEditedByUserId) REFERENCES users(id)
   )`);
+  db.run(`ALTER TABLE tasks ADD COLUMN proctorNo INTEGER`, (err) => {
+    if (err && !/duplicate column name/i.test(err.message)) console.error('Adding tasks.proctorNo:', err.message);
+  });
+  db.run(`ALTER TABLE tasks ADD COLUMN workflowInstanceNo INTEGER`, (err) => {
+    if (err && !/duplicate column name/i.test(err.message)) console.error('Adding tasks.workflowInstanceNo:', err.message);
+  });
 
   // WP1 Data table (Compressive Strength Field Report)
   // Supports both taskId (new) and workPackageId (backward compatibility)
@@ -163,6 +172,8 @@ db.serialize(() => {
     generalContractor TEXT,
     locationDetail TEXT,
     wireMeshSpec TEXT,
+    methodOfTest TEXT,
+    resultRemarks TEXT,
     drawings TEXT,
     technicianId INTEGER,
     techName TEXT,
@@ -170,7 +181,14 @@ db.serialize(() => {
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (taskId) REFERENCES tasks(id),
     FOREIGN KEY (technicianId) REFERENCES users(id)
-  )`);
+  )`, () => {
+    db.run(`ALTER TABLE rebar_reports ADD COLUMN methodOfTest TEXT`, (err) => {
+      if (err && !/duplicate column name/i.test(err.message)) console.error('Adding rebar_reports.methodOfTest:', err.message);
+    });
+    db.run(`ALTER TABLE rebar_reports ADD COLUMN resultRemarks TEXT`, (err) => {
+      if (err && !/duplicate column name/i.test(err.message)) console.error('Adding rebar_reports.resultRemarks:', err.message);
+    });
+  });
 
   // Notifications table
   db.run(`CREATE TABLE IF NOT EXISTS notifications (

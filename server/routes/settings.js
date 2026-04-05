@@ -18,6 +18,16 @@ const { validatePath } = require('../utils/pdfFileManager');
 
 const router = express.Router();
 
+const AUTO_SEND_BODY_KEY = 'auto_send_approved_reports_body_template';
+const DEFAULT_AUTO_SEND_BODY_TEMPLATE = [
+  'Hello,',
+  '',
+  'Attached are the approved report(s) for {{clientName}} dated {{date}}.',
+  '',
+  'Regards,',
+  '{{companyName}}'
+].join('\n');
+
 /**
  * GET /api/settings/onedrive-path
  * Get the current OneDrive base path (Admin only)
@@ -409,6 +419,148 @@ router.get('/workflow/status', authenticate, requireTenant, requireAdmin, async 
       success: false,
       error: 'Failed to retrieve workflow status'
     });
+  }
+});
+
+/**
+ * GET /api/settings/auto-send
+ * Get auto-send approved reports setting for current tenant (Admin only)
+ */
+router.get('/auto-send', authenticate, requireTenant, requireAdmin, async (req, res) => {
+  try {
+    const tenantId = req.tenantId;
+    const setting = await db.get('app_settings', { key: 'auto_send_approved_reports_enabled', tenantId });
+    const enabled = setting && String(setting.value).toLowerCase() === 'true';
+    res.json({ success: true, enabled });
+  } catch (error) {
+    console.error('Error getting auto-send setting:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve auto-send setting'
+    });
+  }
+});
+
+/**
+ * PATCH /api/settings/auto-send
+ * Set auto-send approved reports setting for current tenant (Admin only)
+ * Body: { enabled: boolean }
+ */
+router.patch('/auto-send', authenticate, requireTenant, requireAdmin, [
+  body('enabled').isBoolean().withMessage('enabled must be a boolean')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const tenantId = req.tenantId;
+    const userId = req.user.id;
+    const enabled = Boolean(req.body.enabled);
+
+    const existing = await db.get('app_settings', { key: 'auto_send_approved_reports_enabled', tenantId });
+    const settingData = {
+      key: 'auto_send_approved_reports_enabled',
+      tenantId,
+      value: enabled ? 'true' : 'false',
+      updated_by_user_id: userId,
+      updated_at: new Date().toISOString()
+    };
+
+    if (existing) {
+      await db.update('app_settings', settingData, { key: 'auto_send_approved_reports_enabled', tenantId });
+    } else {
+      await db.insert('app_settings', {
+        ...settingData,
+        description: 'Whether approved reports should be auto-sent to project clients.'
+      });
+    }
+
+    res.json({
+      success: true,
+      enabled
+    });
+  } catch (error) {
+    console.error('Error updating auto-send setting:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update auto-send setting'
+    });
+  }
+});
+
+/**
+ * GET /api/settings/auto-send-body
+ * Get the email body template used for auto-sent approved reports (current tenant).
+ * Admin only.
+ */
+router.get('/auto-send-body', authenticate, requireTenant, requireAdmin, async (req, res) => {
+  try {
+    const tenantId = req.tenantId;
+    const existing = await db.get('app_settings', { key: AUTO_SEND_BODY_KEY, tenantId });
+    const bodyTemplate = existing?.value ?? '';
+    res.json({ success: true, bodyTemplate: bodyTemplate || DEFAULT_AUTO_SEND_BODY_TEMPLATE });
+  } catch (error) {
+    console.error('Error getting auto-send body template:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve auto-send body template' });
+  }
+});
+
+/**
+ * PATCH /api/settings/auto-send-body
+ * Set the email body template used for auto-sent approved reports (current tenant).
+ * Admin only.
+ * Body: { bodyTemplate: string }
+ */
+router.patch('/auto-send-body', authenticate, requireTenant, requireAdmin, [
+  body('bodyTemplate').optional().isString().withMessage('bodyTemplate must be a string')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const tenantId = req.tenantId;
+    const userId = req.user.id;
+    const bodyTemplateRaw = req.body.bodyTemplate ?? '';
+    const bodyTemplate = String(bodyTemplateRaw);
+
+    const existing = await db.get('app_settings', { key: AUTO_SEND_BODY_KEY, tenantId });
+
+    // If admin clears the template, go back to default wording.
+    if (bodyTemplate.trim() === '') {
+      if (existing) {
+        await db.delete('app_settings', { key: AUTO_SEND_BODY_KEY, tenantId });
+      }
+      return res.json({ success: true, bodyTemplate: DEFAULT_AUTO_SEND_BODY_TEMPLATE });
+    }
+
+    const settingData = {
+      key: AUTO_SEND_BODY_KEY,
+      tenantId,
+      value: bodyTemplate,
+      updated_by_user_id: userId,
+      updated_at: new Date().toISOString()
+    };
+
+    if (existing) {
+      await db.update('app_settings', settingData, { key: AUTO_SEND_BODY_KEY, tenantId });
+    } else {
+      await db.insert('app_settings', {
+        ...settingData,
+        description: 'Email body template for auto-sent approved reports.'
+      });
+    }
+
+    res.json({ success: true, bodyTemplate });
+  } catch (error) {
+    console.error('Error updating auto-send body template:', error);
+    res.status(500).json({ success: false, error: 'Failed to update auto-send body template' });
   }
 });
 

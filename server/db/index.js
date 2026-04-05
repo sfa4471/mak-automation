@@ -15,6 +15,9 @@
 const { supabase, isAvailable, keysToSnakeCase, keysToCamelCase, toSnakeCase } = require('./supabase');
 const sqliteDb = require('../database');
 
+const TRANSIENT_DB_RETRY_COUNT = Number(process.env.DB_TRANSIENT_RETRY_COUNT || 2);
+const TRANSIENT_DB_RETRY_BASE_MS = Number(process.env.DB_TRANSIENT_RETRY_BASE_MS || 150);
+
 // Determine which database to use
 const USE_SUPABASE = isAvailable();
 const USE_SQLITE = !USE_SUPABASE || process.env.FORCE_SQLITE === 'true';
@@ -33,6 +36,24 @@ class DatabaseAdapter {
     this.useSupabase = USE_SUPABASE && !USE_SQLITE;
   }
 
+  _isTransientSupabaseError(error) {
+    if (!error) return false;
+    const msg = String(error.message || error.details || error.hint || '').toLowerCase();
+    return (
+      msg.includes('fetch failed') ||
+      msg.includes('econnreset') ||
+      msg.includes('etimedout') ||
+      msg.includes('socket hang up') ||
+      msg.includes('network') ||
+      msg.includes('connection')
+    );
+  }
+
+  async _sleep(ms) {
+    if (!ms || ms < 1) return;
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   /**
    * Get a single record
    * @param {string} table - Table name
@@ -41,38 +62,68 @@ class DatabaseAdapter {
    */
   async get(table, conditions = {}) {
     if (this.useSupabase) {
-      let query = supabase.from(table).select('*');
-      
-      for (const [key, value] of Object.entries(conditions)) {
-        const snakeKey = toSnakeCase(key);
-        // Ensure value is properly handled (trim strings, handle null/undefined)
-        const cleanValue = typeof value === 'string' ? value.trim() : value;
-        if (cleanValue === null) {
-          query = query.is(snakeKey, null);
-        } else if (cleanValue !== undefined) {
-          query = query.eq(snakeKey, cleanValue);
+      for (let attempt = 0; attempt <= TRANSIENT_DB_RETRY_COUNT; attempt++) {
+        let query = supabase.from(table).select('*');
+        
+        for (const [key, value] of Object.entries(conditions)) {
+          const snakeKey = toSnakeCase(key);
+          // Ensure value is properly handled (trim strings, handle null/undefined)
+          const cleanValue = typeof value === 'string' ? value.trim() : value;
+          if (cleanValue === null) {
+            query = query.is(snakeKey, null);
+          } else if (cleanValue !== undefined) {
+            query = query.eq(snakeKey, cleanValue);
+          }
         }
-      }
-      
-      const { data, error } = await query.single();
-      
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // No rows returned
-          return null;
+
+        const { data, error } = await query.single();
+        
+        if (error) {
+          // PGRST116 is used for both "0 rows" and ">1 row" with .single(); treat separately.
+          if (error.code === 'PGRST116') {
+            const details = String(error.details || '');
+            if (/contains 0 rows/i.test(details)) {
+              return null;
+            }
+            if (/contains \d+ rows/i.test(details)) {
+              let q2 = supabase.from(table).select('*');
+              for (const [key, value] of Object.entries(conditions)) {
+                const snakeKey = toSnakeCase(key);
+                const cleanValue = typeof value === 'string' ? value.trim() : value;
+                if (cleanValue === null) {
+                  q2 = q2.is(snakeKey, null);
+                } else if (cleanValue !== undefined) {
+                  q2 = q2.eq(snakeKey, cleanValue);
+                }
+              }
+              const { data: row, error: err2 } = await q2.order('id', { ascending: false }).limit(1).maybeSingle();
+              if (err2) {
+                console.error(`Database query error (dedupe get) for table '${table}':`, err2);
+                throw new Error(`Database error: ${err2.message}`);
+              }
+              return row ? keysToCamelCase(row) : null;
+            }
+            return null;
+          }
+          if (this._isTransientSupabaseError(error) && attempt < TRANSIENT_DB_RETRY_COUNT) {
+            const waitMs = TRANSIENT_DB_RETRY_BASE_MS * (attempt + 1);
+            await this._sleep(waitMs);
+            continue;
+          }
+          // Enhanced error logging for debugging
+          console.error(`Database query error for table '${table}':`, {
+            conditions,
+            error: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint
+          });
+          throw new Error(`Database error: ${error.message}`);
         }
-        // Enhanced error logging for debugging
-        console.error(`Database query error for table '${table}':`, {
-          conditions,
-          error: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-        throw new Error(`Database error: ${error.message}`);
+        
+        return data ? keysToCamelCase(data) : null;
       }
-      
-      return data ? keysToCamelCase(data) : null;
+      return null;
     } else {
       // SQLite fallback (support null: use "col IS NULL" instead of "col = ?")
       return new Promise((resolve, reject) => {
@@ -107,31 +158,39 @@ class DatabaseAdapter {
    */
   async all(table, conditions = {}, options = {}) {
     if (this.useSupabase) {
-      let query = supabase.from(table).select('*');
-      
-      for (const [key, value] of Object.entries(conditions)) {
-        const snakeKey = toSnakeCase(key);
-        query = query.eq(snakeKey, value);
+      for (let attempt = 0; attempt <= TRANSIENT_DB_RETRY_COUNT; attempt++) {
+        let query = supabase.from(table).select('*');
+        
+        for (const [key, value] of Object.entries(conditions)) {
+          const snakeKey = toSnakeCase(key);
+          query = query.eq(snakeKey, value);
+        }
+        
+        if (options.orderBy) {
+          const [column, direction = 'asc'] = options.orderBy.split(' ');
+          query = query.order(toSnakeCase(column), { ascending: direction.toLowerCase() !== 'desc' });
+        }
+        
+        if (options.limit) {
+          query = query.limit(options.limit);
+        }
+        
+        const { data, error } = await query;
+        
+        if (error) {
+          if (this._isTransientSupabaseError(error) && attempt < TRANSIENT_DB_RETRY_COUNT) {
+            const waitMs = TRANSIENT_DB_RETRY_BASE_MS * (attempt + 1);
+            await this._sleep(waitMs);
+            continue;
+          }
+          // Enhanced error message for debugging
+          const conditionKeys = Object.keys(conditions).map(k => `${k} (→ ${toSnakeCase(k)})`).join(', ');
+          throw new Error(`Database error: ${error.message}. Table: ${table}, Conditions: ${conditionKeys}`);
+        }
+        
+        return (data || []).map(keysToCamelCase);
       }
-      
-      if (options.orderBy) {
-        const [column, direction = 'asc'] = options.orderBy.split(' ');
-        query = query.order(toSnakeCase(column), { ascending: direction.toLowerCase() !== 'desc' });
-      }
-      
-      if (options.limit) {
-        query = query.limit(options.limit);
-      }
-      
-      const { data, error } = await query;
-      
-      if (error) {
-        // Enhanced error message for debugging
-        const conditionKeys = Object.keys(conditions).map(k => `${k} (→ ${toSnakeCase(k)})`).join(', ');
-        throw new Error(`Database error: ${error.message}. Table: ${table}, Conditions: ${conditionKeys}`);
-      }
-      
-      return (data || []).map(keysToCamelCase);
+      return [];
     } else {
       // SQLite fallback
       return new Promise((resolve, reject) => {
@@ -166,17 +225,25 @@ class DatabaseAdapter {
   async insert(table, data) {
     if (this.useSupabase) {
       const convertedData = keysToSnakeCase(data);
-      const { data: inserted, error } = await supabase
-        .from(table)
-        .insert(convertedData)
-        .select()
-        .single();
-      
-      if (error) {
-        throw new Error(`Database error: ${error.message}`);
+      for (let attempt = 0; attempt <= TRANSIENT_DB_RETRY_COUNT; attempt++) {
+        const { data: inserted, error } = await supabase
+          .from(table)
+          .insert(convertedData)
+          .select()
+          .single();
+        
+        if (error) {
+          if (this._isTransientSupabaseError(error) && attempt < TRANSIENT_DB_RETRY_COUNT) {
+            const waitMs = TRANSIENT_DB_RETRY_BASE_MS * (attempt + 1);
+            await this._sleep(waitMs);
+            continue;
+          }
+          throw new Error(`Database error: ${error.message}`);
+        }
+        
+        return keysToCamelCase(inserted);
       }
-      
-      return keysToCamelCase(inserted);
+      throw new Error('Database error: transient insert failure');
     } else {
       // SQLite fallback
       return new Promise((resolve, reject) => {
@@ -208,19 +275,30 @@ class DatabaseAdapter {
   async update(table, data, conditions = {}) {
     if (this.useSupabase) {
       const convertedData = keysToSnakeCase(data);
-      let query = supabase.from(table).update(convertedData);
-      
-      for (const [key, value] of Object.entries(conditions)) {
-        query = query.eq(toSnakeCase(key), value);
+      const cleaned = Object.fromEntries(
+        Object.entries(convertedData).filter(([, v]) => v !== undefined)
+      );
+      for (let attempt = 0; attempt <= TRANSIENT_DB_RETRY_COUNT; attempt++) {
+        let query = supabase.from(table).update(cleaned);
+        
+        for (const [key, value] of Object.entries(conditions)) {
+          query = query.eq(toSnakeCase(key), value);
+        }
+        
+        const { data: updated, error } = await query.select();
+        
+        if (error) {
+          if (this._isTransientSupabaseError(error) && attempt < TRANSIENT_DB_RETRY_COUNT) {
+            const waitMs = TRANSIENT_DB_RETRY_BASE_MS * (attempt + 1);
+            await this._sleep(waitMs);
+            continue;
+          }
+          throw new Error(`Database error: ${error.message}`);
+        }
+        
+        return updated?.length || 0;
       }
-      
-      const { data: updated, error } = await query.select();
-      
-      if (error) {
-        throw new Error(`Database error: ${error.message}`);
-      }
-      
-      return updated?.length || 0;
+      return 0;
     } else {
       // SQLite fallback
       return new Promise((resolve, reject) => {
@@ -245,19 +323,27 @@ class DatabaseAdapter {
    */
   async delete(table, conditions = {}) {
     if (this.useSupabase) {
-      let query = supabase.from(table).delete();
-      
-      for (const [key, value] of Object.entries(conditions)) {
-        query = query.eq(toSnakeCase(key), value);
+      for (let attempt = 0; attempt <= TRANSIENT_DB_RETRY_COUNT; attempt++) {
+        let query = supabase.from(table).delete();
+        
+        for (const [key, value] of Object.entries(conditions)) {
+          query = query.eq(toSnakeCase(key), value);
+        }
+        
+        const { data: deleted, error } = await query.select();
+        
+        if (error) {
+          if (this._isTransientSupabaseError(error) && attempt < TRANSIENT_DB_RETRY_COUNT) {
+            const waitMs = TRANSIENT_DB_RETRY_BASE_MS * (attempt + 1);
+            await this._sleep(waitMs);
+            continue;
+          }
+          throw new Error(`Database error: ${error.message}`);
+        }
+        
+        return deleted?.length || 0;
       }
-      
-      const { data: deleted, error } = await query.select();
-      
-      if (error) {
-        throw new Error(`Database error: ${error.message}`);
-      }
-      
-      return deleted?.length || 0;
+      return 0;
     } else {
       // SQLite fallback
       return new Promise((resolve, reject) => {

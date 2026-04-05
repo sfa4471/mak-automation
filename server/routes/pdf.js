@@ -21,7 +21,9 @@ async function safeCloseBrowser(browser) {
   }
 }
 
-const { getTenant, getTenantAddress, getLogoBase64 } = require('../utils/tenantBranding');
+const { getTenant, getTenantAddress, getLogoBase64, getPdfFooterData, buildPdfFooterHtml } = require('../utils/tenantBranding');
+const { ensureDensityReportRow } = require('../utils/ensureDensityReportRow');
+const { ensureRebarReportRow, getFirstRebarReportRow } = require('../utils/ensureRebarReportRow');
 
 // Generate PDF for WP1 (supports both workPackageId and taskId)
 router.get('/wp1/:id', authenticate, async (req, res) => {
@@ -279,9 +281,11 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     const companyName = pdfTenant ? (pdfTenant.name ?? pdfTenant.companyName ?? '') : 'MAK Lonestar Consulting, LLC';
     const companyAddress = getTenantAddress(pdfTenant) || '940 N Beltline Road, Suite 107, Irving, TX 75061';
     const companyPhone = (pdfTenant?.company_phone ?? pdfTenant?.companyPhone) ? `Tel ${(pdfTenant.company_phone || pdfTenant.companyPhone).trim()}` : 'Tel (214) 718-1250';
+    const companyEmail = (pdfTenant?.company_email ?? pdfTenant?.companyEmail) ? String(pdfTenant.company_email || pdfTenant.companyEmail).trim() : '';
     html = html.replace('{{COMPANY_NAME}}', escapeHtml(companyName));
     html = html.replace('{{COMPANY_ADDRESS}}', escapeHtml(companyAddress));
     html = html.replace('{{COMPANY_PHONE}}', escapeHtml(companyPhone));
+    html = html.replace('{{COMPANY_EMAIL}}', escapeHtml(companyEmail ? `| E: ${companyEmail}` : ''));
 
     html = html.replace('{{PROJECT_NAME}}', escapeHtml(taskOrWp.projectName || ''));
     html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(taskOrWp.projectNumber || ''));
@@ -881,8 +885,15 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get density report data (must exist in DB — client should save form before requesting PDF)
-    const data = await db.get('density_reports', { taskId });
+    // Load density report data (browser Download PDF saves first; bulk approve / auto-send may not)
+    let data = await db.get('density_reports', { taskId });
+    if (!data) {
+      const seeded = await ensureDensityReportRow(taskId);
+      if (seeded) {
+        console.log(`[pdf/density] Seeded missing density_reports for task ${taskId} before PDF generation`);
+        data = seeded;
+      }
+    }
     if (!data) {
       return res.status(404).json({
         error: 'No report data found. Please save the form first.',
@@ -912,6 +923,21 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         }
       } else {
         data.proctors = data.proctors || [];
+      }
+
+      if (typeof data.densSpecs === 'string') {
+        try {
+          data.densSpecs = JSON.parse(data.densSpecs || '[]');
+        } catch (e) {
+          data.densSpecs = [];
+        }
+      }
+      if (typeof data.moistSpecs === 'string') {
+        try {
+          data.moistSpecs = JSON.parse(data.moistSpecs || '[]');
+        } catch (e) {
+          data.moistSpecs = [];
+        }
       }
 
       // Ensure we have 19 test rows and 6 proctor rows
@@ -956,9 +982,11 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       const companyName = pdfTenant ? (pdfTenant.name ?? pdfTenant.companyName ?? '') : 'MAK Lonestar Consulting, LLC';
       const companyAddress = getTenantAddress(pdfTenant) || '940 N Beltline Road, Suite 107, Irving, TX 75061';
       const companyPhone = (pdfTenant?.company_phone ?? pdfTenant?.companyPhone) ? String(pdfTenant.company_phone || pdfTenant.companyPhone).trim() : '(214) 718-1250';
+      const companyEmail = (pdfTenant?.company_email ?? pdfTenant?.companyEmail) ? String(pdfTenant.company_email || pdfTenant.companyEmail).trim() : '';
       html = html.replace('{{COMPANY_NAME}}', escapeHtml(companyName));
       html = html.replace('{{COMPANY_ADDRESS}}', escapeHtml(companyAddress));
       html = html.replace('{{COMPANY_PHONE}}', escapeHtml(companyPhone));
+      html = html.replace('{{COMPANY_EMAIL}}', escapeHtml(companyEmail ? `| E: ${companyEmail}` : ''));
 
       // Replace header placeholders (escape HTML)
       html = html.replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''));
@@ -1035,12 +1063,43 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       }
       html = html.replace('{{PROCTOR_ROWS}}', proctorRowsHtml);
 
-      // Replace specs and instrument placeholders
-      html = html.replace('{{DENS_SPEC}}', escapeHtml(data.densSpecPercent || ''));
-      const moistSpec = data.moistSpecMin !== null && data.moistSpecMax !== null
-        ? `${data.moistSpecMin} to ${data.moistSpecMax}`
-        : (data.moistSpecMin || data.moistSpecMax || '');
-      html = html.replace('{{MOIST_SPEC}}', escapeHtml(moistSpec));
+      // Build dynamic spec columns (N columns from densSpecs / moistSpecs in DB, or legacy single)
+      const densArr = (Array.isArray(data.densSpecs) && data.densSpecs.length > 0)
+        ? data.densSpecs
+        : (data.densSpecPercent != null && String(data.densSpecPercent).trim() !== '' ? [String(data.densSpecPercent)] : []);
+      const moistArr = (Array.isArray(data.moistSpecs) && data.moistSpecs.length > 0)
+        ? data.moistSpecs
+        : (data.moistSpecMin != null || data.moistSpecMax != null
+          ? [{ min: data.moistSpecMin || '', max: data.moistSpecMax || '' }]
+          : []);
+      const specN = Math.max(1, densArr.length, moistArr.length);
+      const densPadded = [...densArr];
+      const moistPadded = moistArr.map(r => ({ min: r.min ?? '', max: r.max ?? '' }));
+      while (densPadded.length < specN) densPadded.push('');
+      while (moistPadded.length < specN) moistPadded.push({ min: '', max: '' });
+      const specLetter = (i) => (specN > 1 ? `(${String.fromCharCode(97 + i)}) ` : '');
+      const specCellStyle = 'padding:4px 6px; border:1px solid #ddd; text-align:center;';
+      let specRowsHtml = '<table class="spec-dynamic-table" style="width:100%; border-collapse:collapse;">';
+      specRowsHtml += '<tr>';
+      for (let i = 0; i < specN; i++) {
+        specRowsHtml += `<th style="${specCellStyle} font-size:10px;">${specLetter(i)}Dens. (%)</th>`;
+      }
+      specRowsHtml += '</tr><tr>';
+      for (let i = 0; i < specN; i++) {
+        specRowsHtml += `<td style="${specCellStyle}">${escapeHtml(densPadded[i] || '')}</td>`;
+      }
+      specRowsHtml += '</tr><tr>';
+      for (let i = 0; i < specN; i++) {
+        specRowsHtml += `<th style="${specCellStyle} font-size:10px;">${specLetter(i)}Moist. (%)</th>`;
+      }
+      specRowsHtml += '</tr><tr>';
+      for (let i = 0; i < specN; i++) {
+        const r = moistPadded[i] || {};
+        const moistStr = (r.min && r.max) ? `${r.min} to ${r.max}` : (r.min || r.max || '');
+        specRowsHtml += `<td style="${specCellStyle}">${escapeHtml(moistStr)}</td>`;
+      }
+      specRowsHtml += '</tr></table>';
+      html = html.replace('{{SPEC_ROWS}}', specRowsHtml);
       html = html.replace('{{STD_DENSITY_COUNT}}', escapeHtml(data.stdDensityCount || ''));
       html = html.replace('{{STD_MOIST_COUNT}}', escapeHtml(data.stdMoistCount || ''));
       html = html.replace('{{TRANS_DEPTH}}', escapeHtml(data.transDepthIn || ''));
@@ -1154,7 +1213,8 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
             'DENSITY_MEASUREMENT',
             fieldDate,
             pdfBuffer,
-            isRegeneration
+            isRegeneration,
+            (task?.tenant_id ?? task?.tenantId ?? req.user?.tenantId ?? req.user?.tenant_id ?? null)
           );
           
           if (saveInfo.saved) {
@@ -1262,7 +1322,16 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    let data = await db.get('rebar_reports', { taskId });
+    // Load rebar report (browser Download PDF may save first; bulk approve / auto-send may not)
+    let data = await getFirstRebarReportRow(taskId);
+    if (!data) {
+      const jwtTenant = req.user?.tenantId ?? req.user?.tenant_id ?? null;
+      const seeded = await ensureRebarReportRow(taskId, jwtTenant);
+      if (seeded) {
+        console.log(`[pdf/rebar] Seeded missing rebar_reports for task ${taskId} before PDF generation`);
+        data = seeded;
+      }
+    }
     if (!data) {
       return res.status(404).json({
         error: 'No report data found. Please save the form first.',
@@ -1324,6 +1393,10 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
         html = html.replace(/\{\{LICENSE_HOLDER_NAME\}\}/g, escapeHtml(licenseHolderName));
         html = html.replace(/\{\{LICENSE_HOLDER_TITLE\}\}/g, escapeHtml(licenseHolderTitle));
 
+        // Shared PDF footer (bottom-right): firm name, signature, engineer name, title, firm reg, date
+        const rebarFooterData = await getPdfFooterData(pdfTenant, { reportDate: data.reportDate });
+        html = html.replace('{{PDF_FOOTER_HTML}}', buildPdfFooterHtml(rebarFooterData));
+
         // Replace placeholders
         html = html.replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''));
         html = html.replace('{{REPORT_DATE}}', escapeHtml(formatDate(data.reportDate)));
@@ -1331,8 +1404,9 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
         html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(task.projectNumber || ''));
         html = html.replace('{{INSPECTION_DATE}}', escapeHtml(formatDate(data.inspectionDate)));
         html = html.replace('{{GENERAL_CONTRACTOR}}', escapeHtml(data.generalContractor || ''));
-        html = html.replace('{{LOCATION_DETAIL}}', escapeHtml(data.locationDetail || ''));
-        html = html.replace('{{WIRE_MESH_SPEC}}', escapeHtml(data.wireMeshSpec || ''));
+        const methodOfTest = data.methodOfTest || 'Applicable ACI Recommendations and ASTM Standards';
+        html = html.replace('{{METHOD_OF_TEST}}', escapeHtml(methodOfTest));
+        html = html.replace('{{RESULT_REMARKS}}', escapeHtml(data.resultRemarks || ''));
         html = html.replace('{{DRAWINGS}}', escapeHtml(data.drawings || ''));
         html = html.replace('{{TECHNICIAN_NAME}}', escapeHtml(data.techName || task.assignedTechnicianName || ''));
 
@@ -1409,7 +1483,8 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
               'REBAR',
               fieldDate,
               pdfBuffer,
-              isRegeneration
+              isRegeneration,
+              (task?.tenant_id ?? task?.tenantId ?? req.user?.tenantId ?? req.user?.tenant_id ?? null)
             );
             
             if (saveInfo.saved) {
@@ -1524,6 +1599,8 @@ router.post('/rebar', authenticate, async (req, res) => {
     const peFirmRegLine = peFirmReg ? `Texas Board of Professional Engineers Firm Reg, ${peFirmReg}` : '';
     const licenseHolderName = (pdfTenant?.license_holder_name ?? pdfTenant?.licenseHolderName) ? String(pdfTenant.license_holder_name || pdfTenant.licenseHolderName).trim() : '';
     const licenseHolderTitle = (pdfTenant?.license_holder_title ?? pdfTenant?.licenseHolderTitle) ? String(pdfTenant.license_holder_title || pdfTenant.licenseHolderTitle).trim() : '';
+    const rebarPostFooterData = await getPdfFooterData(pdfTenant, { reportDate: data.reportDate });
+    const rebarPostFooterHtml = buildPdfFooterHtml(rebarPostFooterData);
     html = html.replace('{{LOGO_IMAGE}}', logoHtml)
       .replace(/\{\{COMPANY_NAME\}\}/g, escapeHtml(companyName))
       .replace(/\{\{COMPANY_ADDRESS\}\}/g, escapeHtml(companyAddress))
@@ -1532,14 +1609,15 @@ router.post('/rebar', authenticate, async (req, res) => {
       .replace(/\{\{PE_FIRM_REG_LINE\}\}/g, escapeHtml(peFirmRegLine))
       .replace(/\{\{LICENSE_HOLDER_NAME\}\}/g, escapeHtml(licenseHolderName))
       .replace(/\{\{LICENSE_HOLDER_TITLE\}\}/g, escapeHtml(licenseHolderTitle))
+      .replace('{{PDF_FOOTER_HTML}}', rebarPostFooterHtml)
       .replace('{{CLIENT_NAME}}', escapeHtml(data.clientName || ''))
       .replace('{{REPORT_DATE}}', escapeHtml(formatDate(data.reportDate)))
       .replace('{{PROJECT_NAME}}', escapeHtml(task.projectName || ''))
       .replace('{{PROJECT_NUMBER}}', escapeHtml(task.projectNumber || ''))
       .replace('{{INSPECTION_DATE}}', escapeHtml(formatDate(data.inspectionDate)))
       .replace('{{GENERAL_CONTRACTOR}}', escapeHtml(data.generalContractor || ''))
-      .replace('{{LOCATION_DETAIL}}', escapeHtml(data.locationDetail || ''))
-      .replace('{{WIRE_MESH_SPEC}}', escapeHtml(data.wireMeshSpec || ''))
+      .replace('{{METHOD_OF_TEST}}', escapeHtml(data.methodOfTest || 'Applicable ACI Recommendations and ASTM Standards'))
+      .replace('{{RESULT_REMARKS}}', escapeHtml(data.resultRemarks || ''))
       .replace('{{DRAWINGS}}', escapeHtml(data.drawings || ''))
       .replace('{{TECHNICIAN_NAME}}', escapeHtml(data.techName || task.assignedTechnicianName || ''));
     const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
@@ -1555,7 +1633,14 @@ router.post('/rebar', authenticate, async (req, res) => {
       let saveInfo = null;
       let saveError = null;
       try {
-        saveInfo = await saveReportPDF(task.projectNumber, 'REBAR', fieldDate, pdfBuffer, false);
+        saveInfo = await saveReportPDF(
+          task.projectNumber,
+          'REBAR',
+          fieldDate,
+          pdfBuffer,
+          false,
+          (task?.tenant_id ?? task?.tenantId ?? req.user?.tenantId ?? req.user?.tenant_id ?? null)
+        );
       } catch (saveErr) {
         saveError = saveErr.message;
       }

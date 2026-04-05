@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, isStaffReviewer } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { createNotification } = require('./notifications');
@@ -33,7 +33,7 @@ router.get('/project/:projectId', authenticate, requireTenant, async (req, res) 
         `)
         .eq('project_id', projectId);
       
-      if (req.user.role !== 'ADMIN') {
+      if (!isStaffReviewer(req.user.role)) {
         query = query.eq('assigned_to', req.user.id);
       }
       
@@ -53,7 +53,7 @@ router.get('/project/:projectId', authenticate, requireTenant, async (req, res) 
       let query;
       let params;
 
-      if (req.user.role === 'ADMIN') {
+      if (isStaffReviewer(req.user.role)) {
         query = `SELECT wp.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail
                  FROM workpackages wp
                  LEFT JOIN users u ON wp.assignedTo = u.id
@@ -603,7 +603,7 @@ router.post('/:id/wp1', authenticate, requireTenant, async (req, res) => {
         status: 'IN_PROGRESS_TECH',
         updatedAt: new Date().toISOString()
       }, { id: workPackageId });
-    } else if (req.user.role === 'ADMIN' && (wp.status === 'Draft' || wp.status === 'Assigned')) {
+    } else if (isStaffReviewer(req.user.role) && (wp.status === 'Draft' || wp.status === 'Assigned')) {
       await db.update('workpackages', {
         status: 'In Progress',
         updatedAt: new Date().toISOString()

@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress } from '../../api/projects';
+import { useAppDialog } from '../../context/AppDialogContext';
+import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress, normalizeSoilSpecRow } from '../../api/projects';
 import './ProjectDetails.css';
 
 const SOIL_STRUCTURE_TYPES = [
@@ -36,6 +37,7 @@ const ProjectDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user: _user, isAdmin } = useAuth();
+  const { showAlert } = useAppDialog();
   const [openingDrawing, setOpeningDrawing] = useState<string | null>(null);
   const [deletingDrawing, setDeletingDrawing] = useState<string | null>(null);
   const [addDrawingFiles, setAddDrawingFiles] = useState<File[]>([]);
@@ -46,6 +48,7 @@ const ProjectDetails: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [projectName, setProjectName] = useState('');
+  const [clientName, setClientName] = useState('');
   /** To emails: single string, separate multiple with ; */
   const [customerEmailsStr, setCustomerEmailsStr] = useState('');
   /** CC emails: single string, separate multiple with ; */
@@ -84,7 +87,8 @@ const ProjectDetails: React.FC = () => {
       const projectData = await projectsAPI.get(projectId);
       setProject(projectData);
       setProjectName(projectData.projectName || '');
-      
+      setClientName(projectData.clientName || '');
+
       // Load customer emails as semicolon-separated strings
       if (projectData.customerEmails && Array.isArray(projectData.customerEmails) && projectData.customerEmails.length > 0) {
         setCustomerEmailsStr(projectData.customerEmails.join('; '));
@@ -105,21 +109,15 @@ const ProjectDetails: React.FC = () => {
       }
       setCustomerDetails(projectData.customerDetails && typeof projectData.customerDetails === 'object' ? projectData.customerDetails : {});
       
-      // Load soil specs - normalize keys to match defined structure types
+      // Load soil specs - normalize keys and convert to array form (densityPcts, moistureRanges)
       let loadedSoilSpecs = projectData.soilSpecs || {};
       const normalizedSoilSpecs: SoilSpecs = {};
       Object.keys(loadedSoilSpecs).forEach(key => {
-        // Find matching structure type (case-insensitive)
         const matchingType = SOIL_STRUCTURE_TYPES.find(
           type => type.toLowerCase() === key.toLowerCase()
         );
-        if (matchingType) {
-          // Use the correct case from the defined types
-          normalizedSoilSpecs[matchingType] = loadedSoilSpecs[key];
-        } else {
-          // Keep original if no match (for backward compatibility)
-          normalizedSoilSpecs[key] = loadedSoilSpecs[key];
-        }
+        const targetKey = matchingType || key;
+        normalizedSoilSpecs[targetKey] = normalizeSoilSpecRow(loadedSoilSpecs[key]);
       });
       setSoilSpecs(normalizedSoilSpecs);
       
@@ -204,60 +202,105 @@ const ProjectDetails: React.FC = () => {
     const errors: { [key: string]: string } = {};
     
     Object.keys(soilSpecs).forEach(structureType => {
-      const spec = soilSpecs[structureType];
+      const spec = normalizeSoilSpecRow(soilSpecs[structureType]);
+      const densityPcts = spec.densityPcts || [];
+      const moistureRanges = spec.moistureRanges || [];
       
-      // Validate densityPct if provided
-      if (spec.densityPct && String(spec.densityPct).trim() !== '') {
-        const density = parseFloat(String(spec.densityPct));
-        if (isNaN(density) || density < 0 || density > 100) {
-          errors[`soil-${structureType}-densityPct`] = 'Density must be between 0 and 100';
+      densityPcts.forEach((pct, i) => {
+        const trimmed = String(pct ?? '').trim();
+        if (trimmed === '') return; // skip empty rows
+        const density = parseFloat(trimmed);
+        if (isNaN(density) || density < 0 || density > 1000) {
+          errors[`soil-${structureType}-densityPct-${i}`] = 'Density must be between 0 and 1000';
         }
-      }
+      });
       
-      // Validate moisture range if provided
-      if (spec.moistureRange) {
-        const min = spec.moistureRange.min ? parseFloat(String(spec.moistureRange.min)) : null;
-        const max = spec.moistureRange.max ? parseFloat(String(spec.moistureRange.max)) : null;
-        
-        if (min !== null && (isNaN(min) || min < 0)) {
-          errors[`soil-${structureType}-moistureMin`] = 'Minimum moisture must be a positive number';
+      moistureRanges.forEach((range, i) => {
+        const minStr = String(range?.min ?? '').trim();
+        const maxStr = String(range?.max ?? '').trim();
+        if (minStr === '' && maxStr === '') return; // skip empty rows
+        const min = minStr !== '' ? parseFloat(minStr) : null;
+        const max = maxStr !== '' ? parseFloat(maxStr) : null;
+        // Moisture ranges are often signed offsets (e.g. -2 to +2); allow negatives and decimals.
+        if (min !== null && !Number.isFinite(min)) {
+          errors[`soil-${structureType}-moistureMin-${i}`] = 'Minimum moisture must be a valid number';
         }
-        if (max !== null && (isNaN(max) || max < 0)) {
-          errors[`soil-${structureType}-moistureMax`] = 'Maximum moisture must be a positive number';
+        if (max !== null && !Number.isFinite(max)) {
+          errors[`soil-${structureType}-moistureMax-${i}`] = 'Maximum moisture must be a valid number';
         }
         if (min !== null && max !== null && !isNaN(min) && !isNaN(max) && min > max) {
-          errors[`soil-${structureType}-moistureRange`] = 'Minimum must be less than or equal to maximum';
+          errors[`soil-${structureType}-moistureRange-${i}`] = 'Minimum must be less than or equal to maximum';
         }
-      }
+      });
     });
     
-    setValidationErrors(prev => ({ ...prev, ...errors }));
+    // Clear previous soil spec errors so fixed fields don't keep showing old errors
+    setValidationErrors(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(key => { if (key.startsWith('soil-')) delete next[key]; });
+      return { ...next, ...errors };
+    });
     return Object.keys(errors).length === 0;
   };
 
-  const updateSoilSpec = (structureType: string, field: string, value: any) => {
-    // Use functional update to ensure we have the latest state
+  const updateSoilSpec = (structureType: string, field: string, value: any, index?: number, subField?: 'min' | 'max') => {
     setSoilSpecs(prev => {
-      const updated = {
-        ...prev,
-        [structureType]: {
-          ...prev[structureType],
-          [field]: value
-        }
-      };
-      // Debug: Log state update
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`🔄 Updated soil spec: ${structureType}.${field} = ${value}`, updated[structureType]);
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      if (field === 'densityPcts' && index !== undefined) {
+        const densityPcts = [...(current.densityPcts || [])];
+        densityPcts[index] = value;
+        return { ...prev, [structureType]: { ...current, densityPcts } };
       }
-      return updated;
+      if (field === 'moistureRanges' && index !== undefined && subField) {
+        const moistureRanges = (current.moistureRanges || []).map((r, i) =>
+          i === index ? { ...r, [subField]: value } : r
+        );
+        return { ...prev, [structureType]: { ...current, moistureRanges } };
+      }
+      return { ...prev, [structureType]: { ...prev[structureType], [field]: value } };
     });
-    // Clear validation error for this field
-    const errorKey = `soil-${structureType}-${field}`;
+    const errorKey = index !== undefined
+      ? `soil-${structureType}-${field}-${index}`
+      : `soil-${structureType}-${field}`;
     if (validationErrors[errorKey]) {
       const newErrors = { ...validationErrors };
       delete newErrors[errorKey];
       setValidationErrors(newErrors);
     }
+  };
+
+  const addDensityRow = (structureType: string) => {
+    setSoilSpecs(prev => {
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      const densityPcts = [...(current.densityPcts || []), ''];
+      return { ...prev, [structureType]: { ...current, densityPcts } };
+    });
+  };
+
+  const removeDensityRow = (structureType: string, index: number) => {
+    setSoilSpecs(prev => {
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      const densityPcts = (current.densityPcts || []).filter((_, i) => i !== index);
+      if (densityPcts.length === 0) densityPcts.push('');
+      return { ...prev, [structureType]: { ...current, densityPcts } };
+    });
+  };
+
+  const addMoistureRow = (structureType: string) => {
+    setSoilSpecs(prev => {
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      const moistureRanges = [...(current.moistureRanges || []), { min: '', max: '' }];
+      return { ...prev, [structureType]: { ...current, moistureRanges } };
+    });
+  };
+
+  const removeMoistureRow = (structureType: string, index: number) => {
+    setSoilSpecs(prev => {
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      const moistureRanges = (current.moistureRanges || []).filter((_, i) => i !== index);
+      if (moistureRanges.length === 0) moistureRanges.push({ min: '', max: '' });
+      return { ...prev, [structureType]: { ...current, moistureRanges } };
+    });
   };
 
   const validateConcreteSpecs = (): boolean => {
@@ -423,6 +466,7 @@ const ProjectDetails: React.FC = () => {
 
       const updateData: any = {
         projectName,
+        clientName: clientName.trim(),
         customerEmails: validTo,
         ccEmails: validCc,
         bccEmails: validBcc,
@@ -432,51 +476,47 @@ const ProjectDetails: React.FC = () => {
       // Build soil specs - normalize keys to use correct case from defined structure types
       const filteredSoilSpecs: SoilSpecs = {};
       
-      // Process current state (user-entered values) - normalize keys
+      // Process current state (user-entered values) - normalize keys and use array shape for save
       Object.keys(soilSpecs).forEach(key => {
-        const spec = soilSpecs[key];
-        if (spec) {
-          // Find matching structure type (case-insensitive)
-          const matchingType = SOIL_STRUCTURE_TYPES.find(
-            type => type.toLowerCase() === key.toLowerCase()
-          ) || key; // Use original if no match
-          
-          // Check if it has at least one non-empty value
-          const hasValue = (
-            (spec.densityPct && String(spec.densityPct).trim() !== '') ||
-            (spec.moistureRange && (
-              (spec.moistureRange.min && String(spec.moistureRange.min).trim() !== '') ||
-              (spec.moistureRange.max && String(spec.moistureRange.max).trim() !== '')
-            ))
-          );
-          
-          if (hasValue) {
-            // Use normalized key (correct case)
-            filteredSoilSpecs[matchingType] = { ...spec };
-          }
+        const spec = normalizeSoilSpecRow(soilSpecs[key]);
+        const matchingType = SOIL_STRUCTURE_TYPES.find(
+          type => type.toLowerCase() === key.toLowerCase()
+        ) || key;
+        const densityPcts = spec.densityPcts || [];
+        const moistureRanges = spec.moistureRanges || [];
+        const hasDensity = densityPcts.some(p => p != null && String(p).trim() !== '');
+        const hasMoisture = moistureRanges.some(
+          r => (r.min != null && String(r.min).trim() !== '') || (r.max != null && String(r.max).trim() !== '')
+        );
+        if (hasDensity || hasMoisture) {
+          filteredSoilSpecs[matchingType] = {
+            densityPcts: densityPcts.length ? densityPcts : undefined,
+            moistureRanges: moistureRanges.length ? moistureRanges : undefined,
+            ...(densityPcts.length > 0 && densityPcts[0] != null && String(densityPcts[0]).trim() !== '' && { densityPct: String(densityPcts[0]) }),
+            ...(moistureRanges.length > 0 && moistureRanges[0] && { moistureRange: moistureRanges[0] })
+          };
         }
       });
       
-      // Process existing saved specs - normalize keys and merge
+      // Process existing saved specs - normalize keys and merge (support array and legacy shape)
       if (project.soilSpecs) {
         Object.keys(project.soilSpecs).forEach(key => {
-          // Find matching structure type (case-insensitive)
           const matchingType = SOIL_STRUCTURE_TYPES.find(
             type => type.toLowerCase() === key.toLowerCase()
-          ) || key; // Use original if no match
-          
-          // Only preserve if it wasn't already included from current state
+          ) || key;
           if (!filteredSoilSpecs[matchingType]) {
             const existingSpec = project.soilSpecs![key];
-            // Only preserve if it has values
-            if (existingSpec && (
-              (existingSpec.densityPct && String(existingSpec.densityPct).trim() !== '') ||
-              (existingSpec.moistureRange && (
-                (existingSpec.moistureRange.min && String(existingSpec.moistureRange.min).trim() !== '') ||
-                (existingSpec.moistureRange.max && String(existingSpec.moistureRange.max).trim() !== '')
-              ))
-            )) {
-              filteredSoilSpecs[matchingType] = { ...existingSpec };
+            const normalized = existingSpec ? normalizeSoilSpecRow(existingSpec) : null;
+            if (!normalized) return;
+            const hasDensity = (normalized.densityPcts || []).some(p => p != null && String(p).trim() !== '');
+            const hasMoisture = (normalized.moistureRanges || []).some(
+              r => (r.min != null && String(r.min).trim() !== '') || (r.max != null && String(r.max).trim() !== '')
+            );
+            if (hasDensity || hasMoisture) {
+              filteredSoilSpecs[matchingType] = {
+                densityPcts: normalized.densityPcts,
+                moistureRanges: normalized.moistureRanges
+              };
             }
           }
         });
@@ -555,7 +595,8 @@ const ProjectDetails: React.FC = () => {
       // Update local state immediately with response data to prevent data loss
       setProject(updatedProject);
       setProjectName(updatedProject.projectName || '');
-      
+      setClientName(updatedProject.clientName || '');
+
       if (updatedProject.customerEmails && Array.isArray(updatedProject.customerEmails)) {
         setCustomerEmailsStr(updatedProject.customerEmails.join('; '));
       } else {
@@ -592,7 +633,7 @@ const ProjectDetails: React.FC = () => {
       setError('');
       
       // Show success message (using alert for now, can be replaced with toast notification)
-      alert('Project details updated successfully!');
+      await showAlert('Project details were saved successfully.', 'Saved');
       
       // Don't reload - we already have the updated data from the API response
       // Reloading could cause a flash and might overwrite with stale data
@@ -677,6 +718,17 @@ const ProjectDetails: React.FC = () => {
                 onChange={(e) => setProjectName(e.target.value)}
                 className="form-input"
                 required
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="clientName">Client Name</label>
+              <input
+                type="text"
+                id="clientName"
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                className="form-input"
+                placeholder="Client or company name"
               />
             </div>
 
@@ -1079,64 +1131,93 @@ const ProjectDetails: React.FC = () => {
                   </thead>
                   <tbody>
                     {SOIL_STRUCTURE_TYPES.map((structureType) => {
-                      const spec = soilSpecs[structureType] || {};
-                      const moistureRange = spec.moistureRange || {};
+                      const spec = normalizeSoilSpecRow(soilSpecs[structureType]);
+                      const densityPcts = spec.densityPcts || [''];
+                      const moistureRanges = spec.moistureRanges || [{ min: '', max: '' }];
                       return (
                         <tr key={structureType}>
-                          <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500' }}>{structureType}</td>
-                          <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
-                            <input
-                              type="text"
-                              value={spec.densityPct || ''}
-                              onChange={(e) => updateSoilSpec(structureType, 'densityPct', e.target.value)}
-                              className={`form-input ${validationErrors[`soil-${structureType}-densityPct`] ? 'error' : ''}`}
-                              style={{ width: '100%', padding: '5px' }}
-                            />
-                            {validationErrors[`soil-${structureType}-densityPct`] && (
-                              <span className="field-error">{validationErrors[`soil-${structureType}-densityPct`]}</span>
-                            )}
-                          </td>
-                          <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
-                            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                              <div style={{ flex: 1 }}>
-                                <input
-                                  type="text"
-                                  value={moistureRange.min || ''}
-                                  onChange={(e) => {
-                                    const currentSpec = soilSpecs[structureType] || {};
-                                    const currentRange = currentSpec.moistureRange || {};
-                                    updateSoilSpec(structureType, 'moistureRange', { min: e.target.value, max: currentRange.max || '' });
-                                  }}
-                                  placeholder="Min"
-                                  className={`form-input ${validationErrors[`soil-${structureType}-moistureMin`] ? 'error' : ''}`}
-                                  style={{ width: '100%', padding: '5px' }}
-                                />
-                                {validationErrors[`soil-${structureType}-moistureMin`] && (
-                                  <span className="field-error">{validationErrors[`soil-${structureType}-moistureMin`]}</span>
-                                )}
-                              </div>
-                              <span>-</span>
-                              <div style={{ flex: 1 }}>
-                                <input
-                                  type="text"
-                                  value={moistureRange.max || ''}
-                                  onChange={(e) => {
-                                    const currentSpec = soilSpecs[structureType] || {};
-                                    const currentRange = currentSpec.moistureRange || {};
-                                    updateSoilSpec(structureType, 'moistureRange', { min: currentRange.min || '', max: e.target.value });
-                                  }}
-                                  placeholder="Max"
-                                  className={`form-input ${validationErrors[`soil-${structureType}-moistureMax`] ? 'error' : ''}`}
-                                  style={{ width: '100%', padding: '5px' }}
-                                />
-                                {validationErrors[`soil-${structureType}-moistureMax`] && (
-                                  <span className="field-error">{validationErrors[`soil-${structureType}-moistureMax`]}</span>
-                                )}
-                              </div>
+                          <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>{structureType}</td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {densityPcts.map((pct, rowIndex) => (
+                                <div key={`d-${rowIndex}`} style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <input
+                                    type="text"
+                                    value={pct}
+                                    onChange={(e) => updateSoilSpec(structureType, 'densityPcts', e.target.value, rowIndex)}
+                                    className={`form-input ${validationErrors[`soil-${structureType}-densityPct-${rowIndex}`] ? 'error' : ''}`}
+                                    style={{ width: '80px', padding: '5px' }}
+                                  />
+                                  {densityPcts.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => removeDensityRow(structureType, rowIndex)}
+                                      title="Remove row"
+                                      style={{ padding: '4px 8px', minWidth: '28px' }}
+                                    >
+                                      −
+                                    </button>
+                                  )}
+                                  {validationErrors[`soil-${structureType}-densityPct-${rowIndex}`] && (
+                                    <span className="field-error">{validationErrors[`soil-${structureType}-densityPct-${rowIndex}`]}</span>
+                                  )}
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => addDensityRow(structureType)}
+                                title="Add another density"
+                                style={{ alignSelf: 'flex-start', padding: '4px 8px', minWidth: '28px', fontWeight: 'bold' }}
+                              >
+                                +
+                              </button>
                             </div>
-                            {validationErrors[`soil-${structureType}-moistureRange`] && (
-                              <span className="field-error" style={{ marginTop: '4px', display: 'block' }}>{validationErrors[`soil-${structureType}-moistureRange`]}</span>
-                            )}
+                          </td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {moistureRanges.map((range, rowIndex) => (
+                                <div key={`m-${rowIndex}`} style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <input
+                                    type="text"
+                                    value={range.min ?? ''}
+                                    onChange={(e) => updateSoilSpec(structureType, 'moistureRanges', e.target.value, rowIndex, 'min')}
+                                    placeholder="Min"
+                                    className={`form-input ${validationErrors[`soil-${structureType}-moistureMin-${rowIndex}`] ? 'error' : ''}`}
+                                    style={{ width: '60px', padding: '5px' }}
+                                  />
+                                  <span>-</span>
+                                  <input
+                                    type="text"
+                                    value={range.max ?? ''}
+                                    onChange={(e) => updateSoilSpec(structureType, 'moistureRanges', e.target.value, rowIndex, 'max')}
+                                    placeholder="Max"
+                                    className={`form-input ${validationErrors[`soil-${structureType}-moistureMax-${rowIndex}`] ? 'error' : ''}`}
+                                    style={{ width: '60px', padding: '5px' }}
+                                  />
+                                  {moistureRanges.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => removeMoistureRow(structureType, rowIndex)}
+                                      title="Remove row"
+                                      style={{ padding: '4px 8px', minWidth: '28px' }}
+                                    >
+                                      −
+                                    </button>
+                                  )}
+                                  {validationErrors[`soil-${structureType}-moistureRange-${rowIndex}`] && (
+                                    <span className="field-error">{validationErrors[`soil-${structureType}-moistureRange-${rowIndex}`]}</span>
+                                  )}
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => addMoistureRow(structureType)}
+                                title="Add another moisture range"
+                                style={{ alignSelf: 'flex-start', padding: '4px 8px', minWidth: '28px', fontWeight: 'bold' }}
+                              >
+                                +
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );

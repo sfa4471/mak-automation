@@ -140,6 +140,13 @@
       margin-bottom: 10px;
     }
     
+    .result-remarks-content {
+      line-height: 1.6;
+      font-size: 10pt;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    
     .prefilled-paragraph {
       margin: 10px 0;
       line-height: 1.6;
@@ -191,7 +198,7 @@
     <div class="company-info">
       <div>{{COMPANY_NAME}}</div>
       <div>{{COMPANY_ADDRESS}}</div>
-      <div>P: {{COMPANY_PHONE}}</div>
+      <div>P: {{COMPANY_PHONE}} | E: {{COMPANY_EMAIL}}</div>
     </div>
     <div class="logo-area">{{LOGO_IMAGE}}</div>
   </div>
@@ -235,27 +242,16 @@
     <span class="field-inline-value">{{GENERAL_CONTRACTOR}}</span>
   </div>
   
-  <!-- Method of Test (static) -->
+  <!-- Method of Test (editable) -->
   <div class="field-inline">
     <span class="field-inline-label">METHOD OF TEST:</span>
-    <span class="field-inline-value static-text">Applicable ACI Recommendations and ASTM Standards</span>
+    <span class="field-inline-value">{{METHOD_OF_TEST}}</span>
   </div>
   
-  <!-- Results / Remarks Section -->
+  <!-- Results / Remarks (single client-entered text) -->
   <div class="results-section">
     <div class="results-title">Results / Remarks:</div>
-    
-    <div class="prefilled-paragraph">
-      On the above-mentioned date, a representative of {{COMPANY_NAME}} observed reinforcing steel placed at the following location:
-    </div>
-    
-    <div class="location-detail">
-      • {{LOCATION_DETAIL}}
-    </div>
-    
-    <div class="wire-mesh-paragraph">
-      The wire mesh was checked for <strong>{{WIRE_MESH_SPEC}}</strong> wire mesh spec and was placed as per the drawings and specifications. No discrepancies noted at the time of inspection.
-    </div>
+    <div class="result-remarks-content">{{RESULT_REMARKS}}</div>
   </div>
   
   <!-- Drawings -->
@@ -269,21 +265,8 @@
     <span class="field-inline-label">TECHNICIAN NAME:</span>
     <span class="field-inline-value">{{TECHNICIAN_NAME}}</span>
   </div>
-  
-  <!-- Signature Block -->
-  <div class="signature-block">
-    <div>{{COMPANY_NAME}}</div>
-    <div>{{PE_FIRM_REG_LINE}}</div>
-    <div class="signature-line"></div>
-    <div>{{LICENSE_HOLDER_NAME}}</div>
-    <div>{{LICENSE_HOLDER_TITLE}}</div>
-    <div>T {{COMPANY_PHONE}} | E {{COMPANY_EMAIL}}</div>
-  </div>
-  
-  <!-- Footer -->
-  <div class="footer">
-    <div>{{COMPANY_NAME}}</div>
-  </div>
+
+  {{PDF_FOOTER_HTML}}
 </body>
 </html>
 

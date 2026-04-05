@@ -103,13 +103,39 @@ router.put('/:id/read', authenticate, async (req, res) => {
 router.put('/mark-all-read', authenticate, async (req, res) => {
   try {
     const updated = await db.update(
-      'notifications', 
-      { isRead: 1 }, 
+      'notifications',
+      { isRead: 1 },
       { userId: req.user.id, isRead: 0 }
     );
     res.json({ success: true, updated });
   } catch (err) {
     console.error('Mark all read error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Delete all notifications for current user (clear all)
+router.delete('/clear-all', authenticate, async (req, res) => {
+  try {
+    if (db.isSupabase()) {
+      const { error } = await supabase
+        .from('notifications')
+        .delete()
+        .eq('user_id', req.user.id);
+      if (error) throw error;
+      res.json({ success: true });
+    } else {
+      const sqliteDb = require('../database');
+      await new Promise((resolve, reject) => {
+        sqliteDb.run('DELETE FROM notifications WHERE userId = ?', [req.user.id], function (err) {
+          if (err) reject(err);
+          else resolve(this.changes);
+        });
+      });
+      res.json({ success: true });
+    }
+  } catch (err) {
+    console.error('Clear all notifications error:', err);
     res.status(500).json({ error: 'Database error' });
   }
 });

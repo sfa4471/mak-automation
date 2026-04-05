@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
+import { tasksAPI, Task, TaskHistoryEntry, taskTypeLabel } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
+import { useAppDialog } from '../context/AppDialogContext';
 import { proctorAPI } from '../api/proctor';
 import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
+import RejectTaskModal from './RejectTaskModal';
 import './ProctorForm.css';
 
 const DEFAULT_SAMPLED_BY = 'MAK Lonestar Consulting, LLC';
@@ -56,11 +58,13 @@ const ProctorForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, isAdmin } = useAuth();
+  const { user, isStaffReviewer } = useAuth();
+  const { showAlert, showConfirm } = useAppDialog();
   const isTaskRoute = location.pathname.startsWith('/task/');
   const [task, setTask] = useState<Task | null>(null);
   const [tenant, setTenant] = useState<TenantMe | null>(null);
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
   // Initialize with sample data for columns 1-5
   const getInitialColumns = (): ProctorRow[] => {
     const sampleData = [
@@ -674,6 +678,18 @@ const ProctorForm: React.FC = () => {
     }
   };
 
+  const handleApprove = async () => {
+    if (!task) return;
+    const ok = await showConfirm('Approve this Proctor report?', 'Approve report');
+    if (!ok) return;
+    try {
+      await tasksAPI.approve(task.id);
+      await loadData();
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'The report could not be approved.', 'Approval failed');
+    }
+  };
+
   const handleMoldWeightChange = (value: string) => {
     const numValue = parseFloat(value) || 0;
     setFormData(prev => {
@@ -1176,9 +1192,12 @@ const ProctorForm: React.FC = () => {
     return <div className="proctor-form-container">Task not found.</div>;
   }
 
-  const isEditable = task.status !== 'APPROVED' && (isAdmin() || (task.assignedTechnicianId === user?.id && task.status !== 'READY_FOR_REVIEW'));
+  const isEditable =
+    task.status !== 'APPROVED' &&
+    (isStaffReviewer() || (task.assignedTechnicianId === user?.id && task.status !== 'READY_FOR_REVIEW'));
 
   return (
+    <>
     <div className="proctor-form-container">
       <div className="proctor-form-header">
         <h1>Proctor Test</h1>
@@ -1188,7 +1207,11 @@ const ProctorForm: React.FC = () => {
             onSave={handleSave}
             saving={saving}
           />
-          <button type="button" onClick={() => navigate(isAdmin() ? '/dashboard' : '/technician/dashboard')} className="btn-secondary">
+          <button
+            type="button"
+            onClick={() => navigate(user?.role === 'TECHNICIAN' ? '/technician/dashboard' : '/dashboard')}
+            className="btn-secondary"
+          >
             Back
           </button>
           {isEditable && (
@@ -1206,6 +1229,22 @@ const ProctorForm: React.FC = () => {
               </button>
             </>
           )}
+          {isTaskRoute &&
+            task.status === 'READY_FOR_REVIEW' &&
+            isStaffReviewer() && (
+              <>
+                <button type="button" onClick={handleApprove} className="btn-success">
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRejectModalOpen(true)}
+                  className="btn-danger"
+                >
+                  Reject
+                </button>
+              </>
+            )}
         </div>
       </div>
 
@@ -2035,6 +2074,20 @@ const ProctorForm: React.FC = () => {
         )}
       </div>
     </div>
+    <RejectTaskModal
+      isOpen={rejectModalOpen}
+      contextLine={
+        task ? `${task.projectNumber ?? '—'} · ${taskTypeLabel(task)}` : undefined
+      }
+      onClose={() => setRejectModalOpen(false)}
+      onSubmit={async (payload) => {
+        if (!task) return;
+        await tasksAPI.reject(task.id, payload);
+        setRejectModalOpen(false);
+        await loadData();
+      }}
+    />
+    </>
   );
 };
 

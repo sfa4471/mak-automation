@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authAPI, User } from '../../api/auth';
+import { useAppDialog } from '../../context/AppDialogContext';
 import './Admin.css';
 
 const ManageTechnicians: React.FC = () => {
   const navigate = useNavigate();
+  const { showConfirm } = useAppDialog();
   const [technicians, setTechnicians] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -87,9 +89,11 @@ const ManageTechnicians: React.FC = () => {
   };
 
   const handleDelete = async (tech: User) => {
-    if (!window.confirm(`Are you sure you want to delete ${tech.name || tech.email}? This action cannot be undone.`)) {
-      return;
-    }
+    const ok = await showConfirm(
+      `Delete ${tech.name || tech.email}? This action cannot be undone.`,
+      'Delete technician'
+    );
+    if (!ok) return;
 
     setError('');
     setSuccess('');

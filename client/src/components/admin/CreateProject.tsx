@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { projectsAPI, SoilSpecs, ConcreteSpecs, CustomerDetails } from '../../api/projects';
+import { projectsAPI, SoilSpecs, ConcreteSpecs, CustomerDetails, normalizeSoilSpecRow } from '../../api/projects';
 import { tenantsAPI, TenantMe } from '../../api/tenants';
 import { getCurrentApiBaseUrl } from '../../api/api';
 import './Admin.css';
@@ -49,6 +49,7 @@ const CreateProject: React.FC = () => {
   const [tenant, setTenant] = useState<TenantMe | null>(null);
   const [projectNumber, setProjectNumber] = useState('');
   const [projectName, setProjectName] = useState('');
+  const [clientName, setClientName] = useState('');
   const [customerEmailsStr, setCustomerEmailsStr] = useState('');
   const [ccEmailsStr, setCcEmailsStr] = useState('');
   const [bccEmailsStr, setBccEmailsStr] = useState('');
@@ -112,29 +113,62 @@ const CreateProject: React.FC = () => {
     return true;
   };
 
-  const updateSoilSpec = (structureType: string, field: string, value: any) => {
-    // Use functional update to ensure we have the latest state
+  const updateSoilSpec = (structureType: string, field: string, value: any, index?: number, subField?: 'min' | 'max') => {
     setSoilSpecs(prev => {
-      const updated = {
-        ...prev,
-        [structureType]: {
-          ...prev[structureType],
-          [field]: value
-        }
-      };
-      // Debug: Log state update
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`🔄 Updated soil spec: ${structureType}.${field} = ${value}`, updated[structureType]);
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      if (field === 'densityPcts' && index !== undefined) {
+        const densityPcts = [...(current.densityPcts || [])];
+        densityPcts[index] = value;
+        return { ...prev, [structureType]: { ...current, densityPcts } };
       }
-      return updated;
+      if (field === 'moistureRanges' && index !== undefined && subField) {
+        const moistureRanges = (current.moistureRanges || []).map((r, i) =>
+          i === index ? { ...r, [subField]: value } : r
+        );
+        return { ...prev, [structureType]: { ...current, moistureRanges } };
+      }
+      return { ...prev, [structureType]: { ...prev[structureType], [field]: value } };
     });
-    // Clear validation error for this field
-    const errorKey = `soil-${structureType}-${field}`;
+    const errorKey = index !== undefined ? `soil-${structureType}-${field}-${index}` : `soil-${structureType}-${field}`;
     if (validationErrors[errorKey]) {
       const newErrors = { ...validationErrors };
       delete newErrors[errorKey];
       setValidationErrors(newErrors);
     }
+  };
+
+  const addDensityRow = (structureType: string) => {
+    setSoilSpecs(prev => {
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      const densityPcts = [...(current.densityPcts || []), ''];
+      return { ...prev, [structureType]: { ...current, densityPcts } };
+    });
+  };
+
+  const removeDensityRow = (structureType: string, index: number) => {
+    setSoilSpecs(prev => {
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      const densityPcts = (current.densityPcts || []).filter((_, i) => i !== index);
+      if (densityPcts.length === 0) densityPcts.push('');
+      return { ...prev, [structureType]: { ...current, densityPcts } };
+    });
+  };
+
+  const addMoistureRow = (structureType: string) => {
+    setSoilSpecs(prev => {
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      const moistureRanges = [...(current.moistureRanges || []), { min: '', max: '' }];
+      return { ...prev, [structureType]: { ...current, moistureRanges } };
+    });
+  };
+
+  const removeMoistureRow = (structureType: string, index: number) => {
+    setSoilSpecs(prev => {
+      const current = normalizeSoilSpecRow(prev[structureType]);
+      const moistureRanges = (current.moistureRanges || []).filter((_, i) => i !== index);
+      if (moistureRanges.length === 0) moistureRanges.push({ min: '', max: '' });
+      return { ...prev, [structureType]: { ...current, moistureRanges } };
+    });
   };
 
   const updateConcreteSpec = (structureType: string, field: string, value: any) => {
@@ -218,14 +252,37 @@ const CreateProject: React.FC = () => {
     setLoading(true);
 
     try {
+      let payloadSoilSpecs: SoilSpecs | undefined;
+      if (showSoilSpecs && Object.keys(soilSpecs).length > 0) {
+        const filtered: SoilSpecs = {};
+        Object.keys(soilSpecs).forEach(key => {
+          const spec = normalizeSoilSpecRow(soilSpecs[key]);
+          const densityPcts = spec.densityPcts || [];
+          const moistureRanges = spec.moistureRanges || [];
+          const hasDensity = densityPcts.some(p => p != null && String(p).trim() !== '');
+          const hasMoisture = moistureRanges.some(
+            r => (r.min != null && String(r.min).trim() !== '') || (r.max != null && String(r.max).trim() !== '')
+          );
+          if (hasDensity || hasMoisture) {
+            filtered[key] = {
+              densityPcts: densityPcts.length ? densityPcts : undefined,
+              moistureRanges: moistureRanges.length ? moistureRanges : undefined,
+              ...(densityPcts.length > 0 && densityPcts[0] != null && String(densityPcts[0]).trim() !== '' && { densityPct: String(densityPcts[0]) }),
+              ...(moistureRanges.length > 0 && moistureRanges[0] && { moistureRange: moistureRanges[0] })
+            };
+          }
+        });
+        payloadSoilSpecs = Object.keys(filtered).length > 0 ? filtered : undefined;
+      }
       const created = await projectsAPI.create({
         projectNumber: trimmedProjectNumber,
         projectName,
+        clientName: clientName.trim() || undefined,
         customerEmails: validTo,
         ccEmails: validCc.length > 0 ? validCc : undefined,
         bccEmails: validBcc.length > 0 ? validBcc : undefined,
         customerDetails: Object.keys(customerDetails).length > 0 ? customerDetails : undefined,
-        soilSpecs: showSoilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : undefined,
+        soilSpecs: payloadSoilSpecs,
         concreteSpecs: showConcreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : undefined
       });
 
@@ -291,6 +348,16 @@ const CreateProject: React.FC = () => {
               onChange={(e) => setProjectName(e.target.value)}
               required
               placeholder="e.g., Storage 365, NEC of Country Club Rd & Hobson Rd"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="clientName">Client Name</label>
+            <input
+              type="text"
+              id="clientName"
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              placeholder="Client or company name"
             />
           </div>
 
@@ -639,44 +706,83 @@ const CreateProject: React.FC = () => {
                     </thead>
                     <tbody>
                       {SOIL_STRUCTURE_TYPES.map((structureType) => {
-                        const spec = soilSpecs[structureType] || {};
-                        const moistureRange = spec.moistureRange || {};
+                        const spec = normalizeSoilSpecRow(soilSpecs[structureType]);
+                        const densityPcts = spec.densityPcts || [''];
+                        const moistureRanges = spec.moistureRanges || [{ min: '', max: '' }];
                         return (
                           <tr key={structureType}>
-                            <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500' }}>{structureType}</td>
-                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
-                              <input
-                                type="text"
-                                value={spec.densityPct || ''}
-                                onChange={(e) => updateSoilSpec(structureType, 'densityPct', e.target.value)}
-                                style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
-                              />
+                            <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>{structureType}</td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {densityPcts.map((pct, rowIndex) => (
+                                  <div key={`d-${rowIndex}`} style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <input
+                                      type="text"
+                                      value={pct}
+                                      onChange={(e) => updateSoilSpec(structureType, 'densityPcts', e.target.value, rowIndex)}
+                                      style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
+                                    />
+                                    {densityPcts.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeDensityRow(structureType, rowIndex)}
+                                        title="Remove row"
+                                        style={{ padding: '4px 8px', minWidth: '28px' }}
+                                      >
+                                        −
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => addDensityRow(structureType)}
+                                  title="Add another density"
+                                  style={{ alignSelf: 'flex-start', padding: '4px 8px', minWidth: '28px', fontWeight: 'bold' }}
+                                >
+                                  +
+                                </button>
+                              </div>
                             </td>
-                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
-                              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                                <input
-                                  type="text"
-                                  value={moistureRange.min || ''}
-                                  onChange={(e) => {
-                                    const currentSpec = soilSpecs[structureType] || {};
-                                    const currentRange = currentSpec.moistureRange || {};
-                                    updateSoilSpec(structureType, 'moistureRange', { min: e.target.value, max: currentRange.max || '' });
-                                  }}
-                                  placeholder="Min"
-                                  style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
-                                />
-                                <span>-</span>
-                                <input
-                                  type="text"
-                                  value={moistureRange.max || ''}
-                                  onChange={(e) => {
-                                    const currentSpec = soilSpecs[structureType] || {};
-                                    const currentRange = currentSpec.moistureRange || {};
-                                    updateSoilSpec(structureType, 'moistureRange', { min: currentRange.min || '', max: e.target.value });
-                                  }}
-                                  placeholder="Max"
-                                  style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
-                                />
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {moistureRanges.map((range, rowIndex) => (
+                                  <div key={`m-${rowIndex}`} style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <input
+                                      type="text"
+                                      value={range.min ?? ''}
+                                      onChange={(e) => updateSoilSpec(structureType, 'moistureRanges', e.target.value, rowIndex, 'min')}
+                                      placeholder="Min"
+                                      style={{ width: '60px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
+                                    />
+                                    <span>-</span>
+                                    <input
+                                      type="text"
+                                      value={range.max ?? ''}
+                                      onChange={(e) => updateSoilSpec(structureType, 'moistureRanges', e.target.value, rowIndex, 'max')}
+                                      placeholder="Max"
+                                      style={{ width: '60px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
+                                    />
+                                    {moistureRanges.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeMoistureRow(structureType, rowIndex)}
+                                        title="Remove row"
+                                        style={{ padding: '4px 8px', minWidth: '28px' }}
+                                      >
+                                        −
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => addMoistureRow(structureType)}
+                                  title="Add another moisture range"
+                                  style={{ alignSelf: 'flex-start', padding: '4px 8px', minWidth: '28px', fontWeight: 'bold' }}
+                                >
+                                  +
+                                </button>
                               </div>
                             </td>
                           </tr>

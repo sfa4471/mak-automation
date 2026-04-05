@@ -68,7 +68,8 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+// Proctor approval PDF uses an internal POST with the full proctor_data row; default 100kb is too small.
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
 
 // Health check endpoint (always available)
 app.get('/health', (req, res) => {
@@ -103,6 +104,10 @@ app.use('/api/proctor', require('./routes/proctor'));
 app.use('/api/pdf', require('./routes/pdf'));
 app.use('/api/notifications', require('./routes/notifications').router);
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/admin', require('./routes/admin'));
+
+// Logos, signatures, and other files under server/public (e.g. /tenants/:id/signature.png)
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve static files from React app in production (only if build exists)
 // This catch-all must come AFTER API routes to ensure API routes work
@@ -177,6 +182,17 @@ app.listen(PORT, HOST, () => {
   const localIP = getLocalIP();
   if (localIP) {
     console.log(`Server also accessible on network at http://${localIP}:${PORT}`);
+  }
+
+  // Nightly auto-send scheduler (respects the admin ON/OFF toggle in app_settings).
+  // Run time: America/Chicago — see server/jobs/autoSendScheduler.js (TARGET_HOUR / TARGET_MINUTE).
+  if (process.env.ENABLE_AUTO_SEND_SCHEDULER !== 'false') {
+    try {
+      const { startAutoSendScheduler } = require('./jobs/autoSendScheduler');
+      startAutoSendScheduler();
+    } catch (err) {
+      console.error('Failed to start auto-send scheduler:', err);
+    }
   }
 });
 

@@ -9,6 +9,8 @@ interface AuthContextType {
   login: (email: string, password: string, tenantId?: number) => Promise<void>;
   logout: () => void;
   isAdmin: () => boolean;
+  /** Admin or PM: full tenant task/project visibility and may edit submitted reports / approve / reject. */
+  isStaffReviewer: () => boolean;
   isTechnician: () => boolean;
 }
 
@@ -84,10 +86,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const isAdmin = () => user?.role === 'ADMIN';
+  const isStaffReviewer = () => user?.role === 'ADMIN' || user?.role === 'PM';
   const isTechnician = () => user?.role === 'TECHNICIAN';
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, isAdmin, isTechnician }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, isAdmin, isStaffReviewer, isTechnician }}>
       {children}
     </AuthContext.Provider>
   );

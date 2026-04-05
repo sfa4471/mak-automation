@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable } = require('../db/supabase');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, isStaffReviewer } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { logTaskHistory } = require('./tasks');
 
@@ -222,7 +222,7 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       lastEditedByUserId: req.user.id,
       updatedAt: new Date().toISOString()
     };
-    if (!req.legacyDb) wp1Data.tenantId = tenantId;
+    if (tenantId != null && (!req.legacyDb || db.isSupabase())) wp1Data.tenantId = tenantId;
 
     // Check if record exists
     const existing = await db.get('wp1_data', { taskId });
@@ -262,21 +262,26 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       
       if (updateStatus === 'READY_FOR_REVIEW') {
         taskUpdate.reportSubmitted = 1;
-        if (req.user.role === 'TECHNICIAN') {
-          taskUpdate.submittedAt = new Date().toISOString();
-        }
       }
       
       await db.update('tasks', taskUpdate, { id: taskId });
       
       // Log history
       if (updateStatus === 'READY_FOR_REVIEW') {
-        await logTaskHistory(taskId, req.user.role, req.user.name || req.user.email || 'User', req.user.id, 'SUBMITTED', 'Report submitted for review');
+        await logTaskHistory(
+          taskId,
+          req.tenantId ?? null,
+          req.user.role,
+          req.user.name || req.user.email || 'User',
+          req.user.id,
+          'SUBMITTED',
+          'Report submitted for review'
+        );
       }
     }
 
-    // Update task assignment if technician changed (admin only)
-    if (req.user.role === 'ADMIN' && technician) {
+    // Update task assignment if technician changed (admin/PM only)
+    if (isStaffReviewer(req.user.role) && technician) {
       // Try to find technician by name or email
       const techUser = await db.get('users', { role: 'TECHNICIAN' });
       // Note: This is simplified - in production, you'd search by name or email

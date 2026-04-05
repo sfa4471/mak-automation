@@ -9,6 +9,8 @@ export interface RebarReport {
   reportDate?: string;
   inspectionDate?: string;
   generalContractor?: string;
+  methodOfTest?: string;
+  resultRemarks?: string;
   locationDetail?: string;
   wireMeshSpec?: string;
   drawings?: string;

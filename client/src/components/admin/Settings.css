@@ -64,6 +64,52 @@
   margin-bottom: 30px;
 }
 
+/* Signature preview (Company profile) */
+.signature-upload-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.signature-preview-wrap {
+  flex-shrink: 0;
+}
+
+.signature-preview-frame {
+  width: 200px;
+  min-height: 56px;
+  max-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  background: #fafafa;
+  border: 1px solid #d8d8d8;
+  border-radius: 6px;
+}
+
+.signature-preview-img {
+  max-width: 100%;
+  max-height: 56px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.signature-preview-fallback {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #666;
+  text-align: center;
+}
+
+.signature-preview-caption {
+  margin-top: 6px;
+}
+
 .form-group {
   margin-bottom: 20px;
 }

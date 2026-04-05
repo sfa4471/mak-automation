@@ -61,7 +61,7 @@ const ChangePassword: React.FC = () => {
     }
   };
 
-  const dashboardPath = user?.role === 'ADMIN' ? '/dashboard' : '/technician/dashboard';
+  const dashboardPath = user?.role === 'TECHNICIAN' ? '/technician/dashboard' : '/dashboard';
 
   return (
     <div className="change-password-page">

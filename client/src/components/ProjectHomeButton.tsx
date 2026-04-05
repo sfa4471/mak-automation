@@ -14,7 +14,7 @@ const ProjectHomeButton: React.FC<ProjectHomeButtonProps> = memo(({
   saving = false
 }) => {
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { user } = useAuth();
   const [isNavigating, setIsNavigating] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -27,7 +27,7 @@ const ProjectHomeButton: React.FC<ProjectHomeButtonProps> = memo(({
       await onSave();
       
       // After successful save, navigate to dashboard (task list)
-      navigate(isAdmin() ? '/dashboard' : '/technician/dashboard');
+      navigate(user?.role === 'TECHNICIAN' ? '/technician/dashboard' : '/dashboard');
     } catch (err: any) {
       console.error('Error saving before navigation:', err);
       setSaveError(err.response?.data?.error || 'Save failed. Please try again.');

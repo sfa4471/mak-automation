@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Task, taskTypeLabel } from '../api/tasks';
-import { projectsAPI, Project, ProjectDrawing } from '../api/projects';
+import { projectsAPI, Project, ProjectDrawing, normalizeSoilSpecRow } from '../api/projects';
 import './TaskDetailModal.css';
 
 interface TaskDetailModalProps {
@@ -17,6 +17,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
   const [loadingProject, setLoadingProject] = useState(true);
   const [drawingsExpanded, setDrawingsExpanded] = useState(false);
   const [openingDrawing, setOpeningDrawing] = useState<string | null>(null);
+  const [drawingError, setDrawingError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadProject = async () => {
@@ -48,14 +49,25 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
 
   const handleOpenDrawing = async (filename: string) => {
     if (!task.projectId) return;
+    setDrawingError(null);
     setOpeningDrawing(filename);
     try {
       const blob = await projectsAPI.getDrawingBlob(task.projectId, filename);
       const url = window.URL.createObjectURL(blob);
-      window.open(url, '_blank', 'noopener');
-      setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+      const newWin = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!newWin) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      setTimeout(() => window.URL.revokeObjectURL(url), 120000);
     } catch (err) {
       console.error('Error opening drawing:', err);
+      setDrawingError('This file could not be opened. Check your connection and try again, or contact your administrator if the problem continues.');
     } finally {
       setOpeningDrawing(null);
     }
@@ -81,7 +93,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
     const statusMap: { [key: string]: string } = {
       ASSIGNED: 'Assigned',
       IN_PROGRESS_TECH: 'In Progress',
-      READY_FOR_REVIEW: 'Ready for Review',
+      READY_FOR_REVIEW: 'Under review (PM / Admin)',
       APPROVED: 'Approved',
       REJECTED_NEEDS_FIX: 'Rejected – Needs Fix',
     };
@@ -161,21 +173,28 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
             </tr>
           </thead>
           <tbody>
-            {Object.entries(project.soilSpecs).map(([structureType, spec]) => (
-              <tr key={structureType}>
-                <td className="spec-structure-type">{capitalizeStructureType(structureType)}</td>
-                <td>{spec.densityPct || 'N/A'}</td>
-                <td>
-                  {spec.moistureRange?.min && spec.moistureRange?.max
-                    ? `${spec.moistureRange.min}% - ${spec.moistureRange.max}%`
-                    : spec.moistureRange?.min
-                    ? `≥ ${spec.moistureRange.min}%`
-                    : spec.moistureRange?.max
-                    ? `≤ ${spec.moistureRange.max}%`
-                    : 'N/A'}
-                </td>
-              </tr>
-            ))}
+            {Object.entries(project.soilSpecs).map(([structureType, spec]) => {
+              const normalized = normalizeSoilSpecRow(spec);
+              const densityPcts = (normalized.densityPcts || []).filter(p => p != null && String(p).trim() !== '');
+              const moistureRanges = (normalized.moistureRanges || []).filter(
+                r => r && (String(r.min || '').trim() !== '' || String(r.max || '').trim() !== '')
+              );
+              const densityDisplay = densityPcts.length > 0 ? densityPcts.join(', ') : 'N/A';
+              const moistureParts = moistureRanges.map(r => {
+                if (r.min && r.max) return `${r.min}% - ${r.max}%`;
+                if (r.min) return `≥ ${r.min}%`;
+                if (r.max) return `≤ ${r.max}%`;
+                return '';
+              });
+              const moistureDisplay = moistureParts.length > 0 ? moistureParts.filter(Boolean).join('; ') : 'N/A';
+              return (
+                <tr key={structureType}>
+                  <td className="spec-structure-type">{capitalizeStructureType(structureType)}</td>
+                  <td>{densityDisplay}</td>
+                  <td>{moistureDisplay}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -328,6 +347,11 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
               </button>
               {drawingsExpanded && (
                 <div className="drawings-list-container" style={{ padding: '12px 0', borderTop: '1px solid #eee' }}>
+                  {drawingError && (
+                    <p className="specs-empty" style={{ color: '#c62828', marginBottom: 8 }} role="alert">
+                      {drawingError}
+                    </p>
+                  )}
                   {loadingProject ? (
                     <p className="specs-empty">Loading...</p>
                   ) : drawings.length === 0 ? (

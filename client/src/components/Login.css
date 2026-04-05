@@ -95,6 +95,21 @@
   line-height: 1.4;
 }
 
+.login-forgot-link {
+  color: #667eea;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.login-forgot-link:hover {
+  text-decoration: underline;
+}
+
+.login-help-secondary {
+  color: #666;
+  font-weight: 400;
+}
+
 .login-info {
   margin-top: 20px;
   padding-top: 20px;

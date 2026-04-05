@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { authAPI, User } from '../../api/auth';
 import { tasksAPI, Task } from '../../api/tasks';
+import { useAppDialog } from '../../context/AppDialogContext';
 import './AssignTechnicianModal.css';
 
 interface AssignTechnicianModalProps {
@@ -10,6 +11,7 @@ interface AssignTechnicianModalProps {
 }
 
 const AssignTechnicianModal: React.FC<AssignTechnicianModalProps> = ({ task, onClose, onSuccess }) => {
+  const { showConfirm } = useAppDialog();
   const [technicians, setTechnicians] = useState<User[]>([]);
   const [selectedTechnicianId, setSelectedTechnicianId] = useState<number | ''>(task.assignedTechnicianId || '');
   const [scheduledStartDate, setScheduledStartDate] = useState<string>(task.scheduledStartDate || '');
@@ -40,9 +42,11 @@ const AssignTechnicianModal: React.FC<AssignTechnicianModalProps> = ({ task, onC
     // Check if reassigning from IN_PROGRESS or READY_FOR_REVIEW
     if (task.assignedTechnicianId && 
         (task.status === 'IN_PROGRESS_TECH' || task.status === 'READY_FOR_REVIEW')) {
-      if (!window.confirm('This task is in progress or ready for review. Reassigning will change the assigned technician. Continue?')) {
-        return;
-      }
+      const reassignOk = await showConfirm(
+        'This task is in progress or ready for review. Reassigning will change the assigned technician. Continue?',
+        'Reassign technician'
+      );
+      if (!reassignOk) return;
     }
 
     if (!selectedTechnicianId) {
@@ -109,7 +113,6 @@ const AssignTechnicianModal: React.FC<AssignTechnicianModalProps> = ({ task, onC
               id="scheduledStartDate"
               value={scheduledStartDate}
               onChange={(e) => setScheduledStartDate(e.target.value)}
-              min={new Date().toISOString().split('T')[0]}
             />
             <small>When the task is scheduled to begin (optional)</small>
           </div>
@@ -147,7 +150,6 @@ const AssignTechnicianModal: React.FC<AssignTechnicianModalProps> = ({ task, onC
               id="dueDate"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              min={new Date().toISOString().split('T')[0]}
             />
             <small>Deadline for report/PDF delivery (optional)</small>
           </div>

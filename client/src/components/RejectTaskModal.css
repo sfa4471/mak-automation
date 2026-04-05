@@ -1,0 +1,142 @@
+.reject-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10050;
+  padding: 16px;
+}
+
+.reject-modal {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  max-width: 520px;
+  width: 100%;
+  padding: 24px 28px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.reject-modal-title {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.reject-modal-intro {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #444;
+}
+
+.reject-modal-context {
+  margin: 0 0 16px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #333;
+  padding: 10px 12px;
+  background: #f4f6f8;
+  border-radius: 6px;
+}
+
+.reject-modal-label {
+  display: block;
+  margin-top: 16px;
+  margin-bottom: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.reject-required {
+  font-weight: 500;
+  color: #666;
+}
+
+.reject-modal-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 100px;
+}
+
+.reject-modal-textarea:focus {
+  outline: none;
+  border-color: #1976d2;
+  box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.2);
+}
+
+.reject-modal-date {
+  width: 100%;
+  max-width: 220px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.reject-modal-date:focus {
+  outline: none;
+  border-color: #1976d2;
+}
+
+.reject-modal-error {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #fdecea;
+  border: 1px solid #f5c6cb;
+  border-radius: 6px;
+  color: #842029;
+  font-size: 0.875rem;
+}
+
+.reject-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 22px;
+  flex-wrap: wrap;
+}
+
+.reject-modal-btn {
+  padding: 10px 18px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+
+.reject-modal-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.reject-modal-btn-secondary {
+  background: #e9ecef;
+  color: #333;
+}
+
+.reject-modal-btn-secondary:hover:not(:disabled) {
+  background: #dee2e6;
+}
+
+.reject-modal-btn-danger {
+  background: #c62828;
+  color: #fff;
+}
+
+.reject-modal-btn-danger:hover:not(:disabled) {
+  background: #b71c1c;
+}

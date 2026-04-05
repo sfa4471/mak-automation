@@ -3,7 +3,7 @@ import api from './api';
 export interface User {
   id: number;
   email: string;
-  role: 'ADMIN' | 'TECHNICIAN';
+  role: 'ADMIN' | 'TECHNICIAN' | 'PM';
   name?: string;
   tenantId?: number;
   tenantName?: string;

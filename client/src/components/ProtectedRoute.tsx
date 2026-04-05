@@ -5,11 +5,18 @@ import { useAuth } from '../context/AuthContext';
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requireAdmin?: boolean;
+  /** Admin or PM (e.g. Tasks board, change password for staff reviewers). */
+  requireAdminOrPm?: boolean;
   requireTechnician?: boolean;
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requireAdmin = false, requireTechnician = false }) => {
-  const { user, loading, isAdmin, isTechnician } = useAuth();
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
+  children,
+  requireAdmin = false,
+  requireAdminOrPm = false,
+  requireTechnician = false
+}) => {
+  const { user, loading, isAdmin, isStaffReviewer, isTechnician } = useAuth();
 
   if (loading) {
     return <div>Loading...</div>;
@@ -20,6 +27,10 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requireAdmin 
   }
 
   if (requireAdmin && !isAdmin()) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  if (requireAdminOrPm && !isStaffReviewer()) {
     return <Navigate to="/dashboard" replace />;
   }
 

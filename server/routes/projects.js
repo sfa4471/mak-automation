@@ -4,7 +4,7 @@ const fs = require('fs');
 const multer = require('multer');
 const db = require('../db');
 const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, isStaffReviewer } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { ensureProjectDirectory, getProjectDrawingsDir } = require('../utils/pdfFileManager');
@@ -255,6 +255,7 @@ const INVALID_PROJECT_NUMBER_CHARS = /[\\/:*?"<>|]/;
 router.post('/', authenticate, requireTenant, requireAdmin, [
   body('projectName').notEmpty().trim(),
   body('projectNumber').optional().trim(),
+  body('clientName').optional().trim(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
   body('soilSpecs').optional().isObject(),
@@ -269,6 +270,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
     const { 
       projectName, 
       projectNumber: bodyProjectNumber,
+      clientName,
       customerEmails,
       soilSpecs,
       concreteSpecs
@@ -335,7 +337,11 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       projectName: trimmedProjectName,
       tenantId
     };
-    
+    const trimmedClientName = clientName != null ? String(clientName).trim() : null;
+    if (trimmedClientName !== null && trimmedClientName !== '') {
+      projectData.clientName = trimmedClientName;
+    }
+
     if (db.isSupabase()) {
       // Supabase: pass objects/arrays directly (will be stored as JSONB)
       projectData.customerEmails = customerEmails && customerEmails.length > 0 ? customerEmails : null;
@@ -418,7 +424,7 @@ router.get('/', authenticate, requireTenant, async (req, res) => {
     let projects;
 
     if (db.isSupabase()) {
-      if (req.user.role === 'ADMIN') {
+      if (isStaffReviewer(req.user.role)) {
         let query = supabase.from('projects').select('*').order('created_at', { ascending: false });
         if (!legacyDb) query = query.eq('tenant_id', tenantId);
         const { data, error } = await query;
@@ -453,7 +459,7 @@ router.get('/', authenticate, requireTenant, async (req, res) => {
       }
     } else {
       const sqliteDb = require('../database');
-      if (req.user.role === 'ADMIN') {
+      if (isStaffReviewer(req.user.role)) {
         projects = await new Promise((resolve, reject) => {
           sqliteDb.all(
             `SELECT p.*, 
@@ -581,6 +587,7 @@ router.get('/:id', authenticate, requireTenant, async (req, res) => {
 // Update project (Admin only, same tenant)
 router.put('/:id', authenticate, requireTenant, requireAdmin, [
   body('projectName').optional().notEmpty(),
+  body('clientName').optional().trim(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
   body('soilSpecs').optional().isObject(),
@@ -609,6 +616,7 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
 
     const { 
       projectName, 
+      clientName,
       customerEmails,
       soilSpecs,
       concreteSpecs
@@ -631,6 +639,9 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
     
     if (projectName !== undefined) {
       updateData.projectName = projectName.trim();
+    }
+    if (clientName !== undefined) {
+      updateData.clientName = clientName === '' ? null : String(clientName).trim();
     }
     if (customerEmails !== undefined && customerEmails !== null) {
       if (db.isSupabase()) {

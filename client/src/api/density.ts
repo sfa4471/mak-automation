@@ -36,6 +36,14 @@ export interface DensityReport {
   densSpecPercent: string;
   moistSpecMin: string;
   moistSpecMax: string;
+  /** Multiple density spec values (drives dynamic columns in spec UI and PDF). */
+  densSpecPercents?: string[];
+  /** Multiple moisture spec ranges (drives dynamic columns in spec UI and PDF). */
+  moistSpecRanges?: Array<{ min?: string; max?: string }>;
+  /** DB JSONB shape (dens_specs); UI should use densSpecPercents when the API sets it. */
+  densSpecs?: string[];
+  /** DB JSONB shape (moist_specs). */
+  moistSpecs?: Array<{ min?: string; max?: string }>;
   gaugeNo: string;
   stdDensityCount: string;
   stdMoistCount: string;

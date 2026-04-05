@@ -14,6 +14,18 @@ export type TaskStatus =
   | 'APPROVED'
   | 'REJECTED_NEEDS_FIX';
 
+/** Present on approve responses (Supabase) when the server generates/stores the report PDF. */
+export interface ApprovalPdfResult {
+  success?: boolean;
+  skipped?: boolean;
+  taskType?: string;
+  saved?: boolean;
+  savedPath?: string | null;
+  fileName?: string | null;
+  saveError?: string | null;
+  error?: string;
+}
+
 export interface Task {
   id: number;
   projectId: number;
@@ -30,6 +42,11 @@ export interface Task {
   engagementNotes?: string;
   rejectionRemarks?: string;
   resubmissionDueDate?: string;
+  // PM review fields (snake_case in API responses)
+  pm_review_status?: 'NOT_STARTED' | 'REVIEWING' | 'COMPLETED' | string;
+  pm_review_started_at?: string;
+  pm_review_completed_at?: string;
+  pm_reviewer_user_id?: number;
   fieldCompleted?: number;
   fieldCompletedAt?: string;
   reportSubmitted?: number;
@@ -43,6 +60,9 @@ export interface Task {
   projectNumber?: string;
   projectName?: string;
   proctorNo?: number;
+  /** Per project + task type; 1 = unnumbered label, 2+ = "Rebar 2", etc. */
+  workflowInstanceNo?: number | null;
+  pdf?: ApprovalPdfResult | null;
 }
 
 export interface ProctorTask {
@@ -112,7 +132,13 @@ export const taskTypeLabel = (taskTypeOrTask: TaskType | Task): string => {
   if (task.taskType === 'PROCTOR' && task.proctorNo) {
     return `${baseLabel} ${task.proctorNo}`;
   }
-  
+
+  const raw = task as Task & { workflow_instance_no?: number };
+  const workflowInst = task.workflowInstanceNo ?? raw.workflow_instance_no;
+  if (workflowInst != null && workflowInst > 1) {
+    return `${baseLabel} ${workflowInst}`;
+  }
+
   return baseLabel;
 };
 
@@ -142,6 +168,11 @@ export const tasksAPI = {
     return response.data;
   },
 
+  delete: async (id: number): Promise<{ success: boolean }> => {
+    const response = await api.delete<{ success: boolean }>(`/tasks/${id}`);
+    return response.data;
+  },
+
   updateStatus: async (id: number, status: TaskStatus): Promise<Task> => {
     const response = await api.put<Task>(`/tasks/${id}/status`, { status });
     return response.data;
@@ -154,6 +185,28 @@ export const tasksAPI = {
 
   reject: async (id: number, data: RejectTaskRequest): Promise<Task> => {
     const response = await api.post<Task>(`/tasks/${id}/reject`, data);
+    return response.data;
+  },
+
+  bulkApprove: async (ids: number[]): Promise<{
+    success: boolean;
+    totals: {
+      requested: number;
+      approved: number;
+      skippedWrongStatus: number;
+      notFound: number;
+      forbidden: number;
+      errors: number;
+    };
+    results: Array<{
+      id: number;
+      status: string;
+      currentStatus?: TaskStatus;
+      error?: string;
+      pdf?: ApprovalPdfResult | null;
+    }>;
+  }> => {
+    const response = await api.post(`/tasks/bulk-approve`, { ids });
     return response.data;
   },
 

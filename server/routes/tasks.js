@@ -1,10 +1,11 @@
 const express = require('express');
 const db = require('../db');
-const { supabase, isAvailable } = require('../db/supabase');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
+const { authenticate, requireAdmin, requireAdminOrPm, isStaffReviewer } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { createNotification } = require('./notifications');
+const { generateAndSaveReportPdfForTask } = require('../jobs/sendApprovedReports');
 
 const router = express.Router();
 
@@ -23,6 +24,141 @@ async function logTaskHistory(taskId, tenantId, actorRole, actorName, actorUserI
   } catch (err) {
     console.error('Error logging task history:', err);
   }
+}
+
+/** PM review columns exist on Supabase tasks; legacy SQLite tasks table does not. */
+function applyPmReviewCompleted(updateData, req, nowIso) {
+  if (db.isSupabase()) {
+    updateData.pmReviewStatus = 'COMPLETED';
+    updateData.pmReviewCompletedAt = nowIso;
+    updateData.pmReviewerUserId = req.user.id;
+  }
+}
+
+/**
+ * Write APPROVED status + audit fields. Uses pm_review_* on Supabase when the columns exist;
+ * if the project has not run 20260315000000_add_pm_review_fields.sql, retries without them.
+ */
+async function updateTaskApprovedPersist(taskId, baseUpdate, req, nowIso) {
+  if (!db.isSupabase()) {
+    await db.update('tasks', baseUpdate, { id: taskId });
+    return;
+  }
+  const withPm = { ...baseUpdate };
+  applyPmReviewCompleted(withPm, req, nowIso);
+  try {
+    await db.update('tasks', withPm, { id: taskId });
+  } catch (e) {
+    const msg = e && e.message ? String(e.message) : String(e);
+    if (/pm_review|schema cache/i.test(msg)) {
+      console.warn(
+        '[tasks] tasks.pm_review_* columns missing; saved approval without PM review fields. ' +
+          'Apply migration supabase/migrations/20260315000000_add_pm_review_fields.sql on this database.'
+      );
+      await db.update('tasks', baseUpdate, { id: taskId });
+      return;
+    }
+    throw e;
+  }
+}
+
+const WORKFLOW_INSTANCED_TASK_TYPES = new Set([
+  'REBAR',
+  'DENSITY_MEASUREMENT',
+  'COMPRESSIVE_STRENGTH',
+  'CYLINDER_PICKUP'
+]);
+
+async function getNextWorkflowInstanceNo(projectId, taskType) {
+  if (!WORKFLOW_INSTANCED_TASK_TYPES.has(taskType)) return null;
+  if (db.isSupabase()) {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('workflow_instance_no')
+      .eq('project_id', projectId)
+      .eq('task_type', taskType)
+      .not('workflow_instance_no', 'is', null)
+      .order('workflow_instance_no', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const max = data?.workflow_instance_no;
+    return max != null ? max + 1 : 1;
+  }
+  const sqliteDb = require('../database');
+  const row = await new Promise((resolve, reject) => {
+    sqliteDb.get(
+      `SELECT COALESCE(MAX(workflowInstanceNo), 0) AS maxN FROM tasks WHERE projectId = ? AND taskType = ? AND workflowInstanceNo IS NOT NULL`,
+      [projectId, taskType],
+      (err, r) => (err ? reject(err) : resolve(r))
+    );
+  });
+  return (row?.maxN || 0) + 1;
+}
+
+/** Flatten a Supabase tasks row (optional users/projects joins) to API camelCase. */
+function normalizeSupabaseTaskRow(task) {
+  if (!task) return task;
+  return {
+    ...task,
+    assignedTechnicianName: task.users?.name ?? task.assignedTechnicianName ?? null,
+    assignedTechnicianEmail: task.users?.email ?? task.assignedTechnicianEmail ?? null,
+    projectNumber: task.projects?.project_number ?? task.projectNumber ?? null,
+    projectName: task.projects?.project_name ?? task.projectName ?? null,
+    assignedTechnicianId: task.assigned_technician_id ?? task.assignedTechnicianId,
+    projectId: task.project_id ?? task.projectId,
+    taskType: task.task_type ?? task.taskType,
+    dueDate: task.due_date ?? task.dueDate,
+    scheduledStartDate: task.scheduled_start_date ?? task.scheduledStartDate,
+    scheduledEndDate: task.scheduled_end_date ?? task.scheduledEndDate,
+    locationName: task.location_name ?? task.locationName,
+    locationNotes: task.location_notes ?? task.locationNotes,
+    engagementNotes: task.engagement_notes ?? task.engagementNotes,
+    rejectionRemarks: task.rejection_remarks ?? task.rejectionRemarks ?? null,
+    resubmissionDueDate: task.resubmission_due_date ?? task.resubmissionDueDate ?? null,
+    fieldCompleted: task.field_completed ?? task.fieldCompleted,
+    fieldCompletedAt: task.field_completed_at ?? task.fieldCompletedAt,
+    reportSubmitted: task.report_submitted ?? task.reportSubmitted,
+    lastEditedByUserId: task.last_edited_by_user_id ?? task.lastEditedByUserId,
+    lastEditedByRole: task.last_edited_by_role ?? task.lastEditedByRole,
+    lastEditedAt: task.last_edited_at ?? task.lastEditedAt,
+    createdAt: task.created_at ?? task.createdAt,
+    updatedAt: task.updated_at ?? task.updatedAt,
+    proctorNo: task.proctor_no ?? task.proctorNo,
+    workflowInstanceNo: task.workflow_instance_no ?? task.workflowInstanceNo ?? null,
+    pmReviewStatus: task.pm_review_status ?? task.pmReviewStatus,
+    pmReviewStartedAt: task.pm_review_started_at ?? task.pmReviewStartedAt,
+    pmReviewCompletedAt: task.pm_review_completed_at ?? task.pmReviewCompletedAt,
+    pmReviewerUserId: task.pm_reviewer_user_id ?? task.pmReviewerUserId,
+    tenantId: task.tenant_id ?? task.tenantId,
+    users: undefined,
+    projects: undefined
+  };
+}
+
+async function deleteTaskSqliteCascade(taskId) {
+  const sqliteDb = require('../database');
+  const run = (sql, params = []) =>
+    new Promise((resolve, reject) => {
+      sqliteDb.run(sql, params, function(err) {
+        if (err) {
+          if (/no such table/i.test(err.message)) {
+            resolve(0);
+            return;
+          }
+          reject(err);
+          return;
+        }
+        resolve(this.changes);
+      });
+    });
+  await run('DELETE FROM task_history WHERE taskId = ?', [taskId]);
+  await run('DELETE FROM rebar_reports WHERE taskId = ?', [taskId]);
+  await run('DELETE FROM wp1_data WHERE taskId = ?', [taskId]);
+  await run('DELETE FROM density_reports WHERE taskId = ?', [taskId]);
+  await run('DELETE FROM proctor_data WHERE taskId = ?', [taskId]);
+  await run('DELETE FROM notifications WHERE relatedTaskId = ?', [taskId]);
+  await run('DELETE FROM tasks WHERE id = ?', [taskId]);
 }
 
 // Helper function to fetch tasks with joins (works for both Supabase and SQLite)
@@ -65,27 +201,7 @@ async function fetchTasksWithJoins(conditions = {}, orderBy = 'created_at DESC')
     const { data, error } = await query;
     if (error) throw error;
     
-    return (data || []).map(task => ({
-      ...task,
-      assignedTechnicianName: task.users?.name || null,
-      assignedTechnicianEmail: task.users?.email || null,
-      projectNumber: task.projects?.project_number || null,
-      projectName: task.projects?.project_name || null,
-      assignedTechnicianId: task.assigned_technician_id,
-      projectId: task.project_id,
-      taskType: task.task_type,
-      dueDate: task.due_date,
-      scheduledStartDate: task.scheduled_start_date,
-      scheduledEndDate: task.scheduled_end_date,
-      locationName: task.location_name,
-      locationNotes: task.location_notes,
-      engagementNotes: task.engagement_notes,
-      fieldCompleted: task.field_completed,
-      reportSubmitted: task.report_submitted,
-      proctorNo: task.proctor_no,
-      users: undefined,
-      projects: undefined
-    }));
+    return (data || []).map(normalizeSupabaseTaskRow);
   } else {
     // SQLite fallback
     const sqliteDb = require('../database');
@@ -146,7 +262,7 @@ router.get('/', authenticate, requireTenant, async (req, res) => {
     let tasks;
 
     if (db.isSupabase()) {
-      if (req.user.role === 'ADMIN') {
+      if (isStaffReviewer(req.user.role)) {
         let query = supabase
           .from('tasks')
           .select(`
@@ -158,15 +274,7 @@ router.get('/', authenticate, requireTenant, async (req, res) => {
         if (!legacyDb) query = query.eq('tenant_id', tenantId);
         const { data, error } = await query;
         if (error) throw error;
-        tasks = (data || []).map(task => ({
-          ...task,
-          assignedTechnicianName: task.users?.name || null,
-          assignedTechnicianEmail: task.users?.email || null,
-          projectNumber: task.projects?.project_number || null,
-          projectName: task.projects?.project_name || null,
-          users: undefined,
-          projects: undefined
-        }));
+        tasks = (data || []).map(normalizeSupabaseTaskRow);
       } else {
         let query = supabase
           .from('tasks')
@@ -180,22 +288,14 @@ router.get('/', authenticate, requireTenant, async (req, res) => {
         if (!legacyDb) query = query.eq('tenant_id', tenantId);
         const { data, error } = await query;
         if (error) throw error;
-        tasks = (data || []).map(task => ({
-          ...task,
-          assignedTechnicianName: task.users?.name || null,
-          assignedTechnicianEmail: task.users?.email || null,
-          projectNumber: task.projects?.project_number || null,
-          projectName: task.projects?.project_name || null,
-          users: undefined,
-          projects: undefined
-        }));
+        tasks = (data || []).map(normalizeSupabaseTaskRow);
       }
     } else {
       // SQLite fallback
       const sqliteDb = require('../database');
       let query;
       let params;
-      if (req.user.role === 'ADMIN') {
+      if (isStaffReviewer(req.user.role)) {
         query = legacyDb
           ? `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail, p.projectNumber, p.projectName FROM tasks t LEFT JOIN users u ON t.assignedTechnicianId = u.id INNER JOIN projects p ON t.projectId = p.id ORDER BY t.createdAt DESC`
           : `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail, p.projectNumber, p.projectName FROM tasks t LEFT JOIN users u ON t.assignedTechnicianId = u.id INNER JOIN projects p ON t.projectId = p.id WHERE t.tenantId = ? ORDER BY t.createdAt DESC`;
@@ -245,7 +345,7 @@ router.get('/project/:projectId', authenticate, requireTenant, async (req, res) 
         `)
         .eq('project_id', projectId);
       
-      if (req.user.role !== 'ADMIN') {
+      if (!isStaffReviewer(req.user.role)) {
         query = query.eq('assigned_technician_id', req.user.id);
       }
       
@@ -253,40 +353,14 @@ router.get('/project/:projectId', authenticate, requireTenant, async (req, res) 
       
       if (error) throw error;
       
-      tasks = (data || []).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        locationName: task.location_name,
-        locationNotes: task.location_notes,
-        engagementNotes: task.engagement_notes,
-        rejectionRemarks: task.rejection_remarks,
-        resubmissionDueDate: task.resubmission_due_date,
-        fieldCompleted: task.field_completed,
-        fieldCompletedAt: task.field_completed_at,
-        reportSubmitted: task.report_submitted,
-        lastEditedByUserId: task.last_edited_by_user_id,
-        lastEditedByRole: task.last_edited_by_role,
-        lastEditedAt: task.last_edited_at,
-        // Note: submittedAt and completedAt columns don't exist in schema
-        createdAt: task.created_at,
-        updatedAt: task.updated_at,
-        proctorNo: task.proctor_no,
-        users: undefined
-      }));
+      tasks = (data || []).map(normalizeSupabaseTaskRow);
     } else {
       // SQLite fallback
       const sqliteDb = require('../database');
       let query;
       let params;
 
-      if (req.user.role === 'ADMIN') {
+      if (isStaffReviewer(req.user.role)) {
         query = `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail
                  FROM tasks t
                  LEFT JOIN users u ON t.assignedTechnicianId = u.id
@@ -452,36 +526,11 @@ router.get('/:id', authenticate, requireTenant, async (req, res) => {
         return res.status(404).json({ error: 'Task not found' });
       }
       
-      task = {
+      task = normalizeSupabaseTaskRow({
         ...data,
-        assignedTechnicianName: data.users?.name,
-        assignedTechnicianEmail: data.users?.email,
-        assignedTechnicianId: data.assigned_technician_id,
-        projectId: data.project_id,
-        projectName: data.projects?.project_name,
-        projectNumber: data.projects?.project_number,
-        taskType: data.task_type,
-        dueDate: data.due_date,
-        scheduledStartDate: data.scheduled_start_date,
-        scheduledEndDate: data.scheduled_end_date,
-        locationName: data.location_name,
-        locationNotes: data.location_notes,
-        engagementNotes: data.engagement_notes,
-        rejectionRemarks: data.rejection_remarks,
-        resubmissionDueDate: data.resubmission_due_date,
-        fieldCompleted: data.field_completed,
-        fieldCompletedAt: data.field_completed_at,
-        reportSubmitted: data.report_submitted,
-        lastEditedByUserId: data.last_edited_by_user_id,
-        lastEditedByRole: data.last_edited_by_role,
-        lastEditedAt: data.last_edited_at,
-        // Note: submittedAt and completedAt columns don't exist in schema
-        createdAt: data.created_at,
-        updatedAt: data.updated_at,
-        proctorNo: data.proctor_no,
-        users: undefined,
-        projects: undefined
-      };
+        users: data.users,
+        projects: data.projects
+      });
     } else {
       const sqliteDb = require('../database');
       task = await new Promise((resolve, reject) => {
@@ -654,7 +703,7 @@ router.put('/:id', authenticate, [
       const project = await db.get('projects', { id: projectId });
       if (project) {
         const message = `Admin ${oldAssignedId ? 'reassigned' : 'assigned'} ${taskLabel} for Project ${project.projectNumber}`;
-        await createNotification(assignedTechnicianId, message, 'info', taskId, projectId);
+        await createNotification(assignedTechnicianId, message, 'info', null, projectId, taskId, req.tenantId ?? null);
       }
     }
 
@@ -803,6 +852,23 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       }
     }
 
+    let workflowInstanceNo = null;
+    let workflowColumnUnreachable = false;
+    try {
+      workflowInstanceNo = await getNextWorkflowInstanceNo(projectId, taskType);
+    } catch (werr) {
+      const wmsg = werr && werr.message ? String(werr.message) : String(werr);
+      if (/workflow_instance_no|workflowInstanceNo/i.test(wmsg)) {
+        workflowColumnUnreachable = true;
+        console.warn(
+          '[tasks] tasks.workflow_instance_no is missing on this database; skipping workflow numbering for this create. ' +
+            'Apply supabase/migrations/20260329120000_add_workflow_instance_no.sql (then restart) for Rebar/Density/Cylinder/CS numbering.'
+        );
+      } else {
+        throw werr;
+      }
+    }
+
     const taskData = {
       projectId,
       tenantId,
@@ -817,8 +883,23 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       scheduledEndDate: normalizedScheduledEndDate,
       proctorNo
     };
+    if (!workflowColumnUnreachable) {
+      taskData.workflowInstanceNo = workflowInstanceNo;
+    }
 
-    const task = await db.insert('tasks', taskData);
+    let task;
+    try {
+      task = await db.insert('tasks', taskData);
+    } catch (insErr) {
+      const imsg = insErr && insErr.message ? String(insErr.message) : String(insErr);
+      if (/workflow_instance_no|workflowInstanceNo/i.test(imsg) && Object.prototype.hasOwnProperty.call(taskData, 'workflowInstanceNo')) {
+        const { workflowInstanceNo: _drop, ...rest } = taskData;
+        console.warn('[tasks] Retry insert without workflow_instance_no (column missing on DB).');
+        task = await db.insert('tasks', rest);
+      } else {
+        throw insErr;
+      }
+    }
     const taskId = task.id;
 
     // If this is a COMPRESSIVE_STRENGTH, create wp1_data entry
@@ -875,15 +956,11 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       
       if (error) throw error;
       
-      createdTask = {
+      createdTask = normalizeSupabaseTaskRow({
         ...data,
-        assignedTechnicianName: data.users?.name || null,
-        assignedTechnicianEmail: data.users?.email || null,
-        projectNumber: data.projects?.project_number || null,
-        projectName: data.projects?.project_name || null,
-        users: undefined,
-        projects: undefined
-      };
+        users: data.users,
+        projects: data.projects
+      });
     } else {
       const sqliteDb = require('../database');
       createdTask = await new Promise((resolve, reject) => {
@@ -1117,7 +1194,7 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       const taskLabel = taskTypeLabels[taskType] || taskType;
       const projectId = db.isSupabase() ? oldTask.project_id : oldTask.projectId;
       const message = `Admin assigned ${taskLabel} for Project ${oldTask.projectNumber}`;
-      await createNotification(assignmentChange.newTechId, message, 'info', taskId, projectId);
+      await createNotification(assignmentChange.newTechId, message, 'info', null, projectId, taskId, req.tenantId ?? null);
     }
 
     // Return updated task
@@ -1167,6 +1244,61 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
   } catch (err) {
     console.error('Error updating task:', err);
     res.status(500).json({ error: 'Database error: ' + err.message });
+  }
+});
+
+// Delete task (Admin only). Blocked for APPROVED tasks. Supabase CASCADE removes related rows.
+router.delete('/:id', authenticate, requireTenant, requireAdmin, async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    if (Number.isNaN(taskId)) {
+      return res.status(400).json({ error: 'Invalid task id' });
+    }
+    const tenantId = req.tenantId;
+
+    let existing;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('id, tenant_id, status')
+        .eq('id', taskId)
+        .single();
+      if (error || !data) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+      existing = data;
+    } else {
+      existing = await db.get('tasks', { id: taskId });
+      if (!existing) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+    }
+
+    if (!req.legacyDb) {
+      const rowTenant = existing.tenant_id ?? existing.tenantId;
+      if (rowTenant != null && rowTenant !== tenantId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    const status = existing.status;
+    if (status === 'APPROVED') {
+      return res.status(400).json({ error: 'Cannot delete an approved task.' });
+    }
+
+    if (db.isSupabase()) {
+      const { error: delErr } = await supabase.from('tasks').delete().eq('id', taskId);
+      if (delErr) {
+        throw new Error(delErr.message);
+      }
+    } else {
+      await deleteTaskSqliteCascade(taskId);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting task:', err);
+    res.status(500).json({ error: err.message || 'Database error' });
   }
 });
 
@@ -1276,12 +1408,14 @@ router.put('/:id/status', authenticate, requireTenant, [
       const taskLabel = taskTypeLabels[taskType] || taskType;
       const projectId = db.isSupabase() ? task.project_id : task.projectId;
       
-      // Get all admins
-      const admins = await db.all('users', { role: 'ADMIN' });
+      // Get all admins (same tenant when in multi-tenant mode)
+      const adminConditions = { role: 'ADMIN' };
+      if (req.tenantId != null) adminConditions.tenantId = req.tenantId;
+      const admins = await db.all('users', adminConditions);
       if (admins && admins.length > 0) {
         const message = `${technicianName} completed ${taskLabel} for Project ${task.projectNumber}`;
-        await Promise.all(admins.map(admin => 
-          createNotification(admin.id, message, 'info', taskId, projectId)
+        await Promise.all(admins.map(admin =>
+          createNotification(admin.id, message, 'info', null, projectId, taskId, req.tenantId ?? null)
         ));
       }
     }
@@ -1336,8 +1470,128 @@ router.put('/:id/status', authenticate, requireTenant, [
   }
 });
 
-// Approve task (Admin only)
-router.post('/:id/approve', authenticate, requireTenant, requireAdmin, async (req, res) => {
+// Bulk approve tasks (Admin or PM). Registered before /:id/approve so static paths always win.
+router.post('/bulk-approve', authenticate, requireTenant, requireAdminOrPm, async (req, res) => {
+  try {
+    const rawIds = req.body?.ids;
+    if (!Array.isArray(rawIds)) {
+      return res.status(400).json({ error: 'Request must include an ids array.' });
+    }
+    const ids = [...new Set(
+      rawIds
+        .map((id) => parseInt(String(id), 10))
+        .filter((n) => Number.isInteger(n) && n > 0)
+    )];
+    if (ids.length === 0) {
+      return res.status(400).json({ error: 'No valid task IDs were provided.' });
+    }
+
+    const tenantId = req.tenantId;
+    const adminName = req.user.name || req.user.email || 'Admin';
+
+    const results = [];
+
+    for (const taskId of ids) {
+      const task = await db.get('tasks', { id: taskId });
+      if (!task) {
+        results.push({ id: taskId, status: 'NOT_FOUND' });
+        continue;
+      }
+
+      const taskTenantId = task.tenantId ?? task.tenant_id ?? null;
+      if (
+        taskTenantId != null &&
+        tenantId != null &&
+        Number(taskTenantId) !== Number(tenantId)
+      ) {
+        results.push({ id: taskId, status: 'FORBIDDEN' });
+        continue;
+      }
+
+      const currentStatus = task.status;
+      if (currentStatus !== 'READY_FOR_REVIEW') {
+        results.push({ id: taskId, status: 'SKIPPED_STATUS', currentStatus });
+        continue;
+      }
+
+      const nowIso = new Date().toISOString();
+      const updateData = {
+        status: 'APPROVED',
+        lastEditedByUserId: req.user.id,
+        lastEditedByRole: req.user.role,
+        lastEditedAt: nowIso,
+        updatedAt: nowIso
+      };
+
+      try {
+        await updateTaskApprovedPersist(taskId, updateData, req, nowIso);
+      } catch (e) {
+        console.error('Bulk approve: task update failed', taskId, e);
+        results.push({ id: taskId, status: 'ERROR', error: e.message || String(e) });
+        continue;
+      }
+
+      await logTaskHistory(taskId, tenantId, req.user.role, adminName, req.user.id, 'APPROVED', 'Bulk approved');
+
+      const assignedId = task.assignedTechnicianId ?? task.assigned_technician_id;
+      const projectId = task.projectId ?? task.project_id;
+      if (assignedId && projectId) {
+        try {
+          const project = await db.get('projects', { id: projectId });
+          if (project) {
+            const projectNumber =
+              project.projectNumber || project.project_number || project.project_name || project.projectName || '';
+            const message = `Your report for Project ${projectNumber} has been approved.`;
+            await createNotification(assignedId, message, 'success', null, projectId, taskId, tenantId ?? null);
+          }
+        } catch (notifyErr) {
+          console.error('Bulk approve: notification failed (task still approved)', taskId, notifyErr);
+        }
+      }
+
+      let pdf = null;
+      if (db.isSupabase()) {
+        try {
+          const taskForPdf = (await db.get('tasks', { id: taskId })) || task;
+          pdf = await generateAndSaveReportPdfForTask(taskForPdf, tenantId);
+          if (pdf && pdf.success === false) {
+            console.error('Bulk approve: PDF generation failed (task still approved)', taskId, pdf.error);
+          }
+        } catch (pdfErr) {
+          console.error('Bulk approve: PDF generation threw (task still approved)', taskId, pdfErr);
+          pdf = { success: false, error: pdfErr.message || String(pdfErr) };
+        }
+      }
+
+      results.push({ id: taskId, status: 'APPROVED', pdf });
+    }
+
+    const approvedCount = results.filter(r => r.status === 'APPROVED').length;
+    const skippedCount = results.filter(r => r.status === 'SKIPPED_STATUS').length;
+    const notFoundCount = results.filter(r => r.status === 'NOT_FOUND').length;
+    const forbiddenCount = results.filter(r => r.status === 'FORBIDDEN').length;
+    const errorCount = results.filter(r => r.status === 'ERROR').length;
+
+    res.json({
+      success: true,
+      totals: {
+        requested: ids.length,
+        approved: approvedCount,
+        skippedWrongStatus: skippedCount,
+        notFound: notFoundCount,
+        forbidden: forbiddenCount,
+        errors: errorCount
+      },
+      results
+    });
+  } catch (err) {
+    console.error('Error bulk-approving tasks:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Approve task (Admin or PM)
+router.post('/:id/approve', authenticate, requireTenant, requireAdminOrPm, async (req, res) => {
   try {
     const taskId = parseInt(req.params.id);
 
@@ -1347,115 +1601,49 @@ router.post('/:id/approve', authenticate, requireTenant, requireAdmin, async (re
     }
 
     const adminName = req.user.name || req.user.email || 'Admin';
+    const nowIso = new Date().toISOString();
     
     const updateData = {
       status: 'APPROVED',
       // Note: completedAt column doesn't exist in schema, using lastEditedAt instead
       lastEditedByUserId: req.user.id,
       lastEditedByRole: req.user.role,
-      lastEditedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      lastEditedAt: nowIso,
+      updatedAt: nowIso
     };
-
-    await db.update('tasks', updateData, { id: taskId });
+    await updateTaskApprovedPersist(taskId, updateData, req, nowIso);
 
     // Log history: Admin approved
     await logTaskHistory(taskId, req.tenantId, req.user.role, adminName, req.user.id, 'APPROVED', null);
 
-    // Return updated task
-    let updatedTask;
+    // Notify technician (must not fail the approval if notifications or project lookup errors)
+    const assignedId = task.assignedTechnicianId ?? task.assigned_technician_id;
+    const projectId = task.projectId ?? task.project_id;
+    if (assignedId && projectId) {
+      try {
+        const project = await db.get('projects', { id: projectId });
+        if (project) {
+          const projectNumber =
+            project.projectNumber || project.project_number || project.project_name || project.projectName || '';
+          const message = `Your report for Project ${projectNumber} has been approved.`;
+          await createNotification(assignedId, message, 'success', null, projectId, taskId, req.tenantId ?? null);
+        }
+      } catch (notifyErr) {
+        console.error('Approve task: notification failed (task still approved)', taskId, notifyErr);
+      }
+    }
+
+    let pdf = null;
     if (db.isSupabase()) {
-      const { data, error } = await supabase
-        .from('tasks')
-        .select(`
-          *,
-          users:assigned_technician_id(name, email),
-          projects:project_id(project_number, project_name)
-        `)
-        .eq('id', taskId)
-        .single();
-      
-      if (error) throw error;
-      
-      updatedTask = {
-        ...data,
-        assignedTechnicianName: data.users?.name || null,
-        assignedTechnicianEmail: data.users?.email || null,
-        projectNumber: data.projects?.project_number || null,
-        projectName: data.projects?.project_name || null,
-        users: undefined,
-        projects: undefined
-      };
-    } else {
-      const sqliteDb = require('../database');
-      updatedTask = await new Promise((resolve, reject) => {
-        sqliteDb.get(
-          `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
-           p.projectNumber, p.projectName
-           FROM tasks t
-           LEFT JOIN users u ON t.assignedTechnicianId = u.id
-           INNER JOIN projects p ON t.projectId = p.id
-           WHERE t.id = ?`,
-          [taskId],
-          (err, row) => {
-            if (err) reject(err);
-            else resolve(row || null);
-          }
-        );
-      });
-    }
-
-    res.json(updatedTask);
-  } catch (err) {
-    console.error('Error approving task:', err);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-
-// Reject task (Admin only)
-router.post('/:id/reject', authenticate, requireTenant, requireAdmin, [
-  body('rejectionRemarks').notEmpty().trim(),
-  body('resubmissionDueDate').notEmpty()
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    const taskId = parseInt(req.params.id);
-    const { rejectionRemarks, resubmissionDueDate } = req.body;
-
-    const task = await db.get('tasks', { id: taskId });
-    if (!task) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
-
-    const adminName = req.user.name || req.user.email || 'Admin';
-    
-    const updateData = {
-      status: 'REJECTED_NEEDS_FIX',
-      rejectionRemarks,
-      resubmissionDueDate,
-      lastEditedByUserId: req.user.id,
-      lastEditedByRole: req.user.role,
-      lastEditedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    await db.update('tasks', updateData, { id: taskId });
-
-    // Log history: Admin rejected
-    await logTaskHistory(taskId, req.tenantId, req.user.role, adminName, req.user.id, 'REJECTED', rejectionRemarks);
-
-    // Create notification for technician
-    const assignedId = db.isSupabase() ? task.assigned_technician_id : task.assignedTechnicianId;
-    const projectId = db.isSupabase() ? task.project_id : task.projectId;
-    if (assignedId) {
-      const project = await db.get('projects', { id: projectId });
-      if (project) {
-        const message = `Your task for Project ${project.projectNumber} has been rejected. Please review the remarks and resubmit.`;
-        await createNotification(assignedId, message, 'warning', taskId, projectId);
+      try {
+        const taskForPdf = (await db.get('tasks', { id: taskId })) || task;
+        pdf = await generateAndSaveReportPdfForTask(taskForPdf, req.tenantId);
+        if (pdf && pdf.success === false) {
+          console.error('Approve task: PDF generation failed (task still approved)', taskId, pdf.error);
+        }
+      } catch (pdfErr) {
+        console.error('Approve task: PDF generation threw (task still approved)', taskId, pdfErr);
+        pdf = { success: false, error: pdfErr.message || String(pdfErr) };
       }
     }
 
@@ -1480,6 +1668,14 @@ router.post('/:id/reject', authenticate, requireTenant, requireAdmin, [
         assignedTechnicianEmail: data.users?.email || null,
         projectNumber: data.projects?.project_number || null,
         projectName: data.projects?.project_name || null,
+        assignedTechnicianId: data.assigned_technician_id,
+        projectId: data.project_id,
+        taskType: data.task_type,
+        dueDate: data.due_date,
+        scheduledStartDate: data.scheduled_start_date,
+        scheduledEndDate: data.scheduled_end_date,
+        rejectionRemarks: data.rejection_remarks ?? null,
+        resubmissionDueDate: data.resubmission_due_date ?? null,
         users: undefined,
         projects: undefined
       };
@@ -1502,10 +1698,112 @@ router.post('/:id/reject', authenticate, requireTenant, requireAdmin, [
       });
     }
 
+    res.json(pdf != null ? { ...updatedTask, pdf } : updatedTask);
+  } catch (err) {
+    console.error('Error approving task:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Reject task (Admin or PM)
+router.post('/:id/reject', authenticate, requireTenant, requireAdminOrPm, [
+  body('rejectionRemarks').notEmpty().trim().withMessage('Feedback for the technician is required.'),
+  body('resubmissionDueDate').notEmpty().trim().withMessage('Resubmission due date is required.')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      const arr = errors.array();
+      return res.status(400).json({
+        error: arr[0]?.msg || 'Invalid request',
+        errors: arr
+      });
+    }
+
+    const taskId = parseInt(req.params.id, 10);
+    const { rejectionRemarks, resubmissionDueDate } = req.body;
+
+    const task = await db.get('tasks', { id: taskId });
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const adminName = req.user.name || req.user.email || 'Admin';
+    const nowIso = new Date().toISOString();
+    const editorId = req.user.id != null ? Number(req.user.id) : null;
+
+    // Reject: do not set PM-review "completed" fields — some DBs lack those columns or FKs can fail.
+    // Clear report_submitted so the technician can send an updated report again.
+    const updateData = {
+      status: 'REJECTED_NEEDS_FIX',
+      rejectionRemarks,
+      resubmissionDueDate,
+      lastEditedByUserId: editorId,
+      lastEditedByRole: req.user.role,
+      lastEditedAt: nowIso,
+      updatedAt: nowIso,
+      reportSubmitted: 0
+    };
+
+    await db.update('tasks', updateData, { id: taskId });
+
+    // Log history: Admin rejected
+    await logTaskHistory(taskId, req.tenantId, req.user.role, adminName, editorId, 'REJECTED', rejectionRemarks);
+
+    // Create notification for technician (non-fatal if insert fails)
+    const assignedId = db.isSupabase() ? task.assigned_technician_id : task.assignedTechnicianId;
+    const projectId = db.isSupabase() ? task.project_id : task.projectId;
+    if (assignedId) {
+      try {
+        const project = await db.get('projects', { id: projectId });
+        if (project) {
+          const projectNumber =
+            project.projectNumber || project.project_number || project.projectName || project.project_name || '';
+          const message = `Your task for Project ${projectNumber} has been rejected. Please review the remarks and resubmit.`;
+          await createNotification(assignedId, message, 'warning', null, projectId, taskId, req.tenantId ?? null);
+        }
+      } catch (notifErr) {
+        console.error('Reject: notification failed (task still updated):', notifErr);
+      }
+    }
+
+    // Return updated task (plain select avoids embed/relationship errors from PostgREST)
+    let updatedTask;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+
+      if (error) throw error;
+
+      updatedTask = keysToCamelCase(data);
+      const project = await db.get('projects', { id: updatedTask.projectId });
+      if (project) {
+        updatedTask.projectNumber = project.projectNumber ?? project.project_number ?? null;
+        updatedTask.projectName = project.projectName ?? project.project_name ?? null;
+      }
+    } else {
+      const sqliteDb = require('../database');
+      updatedTask = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
+           p.projectNumber, p.projectName
+           FROM tasks t
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.id = ?`,
+          [taskId],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
+          }
+        );
+      });
+    }
+
     res.json(updatedTask);
   } catch (err) {
     console.error('Error rejecting task:', err);
-    res.status(500).json({ error: 'Database error' });
+    const message = err && err.message ? String(err.message) : 'Database error';
+    res.status(500).json({ error: message });
   }
 });
 
@@ -1548,27 +1846,7 @@ router.get('/dashboard/today', authenticate, requireAdmin, async (req, res) => {
         if (scheduledStart && scheduledEnd && scheduledStart <= today && scheduledEnd >= today) return true;
         
         return false;
-      }).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        projectNumber: task.projects?.project_number || null,
-        projectName: task.projects?.project_name || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        locationName: task.location_name,
-        locationNotes: task.location_notes,
-        engagementNotes: task.engagement_notes,
-        fieldCompleted: task.field_completed,
-        reportSubmitted: task.report_submitted,
-        proctorNo: task.proctor_no,
-        users: undefined,
-        projects: undefined
-      }));
+      }).map(normalizeSupabaseTaskRow);
       
       // Sort: READY_FOR_REVIEW first, then by scheduledStartDate, then dueDate
       tasks.sort((a, b) => {
@@ -1671,21 +1949,7 @@ router.get('/dashboard/upcoming', authenticate, requireAdmin, async (req, res) =
         if (scheduledStart && scheduledEnd && scheduledEnd >= tomorrowStr && scheduledStart <= rangeEndStr) return true;
         
         return false;
-      }).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        projectNumber: task.projects?.project_number || null,
-        projectName: task.projects?.project_name || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        users: undefined,
-        projects: undefined
-      }));
+      }).map(normalizeSupabaseTaskRow);
       
       // Sort
       tasks.sort((a, b) => {
@@ -1757,21 +2021,7 @@ router.get('/dashboard/overdue', authenticate, requireAdmin, async (req, res) =>
       
       if (error) throw error;
       
-      tasks = (data || []).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        projectNumber: task.projects?.project_number || null,
-        projectName: task.projects?.project_name || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        users: undefined,
-        projects: undefined
-      }));
+      tasks = (data || []).map(normalizeSupabaseTaskRow);
       
       tasks.sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
     } else {
@@ -1845,24 +2095,7 @@ router.get('/dashboard/technician/today', authenticate, async (req, res) => {
         if (scheduledStart && scheduledEnd && scheduledStart <= today && scheduledEnd >= today) return true;
         
         return false;
-      }).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        projectNumber: task.projects?.project_number || null,
-        projectName: task.projects?.project_name || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        locationName: task.location_name ?? task.locationName,
-        locationNotes: task.location_notes ?? task.locationNotes,
-        engagementNotes: task.engagement_notes ?? task.engagementNotes,
-        users: undefined,
-        projects: undefined
-      }));
+      }).map(normalizeSupabaseTaskRow);
       
       // Sort: READY_FOR_REVIEW first, then by scheduledStartDate, then dueDate
       tasks.sort((a, b) => {
@@ -1970,24 +2203,7 @@ router.get('/dashboard/technician/upcoming', authenticate, async (req, res) => {
         if (scheduledStart && scheduledEnd && scheduledEnd >= tomorrowStr && scheduledStart <= rangeEndStr) return true;
         
         return false;
-      }).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        projectNumber: task.projects?.project_number || null,
-        projectName: task.projects?.project_name || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        locationName: task.location_name ?? task.locationName,
-        locationNotes: task.location_notes ?? task.locationNotes,
-        engagementNotes: task.engagement_notes ?? task.engagementNotes,
-        users: undefined,
-        projects: undefined
-      }));
+      }).map(normalizeSupabaseTaskRow);
       
       // Sort
       tasks.sort((a, b) => {
@@ -2080,24 +2296,7 @@ router.get('/dashboard/technician/tomorrow', authenticate, async (req, res) => {
         if (scheduledStart && scheduledEnd && scheduledStart <= tomorrowStr && scheduledEnd >= tomorrowStr) return true;
         
         return false;
-      }).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        projectNumber: task.projects?.project_number || null,
-        projectName: task.projects?.project_name || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        locationName: task.location_name ?? task.locationName,
-        locationNotes: task.location_notes ?? task.locationNotes,
-        engagementNotes: task.engagement_notes ?? task.engagementNotes,
-        users: undefined,
-        projects: undefined
-      }));
+      }).map(normalizeSupabaseTaskRow);
       
       // Sort by scheduledStartDate, then dueDate
       tasks.sort((a, b) => {
@@ -2176,27 +2375,7 @@ router.get('/dashboard/technician/open-reports', authenticate, async (req, res) 
       tasks = (data || []).filter(task => {
         const reportSubmitted = task.report_submitted;
         return reportSubmitted === 0 || reportSubmitted === null || reportSubmitted === false;
-      }).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        projectNumber: task.projects?.project_number || null,
-        projectName: task.projects?.project_name || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        locationName: task.location_name ?? task.locationName,
-        locationNotes: task.location_notes ?? task.locationNotes,
-        engagementNotes: task.engagement_notes ?? task.engagementNotes,
-        fieldCompleted: task.field_completed,
-        reportSubmitted: task.report_submitted,
-        fieldCompletedAt: task.field_completed_at,
-        users: undefined,
-        projects: undefined
-      }));
+      }).map(normalizeSupabaseTaskRow);
       
       // Sort: dueDate nulls last, then by dueDate ASC, then fieldCompletedAt DESC
       tasks.sort((a, b) => {
@@ -2246,18 +2425,37 @@ router.get('/dashboard/technician/open-reports', authenticate, async (req, res) 
 // Mark field work as complete
 router.post('/:id/mark-field-complete', authenticate, requireTenant, async (req, res) => {
   try {
-    const taskId = parseInt(req.params.id);
+    const taskId = parseInt(req.params.id, 10);
+    const userId = req.user.id ?? req.user.userId;
 
-    // Check task exists and is assigned to this technician
-    const task = await db.get('tasks', { id: taskId });
-    if (!task) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
+    const idsMatch = (a, b) =>
+      a != null && b != null && String(a) === String(b);
 
-    // Technicians can only mark their own tasks as complete
-    const assignedId = db.isSupabase() ? task.assigned_technician_id : task.assignedTechnicianId;
-    if (req.user.role === 'TECHNICIAN' && assignedId !== req.user.id) {
-      return res.status(403).json({ error: 'Access denied' });
+    // Authorize using DB-native columns (Supabase db.get() camelCase was unreliable for assigned_technician_id).
+    if (db.isSupabase()) {
+      const { data: authRow, error: authErr } = await supabase
+        .from('tasks')
+        .select('id, assigned_technician_id')
+        .eq('id', taskId)
+        .single();
+
+      if (authErr || !authRow) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+
+      if (req.user.role === 'TECHNICIAN' && !idsMatch(authRow.assigned_technician_id, userId)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    } else {
+      const task = await db.get('tasks', { id: taskId });
+      if (!task) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+
+      const assignedId = task.assignedTechnicianId ?? task.assigned_technician_id;
+      if (req.user.role === 'TECHNICIAN' && !idsMatch(assignedId, userId)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
     }
 
     // Mark field work as complete
@@ -2271,7 +2469,7 @@ router.post('/:id/mark-field-complete', authenticate, requireTenant, async (req,
 
     // Log history
     const actorName = req.user.name || req.user.email || 'User';
-    await logTaskHistory(taskId, req.tenantId, req.user.role, actorName, req.user.id, 'STATUS_CHANGED', 'Field work marked as complete');
+    await logTaskHistory(taskId, req.tenantId, req.user.role, actorName, userId, 'STATUS_CHANGED', 'Field work marked as complete');
 
     // Return updated task
     let updatedTask;
@@ -2288,15 +2486,11 @@ router.post('/:id/mark-field-complete', authenticate, requireTenant, async (req,
       
       if (error) throw error;
       
-      updatedTask = {
+      updatedTask = normalizeSupabaseTaskRow({
         ...data,
-        assignedTechnicianName: data.users?.name || null,
-        assignedTechnicianEmail: data.users?.email || null,
-        projectNumber: data.projects?.project_number || null,
-        projectName: data.projects?.project_name || null,
-        users: undefined,
-        projects: undefined
-      };
+        users: data.users,
+        projects: data.projects
+      });
     } else {
       const sqliteDb = require('../database');
       updatedTask = await new Promise((resolve, reject) => {
@@ -2452,25 +2646,7 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
       (historyEntries || []).forEach(entry => {
         const task = entry.tasks;
         if (task && !taskMap.has(task.id)) {
-          taskMap.set(task.id, {
-            ...task,
-            assignedTechnicianName: task.users?.name || null,
-            assignedTechnicianEmail: task.users?.email || null,
-            projectNumber: task.projects?.project_number || null,
-            projectName: task.projects?.project_name || null,
-            assignedTechnicianId: task.assigned_technician_id,
-            projectId: task.project_id,
-            taskType: task.task_type,
-            dueDate: task.due_date,
-            scheduledStartDate: task.scheduled_start_date,
-            scheduledEndDate: task.scheduled_end_date,
-            fieldCompleted: task.field_completed,
-            reportSubmitted: task.report_submitted,
-            fieldCompletedAt: task.field_completed_at,
-            lastEditedAt: task.last_edited_at,
-            users: undefined,
-            projects: undefined
-          });
+          taskMap.set(task.id, normalizeSupabaseTaskRow(task));
         }
       });
       
@@ -2491,25 +2667,7 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
       if (!fieldError && fieldCompletedTasks) {
         fieldCompletedTasks.forEach(task => {
           if (!taskMap.has(task.id)) {
-            taskMap.set(task.id, {
-              ...task,
-              assignedTechnicianName: task.users?.name || null,
-              assignedTechnicianEmail: task.users?.email || null,
-              projectNumber: task.projects?.project_number || null,
-              projectName: task.projects?.project_name || null,
-              assignedTechnicianId: task.assigned_technician_id,
-              projectId: task.project_id,
-              taskType: task.task_type,
-              dueDate: task.due_date,
-              scheduledStartDate: task.scheduled_start_date,
-              scheduledEndDate: task.scheduled_end_date,
-              fieldCompleted: task.field_completed,
-              reportSubmitted: task.report_submitted,
-              fieldCompletedAt: task.field_completed_at,
-              lastEditedAt: task.last_edited_at,
-              users: undefined,
-              projects: undefined
-            });
+            taskMap.set(task.id, normalizeSupabaseTaskRow(task));
           }
         });
       }
@@ -2597,25 +2755,7 @@ router.get('/dashboard/activity-old', authenticate, requireAdmin, async (req, re
         }
         
         return false;
-      }).map(task => ({
-        ...task,
-        assignedTechnicianName: task.users?.name || null,
-        assignedTechnicianEmail: task.users?.email || null,
-        projectNumber: task.projects?.project_number || null,
-        projectName: task.projects?.project_name || null,
-        assignedTechnicianId: task.assigned_technician_id,
-        projectId: task.project_id,
-        taskType: task.task_type,
-        dueDate: task.due_date,
-        scheduledStartDate: task.scheduled_start_date,
-        scheduledEndDate: task.scheduled_end_date,
-        // Note: completedAt and submittedAt columns don't exist in schema
-        // Using lastEditedAt and fieldCompletedAt instead
-        lastEditedAt: task.last_edited_at,
-        fieldCompletedAt: task.field_completed_at,
-        users: undefined,
-        projects: undefined
-      }));
+      }).map(normalizeSupabaseTaskRow);
       
       // Sort by lastEditedAt or fieldCompletedAt DESC
       tasks.sort((a, b) => {
@@ -2682,14 +2822,9 @@ router.get('/:id/history', authenticate, async (req, res) => {
         .order('timestamp', { ascending: false });
       
       if (error) throw error;
-      
-      history = (data || []).map(h => ({
-        ...h,
-        taskId: h.task_id,
-        actorUserId: h.actor_user_id,
-        actionType: h.action_type,
-        timestamp: h.timestamp
-      }));
+
+      // Supabase returns snake_case; client expects camelCase (actorName, actionType, …)
+      history = (data || []).map(h => keysToCamelCase(h));
     } else {
       const sqliteDb = require('../database');
       history = await new Promise((resolve, reject) => {

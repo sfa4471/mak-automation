@@ -266,7 +266,7 @@
     <div class="company-info">
       <div>{{COMPANY_NAME}}</div>
       <div>{{COMPANY_ADDRESS}}</div>
-      <div>{{COMPANY_PHONE}}</div>
+      <div>{{COMPANY_PHONE}} {{COMPANY_EMAIL}}</div>
     </div>
     <div class="logo-area">{{LOGO_IMAGE}}</div>
   </div>
@@ -331,9 +331,8 @@
   <div class="bottom-sections">
     <div class="section-box specs-box">
       <div class="section-title">Specs.</div>
-      <div class="section-content">
-        <div><strong>Dens. (%)</strong> {{DENS_SPEC}}</div>
-        <div><strong>Moist. (%)</strong> {{MOIST_SPEC}}</div>
+      <div class="section-content spec-rows-dynamic">
+        {{SPEC_ROWS}}
       </div>
     </div>
     <div class="section-box instrument-box">

@@ -2,12 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { tasksAPI, Task, taskTypeLabel } from '../../api/tasks';
 import { useAuth } from '../../context/AuthContext';
+import { getApiPathPrefix } from '../../api/api';
+import { useAppDialog } from '../../context/AppDialogContext';
 import './TaskDetails.css';
 
 const TaskDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showAlert } = useAppDialog();
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -35,15 +38,34 @@ const TaskDetails: React.FC = () => {
     }
   };
 
+  const openPdfBlob = (blob: Blob, filename: string) => {
+    const blobUrl = window.URL.createObjectURL(blob);
+    const newWin = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+    if (!newWin) {
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+    setTimeout(() => window.URL.revokeObjectURL(blobUrl), 120000);
+  };
+
   const handleDownloadPDF = async () => {
     if (!task) {
-      alert('Task information not available');
+      await showAlert('Task details are not available. Please refresh the page and try again.', 'Unable to download');
       return;
     }
 
     try {
       const token = localStorage.getItem('token');
-      const { getApiPathPrefix } = require('../../api/api');
+      if (!token) {
+        await showAlert('Your session has expired. Please log in again.', 'Authentication required');
+        return;
+      }
       const apiPrefix = getApiPathPrefix();
 
       let url: string;
@@ -67,36 +89,34 @@ const TaskDetails: React.FC = () => {
           filename = `rebar-${task.projectNumber || id}.pdf`;
           break;
         default:
-          alert(`PDF generation is not available for task type: ${task.taskType}`);
+          await showAlert('A PDF preview is not available for this task type.', 'PDF not available');
           return;
       }
       
-      // Fetch PDF with authentication
       const response = await fetch(url, {
         headers: {
-          'Authorization': `Bearer ${token}`
-        }
+          Authorization: `Bearer ${token}`,
+        },
       });
       
       if (!response.ok) {
-        let errorMessage = 'Failed to generate PDF';
+        let errorMessage = 'Unable to generate the PDF.';
         try {
           const errorData = await response.json();
           errorMessage = errorData.error || errorData.message || errorMessage;
         } catch {
           try {
-            errorMessage = await response.text();
+            const t = await response.text();
+            if (t) errorMessage = t;
           } catch {
-            // Keep default error message
+            /* keep default */
           }
         }
         throw new Error(errorMessage);
       }
       
-      // Handle different response types (JSON with base64 or direct blob)
-      const contentType = response.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        // JSON response with base64 PDF
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
         const data = await response.json();
         if (data.pdfBase64) {
           const binaryString = atob(data.pdfBase64);
@@ -105,32 +125,21 @@ const TaskDetails: React.FC = () => {
             bytes[i] = binaryString.charCodeAt(i);
           }
           const blob = new Blob([bytes], { type: 'application/pdf' });
-          const blobUrl = window.URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(blobUrl);
+          openPdfBlob(blob, filename);
         } else {
-          throw new Error('PDF data not found in response');
+          throw new Error('The server response did not include PDF data.');
         }
       } else {
-        // Direct PDF blob response
         const blob = await response.blob();
-        const blobUrl = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(blobUrl);
+        const pdfBlob = blob.type && blob.type.includes('pdf') ? blob : new Blob([blob], { type: 'application/pdf' });
+        openPdfBlob(pdfBlob, filename);
       }
     } catch (err: any) {
-      alert('Failed to download PDF: ' + (err.message || 'Unknown error'));
       console.error('PDF download error:', err);
+      await showAlert(
+        `The PDF could not be opened or downloaded.\n\nDetails: ${err.message || 'Unknown error'}`,
+        'PDF error'
+      );
     }
   };
 
@@ -158,7 +167,7 @@ const TaskDetails: React.FC = () => {
     const statusMap: { [key: string]: string } = {
       'ASSIGNED': 'Assigned',
       'IN_PROGRESS_TECH': 'In Progress',
-      'READY_FOR_REVIEW': 'Ready for Review',
+      'READY_FOR_REVIEW': 'Under review (PM / Admin)',
       'APPROVED': 'Approved',
       'REJECTED_NEEDS_FIX': 'Rejected - Needs Fix'
     };
