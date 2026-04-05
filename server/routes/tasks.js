@@ -1810,8 +1810,10 @@ router.post('/:id/reject', authenticate, requireTenant, requireAdminOrPm, [
 // Dashboard endpoints
 // TODAY: Show tasks based on field schedule dates (scheduledStartDate/scheduledEndDate)
 // If no field schedule, fall back to report due date
-router.get('/dashboard/today', authenticate, requireAdmin, async (req, res) => {
+router.get('/dashboard/today', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     // Get today's date in YYYY-MM-DD format (local date, no timezone)
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -1819,14 +1821,16 @@ router.get('/dashboard/today', authenticate, requireAdmin, async (req, res) => {
     
     let tasks;
     if (db.isSupabase()) {
-      // Fetch all tasks and filter in JavaScript for complex date logic
-      const { data, error } = await supabase
+      // Fetch tenant tasks and filter in JavaScript for complex date logic
+      let query = supabase
         .from('tasks')
         .select(`
           *,
           users:assigned_technician_id(name, email),
           projects:project_id(project_number, project_name)
         `);
+      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
       
       if (error) throw error;
       
@@ -1879,12 +1883,14 @@ router.get('/dashboard/today', authenticate, requireAdmin, async (req, res) => {
              OR
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
               AND t.scheduledStartDate <= ? AND t.scheduledEndDate >= ?)
-           )
+           )`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY 
              CASE WHEN t.status = 'READY_FOR_REVIEW' THEN 0 ELSE 1 END,
              t.scheduledStartDate ASC,
              t.dueDate ASC`,
-          [today, today, today, today],
+          legacyDb ? [today, today, today, today] : [today, today, today, today, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -1903,8 +1909,10 @@ router.get('/dashboard/today', authenticate, requireAdmin, async (req, res) => {
 
 // UPCOMING: Show tasks for the next 14 days based on Report Due Date and/or Field Date
 // Window: tomorrow through today+14 days (inclusive)
-router.get('/dashboard/upcoming', authenticate, requireAdmin, async (req, res) => {
+router.get('/dashboard/upcoming', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     // Get dates in YYYY-MM-DD format (local date, no timezone)
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -1922,7 +1930,7 @@ router.get('/dashboard/upcoming', authenticate, requireAdmin, async (req, res) =
     
     let tasks;
     if (db.isSupabase()) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('tasks')
         .select(`
           *,
@@ -1930,6 +1938,8 @@ router.get('/dashboard/upcoming', authenticate, requireAdmin, async (req, res) =
           projects:project_id(project_number, project_name)
         `)
         .neq('status', 'APPROVED');
+      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
       
       if (error) throw error;
       
@@ -1978,12 +1988,16 @@ router.get('/dashboard/upcoming', authenticate, requireAdmin, async (req, res) =
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
               AND t.scheduledEndDate >= ? AND t.scheduledStartDate <= ?)
            )
-           AND t.status != 'APPROVED'
+           AND t.status != 'APPROVED'`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY 
              CASE WHEN t.status = 'READY_FOR_REVIEW' THEN 0 ELSE 1 END,
              COALESCE(t.dueDate, t.scheduledStartDate, '9999-12-31') ASC,
              t.scheduledEndDate ASC`,
-          [tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr],
+          legacyDb
+            ? [tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr]
+            : [tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -2001,14 +2015,16 @@ router.get('/dashboard/upcoming', authenticate, requireAdmin, async (req, res) =
 });
 
 // OVERDUE/PENDING: Show tasks with dueDate < today AND status != Approved
-router.get('/dashboard/overdue', authenticate, requireAdmin, async (req, res) => {
+router.get('/dashboard/overdue', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     
     let tasks;
     if (db.isSupabase()) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('tasks')
         .select(`
           *,
@@ -2018,6 +2034,8 @@ router.get('/dashboard/overdue', authenticate, requireAdmin, async (req, res) =>
         .not('due_date', 'is', null)
         .neq('status', 'APPROVED')
         .lt('due_date', today);
+      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
       
       if (error) throw error;
       
@@ -2035,9 +2053,11 @@ router.get('/dashboard/overdue', authenticate, requireAdmin, async (req, res) =>
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.dueDate IS NOT NULL 
            AND DATE(t.dueDate) < DATE(?) 
-           AND t.status != 'APPROVED'
+           AND t.status != 'APPROVED'`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY t.dueDate ASC`,
-          [today],
+          legacyDb ? [today] : [today, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -2054,13 +2074,15 @@ router.get('/dashboard/overdue', authenticate, requireAdmin, async (req, res) =>
 });
 
 // TECHNICIAN DASHBOARD: Today view (filtered by assigned technician)
-router.get('/dashboard/technician/today', authenticate, async (req, res) => {
+router.get('/dashboard/technician/today', authenticate, requireTenant, async (req, res) => {
   try {
     // Only technicians can access this endpoint
     if (req.user.role !== 'TECHNICIAN') {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     // Get today's date in YYYY-MM-DD format (local date, no timezone)
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -2068,7 +2090,7 @@ router.get('/dashboard/technician/today', authenticate, async (req, res) => {
     
     let tasks;
     if (db.isSupabase()) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('tasks')
         .select(`
           *,
@@ -2076,6 +2098,8 @@ router.get('/dashboard/technician/today', authenticate, async (req, res) => {
           projects:project_id(project_number, project_name)
         `)
         .eq('assigned_technician_id', req.user.id);
+      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
       
       if (error) throw error;
       
@@ -2128,12 +2152,16 @@ router.get('/dashboard/technician/today', authenticate, async (req, res) => {
              OR
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
               AND t.scheduledStartDate <= ? AND t.scheduledEndDate >= ?)
-           )
+           )`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY 
              CASE WHEN t.status = 'READY_FOR_REVIEW' THEN 0 ELSE 1 END,
              t.scheduledStartDate ASC,
              t.dueDate ASC`,
-          [req.user.id, today, today, today, today],
+          legacyDb
+            ? [req.user.id, today, today, today, today]
+            : [req.user.id, today, today, today, today, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -2151,13 +2179,15 @@ router.get('/dashboard/technician/today', authenticate, async (req, res) => {
 });
 
 // TECHNICIAN DASHBOARD: Upcoming view (next 14 days, filtered by assigned technician)
-router.get('/dashboard/technician/upcoming', authenticate, async (req, res) => {
+router.get('/dashboard/technician/upcoming', authenticate, requireTenant, async (req, res) => {
   try {
     // Only technicians can access this endpoint
     if (req.user.role !== 'TECHNICIAN') {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     // Get dates in YYYY-MM-DD format (local date, no timezone)
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -2175,7 +2205,7 @@ router.get('/dashboard/technician/upcoming', authenticate, async (req, res) => {
     
     let tasks;
     if (db.isSupabase()) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('tasks')
         .select(`
           *,
@@ -2184,6 +2214,8 @@ router.get('/dashboard/technician/upcoming', authenticate, async (req, res) => {
         `)
         .eq('assigned_technician_id', req.user.id)
         .neq('status', 'APPROVED');
+      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
       
       if (error) throw error;
       
@@ -2233,12 +2265,16 @@ router.get('/dashboard/technician/upcoming', authenticate, async (req, res) => {
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
               AND t.scheduledEndDate >= ? AND t.scheduledStartDate <= ?)
            )
-           AND t.status != 'APPROVED'
+           AND t.status != 'APPROVED'`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY 
              CASE WHEN t.status = 'READY_FOR_REVIEW' THEN 0 ELSE 1 END,
              COALESCE(t.dueDate, t.scheduledStartDate, '9999-12-31') ASC,
              t.scheduledEndDate ASC`,
-          [req.user.id, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr],
+          legacyDb
+            ? [req.user.id, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr]
+            : [req.user.id, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr, tomorrowStr, rangeEndStr, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -2256,13 +2292,15 @@ router.get('/dashboard/technician/upcoming', authenticate, async (req, res) => {
 });
 
 // TECHNICIAN DASHBOARD: Tomorrow view (filtered by assigned technician)
-router.get('/dashboard/technician/tomorrow', authenticate, async (req, res) => {
+router.get('/dashboard/technician/tomorrow', authenticate, requireTenant, async (req, res) => {
   try {
     // Only technicians can access this endpoint
     if (req.user.role !== 'TECHNICIAN') {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     // Get tomorrow's date in YYYY-MM-DD format (local date, no timezone)
     const now = new Date();
     const tomorrow = new Date(now);
@@ -2273,7 +2311,7 @@ router.get('/dashboard/technician/tomorrow', authenticate, async (req, res) => {
     
     let tasks;
     if (db.isSupabase()) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('tasks')
         .select(`
           *,
@@ -2281,6 +2319,8 @@ router.get('/dashboard/technician/tomorrow', authenticate, async (req, res) => {
           projects:project_id(project_number, project_name)
         `)
         .eq('assigned_technician_id', req.user.id);
+      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
       
       if (error) throw error;
       
@@ -2325,11 +2365,15 @@ router.get('/dashboard/technician/tomorrow', authenticate, async (req, res) => {
              OR
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
               AND t.scheduledStartDate <= ? AND t.scheduledEndDate >= ?)
-           )
+           )`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY 
              t.scheduledStartDate ASC,
              t.dueDate ASC`,
-          [req.user.id, tomorrowStr, tomorrowStr, tomorrowStr],
+          legacyDb
+            ? [req.user.id, tomorrowStr, tomorrowStr, tomorrowStr]
+            : [req.user.id, tomorrowStr, tomorrowStr, tomorrowStr, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -2347,18 +2391,20 @@ router.get('/dashboard/technician/tomorrow', authenticate, async (req, res) => {
 });
 
 // TECHNICIAN DASHBOARD: My Open Reports (fieldCompleted=true, report not submitted)
-router.get('/dashboard/technician/open-reports', authenticate, async (req, res) => {
+router.get('/dashboard/technician/open-reports', authenticate, requireTenant, async (req, res) => {
   try {
     // Only technicians can access this endpoint
     if (req.user.role !== 'TECHNICIAN') {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     console.log(`[TECHNICIAN OPEN REPORTS] Querying for open reports (technician: ${req.user.id})`);
     
     let tasks;
     if (db.isSupabase()) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('tasks')
         .select(`
           *,
@@ -2368,6 +2414,8 @@ router.get('/dashboard/technician/open-reports', authenticate, async (req, res) 
         .eq('assigned_technician_id', req.user.id)
         .eq('field_completed', 1)
         .neq('status', 'APPROVED');
+      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
       
       if (error) throw error;
       
@@ -2400,12 +2448,14 @@ router.get('/dashboard/technician/open-reports', authenticate, async (req, res) 
            WHERE t.assignedTechnicianId = ?
            AND t.fieldCompleted = 1
            AND (t.reportSubmitted = 0 OR t.reportSubmitted IS NULL)
-           AND t.status != 'APPROVED'
+           AND t.status != 'APPROVED'`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY 
              CASE WHEN t.dueDate IS NULL THEN 1 ELSE 0 END,
              t.dueDate ASC,
              t.fieldCompletedAt DESC`,
-          [req.user.id],
+          legacyDb ? [req.user.id] : [req.user.id, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -2518,13 +2568,15 @@ router.post('/:id/mark-field-complete', authenticate, requireTenant, async (req,
 });
 
 // TECHNICIAN DASHBOARD: Activity Log (task history for assigned tasks)
-router.get('/dashboard/technician/activity', authenticate, async (req, res) => {
+router.get('/dashboard/technician/activity', authenticate, requireTenant, async (req, res) => {
   try {
     // Only technicians can access this endpoint
     if (req.user.role !== 'TECHNICIAN') {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     const activityDate = req.query.date || (() => {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
@@ -2536,10 +2588,12 @@ router.get('/dashboard/technician/activity', authenticate, async (req, res) => {
     let activity;
     if (db.isSupabase()) {
       // Get tasks assigned to this technician
-      const { data: tasks, error: tasksError } = await supabase
+      let taskQuery = supabase
         .from('tasks')
         .select('id')
         .eq('assigned_technician_id', req.user.id);
+      if (!legacyDb) taskQuery = taskQuery.eq('tenant_id', tenantId);
+      const { data: tasks, error: tasksError } = await taskQuery;
       
       if (tasksError) throw tasksError;
       
@@ -2550,7 +2604,7 @@ router.get('/dashboard/technician/activity', authenticate, async (req, res) => {
       }
       
       // Get task history for those tasks on the specified date
-      const { data, error } = await supabase
+      let histQuery = supabase
         .from('task_history')
         .select(`
           *,
@@ -2560,6 +2614,8 @@ router.get('/dashboard/technician/activity', authenticate, async (req, res) => {
         .gte('timestamp', `${activityDate}T00:00:00`)
         .lt('timestamp', `${activityDate}T23:59:59`)
         .order('timestamp', { ascending: false });
+      if (!legacyDb) histQuery = histQuery.eq('tenant_id', tenantId);
+      const { data, error } = await histQuery;
       
       if (error) throw error;
       
@@ -2588,9 +2644,11 @@ router.get('/dashboard/technician/activity', authenticate, async (req, res) => {
            INNER JOIN tasks t ON th.taskId = t.id
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.assignedTechnicianId = ?
-           AND DATE(th.timestamp) = DATE(?)
+           AND DATE(th.timestamp) = DATE(?)`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY th.timestamp DESC`,
-          [req.user.id, activityDate],
+          legacyDb ? [req.user.id, activityDate] : [req.user.id, activityDate, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -2609,8 +2667,10 @@ router.get('/dashboard/technician/activity', authenticate, async (req, res) => {
 
 // ACTIVITY LOG: Show tasks by last_edited_at or field_completed_at for a specific date (Admin only)
 // Note: Uses task_history table for better activity tracking
-router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) => {
+router.get('/dashboard/activity', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     const activityDate = req.query.date || (() => {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
@@ -2625,7 +2685,7 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
       const endOfDay = `${activityDate}T23:59:59`;
       
       // Get task history entries for the activity date
-      const { data: historyEntries, error: historyError } = await supabase
+      let historyQuery = supabase
         .from('task_history')
         .select(`
           *,
@@ -2638,6 +2698,8 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
         .gte('timestamp', startOfDay)
         .lt('timestamp', `${activityDate}T23:59:59.999`)
         .order('timestamp', { ascending: false });
+      if (!legacyDb) historyQuery = historyQuery.eq('tenant_id', tenantId);
+      const { data: historyEntries, error: historyError } = await historyQuery;
       
       if (historyError) throw historyError;
       
@@ -2653,7 +2715,7 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
       tasks = Array.from(taskMap.values());
       
       // Also include tasks with field_completed_at on this date
-      const { data: fieldCompletedTasks, error: fieldError } = await supabase
+      let fieldQuery = supabase
         .from('tasks')
         .select(`
           *,
@@ -2663,6 +2725,8 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
         .not('field_completed_at', 'is', null)
         .gte('field_completed_at', startOfDay)
         .lt('field_completed_at', `${activityDate}T23:59:59.999`);
+      if (!legacyDb) fieldQuery = fieldQuery.eq('tenant_id', tenantId);
+      const { data: fieldCompletedTasks, error: fieldError } = await fieldQuery;
       
       if (!fieldError && fieldCompletedTasks) {
         fieldCompletedTasks.forEach(task => {
@@ -2696,9 +2760,11 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
            )
            OR (
              t.fieldCompletedAt IS NOT NULL AND DATE(t.fieldCompletedAt) = DATE(?)
-           )
+           )`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY COALESCE(t.lastEditedAt, t.fieldCompletedAt) DESC`,
-          [activityDate, activityDate],
+          legacyDb ? [activityDate, activityDate] : [activityDate, activityDate, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
@@ -2717,8 +2783,10 @@ router.get('/dashboard/activity', authenticate, requireAdmin, async (req, res) =
 // Legacy endpoint - kept for backward compatibility but uses task_history
 // ACTIVITY LOG: Show tasks by completedAt or submittedAt for a specific date (Admin only)
 // DEPRECATED: Use task_history for better activity tracking
-router.get('/dashboard/activity-old', authenticate, requireAdmin, async (req, res) => {
+router.get('/dashboard/activity-old', authenticate, requireTenant, requireAdmin, async (req, res) => {
   try {
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
     const activityDate = req.query.date || (() => {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
@@ -2727,14 +2795,16 @@ router.get('/dashboard/activity-old', authenticate, requireAdmin, async (req, re
     
     let tasks;
     if (db.isSupabase()) {
-      // Fetch all tasks and filter by last_edited_at or field_completed_at
-      const { data, error } = await supabase
+      // Fetch tenant tasks and filter by last_edited_at or field_completed_at
+      let query = supabase
         .from('tasks')
         .select(`
           *,
           users:assigned_technician_id(name, email),
           projects:project_id(project_number, project_name)
         `);
+      if (!legacyDb) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
       
       if (error) throw error;
       
@@ -2776,10 +2846,12 @@ router.get('/dashboard/activity-old', authenticate, requireAdmin, async (req, re
              (t.lastEditedAt IS NOT NULL AND DATE(t.lastEditedAt) = DATE(?))
              OR
              (t.fieldCompletedAt IS NOT NULL AND DATE(t.fieldCompletedAt) = DATE(?))
-           )
+           )`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          `
            ORDER BY 
              COALESCE(t.lastEditedAt, t.fieldCompletedAt) DESC`,
-          [activityDate, activityDate],
+          legacyDb ? [activityDate, activityDate] : [activityDate, activityDate, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);
