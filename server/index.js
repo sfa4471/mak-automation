@@ -91,6 +91,10 @@ app.get('/', (req, res) => {
   }
 });
 
+// Tenant logos, signatures, etc. under server/public — exposed at /api/files/*
+// so reverse proxies / CDNs that only forward /api to this server still load uploads.
+app.use('/api/files', express.static(path.join(__dirname, 'public')));
+
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/tenants', require('./routes/tenants'));

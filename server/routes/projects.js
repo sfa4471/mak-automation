@@ -89,6 +89,30 @@ function parseProjectJSONFields(project) {
     project.drawings = [];
   }
 
+  if (project.presetProctorRows !== null && project.presetProctorRows !== undefined) {
+    if (typeof project.presetProctorRows === 'string') {
+      try {
+        project.presetProctorRows = JSON.parse(project.presetProctorRows || '[]');
+      } catch (e) {
+        project.presetProctorRows = [];
+      }
+    } else if (!Array.isArray(project.presetProctorRows)) {
+      project.presetProctorRows = [];
+    }
+  } else {
+    project.presetProctorRows = [];
+  }
+  if (Array.isArray(project.presetProctorRows) && project.presetProctorRows.length > 0) {
+    project.presetProctorRows = project.presetProctorRows
+      .filter((r) => r && typeof r === 'object')
+      .map((r) => keysToCamelCase(r));
+  }
+  if (project.presetProctorsDeclared !== undefined && project.presetProctorsDeclared !== null) {
+    project.presetProctorsDeclared = !!project.presetProctorsDeclared;
+  } else {
+    project.presetProctorsDeclared = false;
+  }
+
   return project;
 }
 
@@ -591,7 +615,9 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
   body('soilSpecs').optional().isObject(),
-  body('concreteSpecs').optional().isObject()
+  body('concreteSpecs').optional().isObject(),
+  body('presetProctorsDeclared').optional().isBoolean(),
+  body('presetProctorRows').optional().isArray()
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -619,7 +645,9 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       clientName,
       customerEmails,
       soilSpecs,
-      concreteSpecs
+      concreteSpecs,
+      presetProctorsDeclared,
+      presetProctorRows
     } = req.body;
 
     // Validate customerEmails if provided
@@ -662,6 +690,34 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
         updateData.concreteSpecs = concreteSpecs;
       } else {
         updateData.concreteSpecs = JSON.stringify(concreteSpecs);
+      }
+    }
+
+    if (presetProctorsDeclared !== undefined && presetProctorsDeclared !== null) {
+      updateData.presetProctorsDeclared = !!presetProctorsDeclared;
+    }
+    if (presetProctorRows !== undefined && presetProctorRows !== null) {
+      if (!Array.isArray(presetProctorRows)) {
+        return res.status(400).json({ error: 'presetProctorRows must be an array' });
+      }
+      const sanitized = presetProctorRows.slice(0, 20).map((r) => {
+        const rawNo = r && r.proctorNo != null ? parseInt(String(r.proctorNo), 10) : NaN;
+        const proctorNo = !isNaN(rawNo) && rawNo >= 1 && rawNo <= 99 ? rawNo : null;
+        return {
+          proctorNo,
+          description: r && r.description != null ? String(r.description) : '',
+          optMoisture:
+            r && (r.optMoisture != null || r.opt_moisture != null)
+              ? String(r.optMoisture ?? r.opt_moisture)
+              : '',
+          maxDensity:
+            r && (r.maxDensity != null || r.max_density != null) ? String(r.maxDensity ?? r.max_density) : ''
+        };
+      });
+      if (db.isSupabase()) {
+        updateData.presetProctorRows = sanitized;
+      } else {
+        updateData.presetProctorRows = JSON.stringify(sanitized);
       }
     }
 

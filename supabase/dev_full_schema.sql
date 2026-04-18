@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS projects (
   customer_emails JSONB DEFAULT '[]'::jsonb,
   soil_specs JSONB DEFAULT '{}'::jsonb,
   concrete_specs JSONB DEFAULT '{}'::jsonb,
+  preset_proctors_declared BOOLEAN NOT NULL DEFAULT FALSE,
+  preset_proctor_rows JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

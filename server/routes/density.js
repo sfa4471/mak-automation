@@ -1,10 +1,82 @@
 const express = require('express');
 const db = require('../db');
-const { supabase, isAvailable } = require('../db/supabase');
+const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
 const { authenticate, isStaffReviewer } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
+
+function parsePresetProctorRows(raw) {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw || '[]');
+      return Array.isArray(p) ? p : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Supabase nested embeds use snake_case keys inside JSONB row objects; normalize for merge + API response. */
+function presetRowsWithCamelKeys(rows) {
+  return parsePresetProctorRows(rows)
+    .filter((r) => r && typeof r === 'object')
+    .map((r) => keysToCamelCase(r));
+}
+
+/** Fill empty density proctor cells from project-level preset rows (fill-if-empty only). */
+function mergeProjectPresetIntoProctors(proctors, presetDeclared, presetRows) {
+  if (!presetDeclared || !Array.isArray(proctors) || proctors.length === 0) return proctors;
+  const rows = presetRowsWithCamelKeys(presetRows).filter((r) => {
+    if (!r || typeof r !== 'object') return false;
+    const desc = String(r.description ?? '').trim();
+    const opt = String(r.optMoisture ?? '').trim();
+    const maxd = String(r.maxDensity ?? '').trim();
+    const pNo = r.proctorNo != null && String(r.proctorNo).trim() !== '' ? parseInt(String(r.proctorNo), 10) : NaN;
+    return (!isNaN(pNo) && pNo > 0) || desc !== '' || opt !== '' || maxd !== '';
+  });
+  if (rows.length === 0) return proctors;
+  const out = proctors.map((r) => ({ ...r }));
+  for (const pr of rows) {
+    const pNoRaw = pr.proctorNo;
+    const pNo = pNoRaw != null && String(pNoRaw).trim() !== '' ? parseInt(String(pNoRaw), 10) : NaN;
+    let idx = -1;
+    if (!isNaN(pNo) && pNo > 0) {
+      idx = out.findIndex((r) => Number(r.proctorNo) === pNo);
+    }
+    if (idx < 0) {
+      idx = out.findIndex((r) => {
+        const d = String(r.description || '').trim();
+        const o = String(r.optMoisture || '').trim();
+        const m = String(r.maxDensity || '').trim();
+        return d === '' && o === '' && m === '';
+      });
+    }
+    if (idx < 0) continue;
+    const cur = out[idx];
+    const desc = String(pr.description ?? '').trim();
+    const opt = pr.optMoisture != null ? String(pr.optMoisture).trim() : '';
+    const maxd = pr.maxDensity != null ? String(pr.maxDensity).trim() : '';
+    const nextNo = !isNaN(pNo) && pNo > 0 ? pNo : Number(cur.proctorNo) || idx + 1;
+    out[idx] = {
+      ...cur,
+      proctorNo: nextNo,
+      description: String(cur.description || '').trim() === '' ? desc : cur.description,
+      optMoisture: String(cur.optMoisture || '').trim() === '' ? opt : cur.optMoisture,
+      maxDensity: String(cur.maxDensity || '').trim() === '' ? maxd : cur.maxDensity,
+    };
+  }
+  return out;
+}
+
+function projectPresetFlagsFromTask(task) {
+  const declared = !!(task.preset_proctors_declared ?? task.presetProctorsDeclared);
+  const rows = presetRowsWithCamelKeys(task.preset_proctor_rows ?? task.presetProctorRows);
+  return { declared, rows };
+}
 
 // Get density report by taskId (tenant-scoped)
 router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
@@ -18,7 +90,7 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         .from('tasks')
         .select(`
           *,
-          projects:project_id(project_name, project_number, concrete_specs, soil_specs, client_name)
+          projects:project_id(project_name, project_number, concrete_specs, soil_specs, client_name, preset_proctors_declared, preset_proctor_rows)
         `)
         .eq('id', taskId)
         .eq('task_type', 'DENSITY_MEASUREMENT')
@@ -35,13 +107,16 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         concreteSpecs: data.projects?.concrete_specs,
         soilSpecs: data.projects?.soil_specs,
         projectClientName: data.projects?.client_name ?? null,
+        presetProctorsDeclared: data.projects?.preset_proctors_declared ?? false,
+        presetProctorRows: data.projects?.preset_proctor_rows ?? [],
         projects: undefined
       };
     } else {
       const sqliteDb = require('../database');
       task = await new Promise((resolve, reject) => {
         sqliteDb.get(
-          `SELECT t.*, p.projectName, p.projectNumber, p.concreteSpecs, p.soilSpecs, p.clientName
+          `SELECT t.*, p.projectName, p.projectNumber, p.concreteSpecs, p.soilSpecs, p.clientName,
+                  p.presetProctorsDeclared, p.presetProctorRows
            FROM tasks t
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.id = ? AND t.taskType = 'DENSITY_MEASUREMENT'`,
@@ -194,6 +269,11 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         : (data.moistSpecMin != null || data.moistSpecMax != null
           ? [{ min: data.moistSpecMin || '', max: data.moistSpecMax || '' }]
           : []);
+
+      const { declared: presetDeclared, rows: presetRows } = projectPresetFlagsFromTask(task);
+      data.projectPresetProctorsDeclared = presetDeclared;
+      data.projectPresetProctorRows = presetRows;
+      data.proctors = mergeProjectPresetIntoProctors(data.proctors, presetDeclared, presetRows);
       
       res.json(data);
     } else {
@@ -208,6 +288,15 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         projectConcreteSpecs: projectConcreteSpecs,
         projectConcreteSpecsKeys: Object.keys(projectConcreteSpecs)
       });
+
+      const { declared: presetDeclaredNew, rows: presetRowsNew } = projectPresetFlagsFromTask(task);
+      let defaultProctors = Array(6).fill(null).map((_, i) => ({
+        proctorNo: i + 1,
+        description: '',
+        optMoisture: '',
+        maxDensity: ''
+      }));
+      defaultProctors = mergeProjectPresetIntoProctors(defaultProctors, presetDeclaredNew, presetRowsNew);
       
       res.json({
         taskId: parseInt(taskId),
@@ -230,12 +319,9 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
           proctorNo: '',
           percentProctorDensity: ''
         })),
-        proctors: Array(6).fill(null).map((_, i) => ({
-          proctorNo: i + 1,
-          description: '',
-          optMoisture: '',
-          maxDensity: ''
-        })),
+        proctors: defaultProctors,
+        projectPresetProctorsDeclared: presetDeclaredNew,
+        projectPresetProctorRows: presetRowsNew,
         densSpecPercent: '',
         moistSpecMin: '',
         moistSpecMax: '',

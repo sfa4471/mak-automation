@@ -208,7 +208,7 @@ router.post('/logo', authenticate, requireAdmin, async (req, res, next) => {
     res.json({
       success: true,
       logoPath: relativePath,
-      url: `/tenants/${tenantId}/logo${path.extname(req.file.filename)}`
+      url: `/api/files/${relativePath}`
     });
   } catch (err) {
     console.error('POST /api/tenants/logo error:', err);
@@ -262,7 +262,7 @@ router.post('/signature', authenticate, requireAdmin, async (req, res, next) => 
     res.json({
       success: true,
       signatureUrl: relativePath,
-      url: `/tenants/${tenantId}/signature${path.extname(req.file.filename)}`
+      url: `/api/files/${relativePath}`
     });
   } catch (err) {
     console.error('POST /api/tenants/signature error:', err);

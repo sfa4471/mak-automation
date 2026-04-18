@@ -1,7 +1,12 @@
 const express = require('express');
 const db = require('../db');
 const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
-const { authenticate, requireAdmin, requireAdminOrPm, isStaffReviewer } = require('../middleware/auth');
+const {
+  authenticate,
+  requireAdmin,
+  requireAdminOrPm,
+  isStaffReviewer
+} = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { createNotification } = require('./notifications');
@@ -2674,6 +2679,70 @@ router.get('/dashboard/technician/activity', authenticate, requireTenant, async 
   }
 });
 
+// TECHNICIAN DASHBOARD: Field work completed in the past (for activity log — no date filter)
+router.get('/dashboard/technician/completed-field-work', authenticate, requireTenant, async (req, res) => {
+  try {
+    if (req.user.role !== 'TECHNICIAN') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
+    const limit = Math.min(parseInt(String(req.query.limit || '500'), 10) || 500, 1000);
+    const userId = req.user.id ?? req.user.userId;
+
+    let rows;
+    if (db.isSupabase()) {
+      let q = supabase
+        .from('tasks')
+        .select(
+          `
+          *,
+          users:assigned_technician_id(name, email),
+          projects:project_id(project_number, project_name)
+        `
+        )
+        .eq('assigned_technician_id', userId)
+        .eq('field_completed', 1)
+        .not('field_completed_at', 'is', null)
+        .order('field_completed_at', { ascending: false })
+        .limit(limit);
+      if (mustEnforceTenantOnTasks(legacyDb)) q = q.eq('tenant_id', tenantId);
+      const { data, error } = await q;
+      if (error) throw error;
+      rows = (data || []).map((t) => normalizeSupabaseTaskRow(t));
+    } else {
+      const sqliteDb = require('../database');
+      rows = await new Promise((resolve, reject) => {
+        sqliteDb.all(
+          `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
+            p.projectNumber, p.projectName
+           FROM tasks t
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.assignedTechnicianId = ?
+             AND t.fieldCompleted = 1
+             AND t.fieldCompletedAt IS NOT NULL` +
+            (legacyDb ? '' : ' AND t.tenantId = ?') +
+            `
+           ORDER BY t.fieldCompletedAt DESC
+           LIMIT ?`,
+          legacyDb ? [userId, limit] : [userId, tenantId, limit],
+          (err, r) => {
+            if (err) reject(err);
+            else resolve(r || []);
+          }
+        );
+      });
+    }
+
+    res.json(rows || []);
+  } catch (err) {
+    console.error('Error fetching technician completed field work:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // ACTIVITY LOG: Show tasks by last_edited_at or field_completed_at for a specific date (Admin only)
 // Note: Uses task_history table for better activity tracking
 router.get('/dashboard/activity', authenticate, requireTenant, requireAdmin, async (req, res) => {
@@ -2786,6 +2855,63 @@ router.get('/dashboard/activity', authenticate, requireTenant, requireAdmin, asy
   } catch (err) {
     console.error('Error fetching activity:', err);
     res.status(500).json({ error: 'Database error: ' + err.message });
+  }
+});
+
+// ADMIN/PM DASHBOARD: Tasks with field work completed in the past (activity log — grouped on client)
+router.get('/dashboard/completed-field-work', authenticate, requireTenant, requireAdminOrPm, async (req, res) => {
+  try {
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
+    const limit = Math.min(parseInt(String(req.query.limit || '500'), 10) || 500, 1000);
+
+    let rows;
+    if (db.isSupabase()) {
+      let q = supabase
+        .from('tasks')
+        .select(
+          `
+          *,
+          users:assigned_technician_id(name, email),
+          projects:project_id(project_number, project_name)
+        `
+        )
+        .eq('field_completed', 1)
+        .not('field_completed_at', 'is', null)
+        .order('field_completed_at', { ascending: false })
+        .limit(limit);
+      if (mustEnforceTenantOnTasks(legacyDb)) q = q.eq('tenant_id', tenantId);
+      const { data, error } = await q;
+      if (error) throw error;
+      rows = (data || []).map((t) => normalizeSupabaseTaskRow(t));
+    } else {
+      const sqliteDb = require('../database');
+      rows = await new Promise((resolve, reject) => {
+        sqliteDb.all(
+          `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
+            p.projectNumber, p.projectName
+           FROM tasks t
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.fieldCompleted = 1
+             AND t.fieldCompletedAt IS NOT NULL` +
+            (legacyDb ? '' : ' AND t.tenantId = ?') +
+            `
+           ORDER BY t.fieldCompletedAt DESC
+           LIMIT ?`,
+          legacyDb ? [limit] : [tenantId, limit],
+          (err, r) => {
+            if (err) reject(err);
+            else resolve(r || []);
+          }
+        );
+      });
+    }
+
+    res.json(rows || []);
+  } catch (err) {
+    console.error('Error fetching completed field work:', err);
+    res.status(500).json({ error: 'Database error: ' + (err.message || String(err)) });
   }
 });
 
