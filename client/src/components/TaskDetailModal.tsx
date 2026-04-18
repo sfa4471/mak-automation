@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Task, taskTypeLabel } from '../api/tasks';
-import { projectsAPI, Project, ProjectDrawing, normalizeSoilSpecRow } from '../api/projects';
+import { projectsAPI, Project, ProjectDrawing } from '../api/projects';
+import ProjectSpecsReadOnly from './ProjectSpecsReadOnly';
 import './TaskDetailModal.css';
 
 interface TaskDetailModalProps {
   task: Task;
   onClose: () => void;
-  /** When true (technician dashboard), show only "View drawings" and list of PDFs instead of specs and project details link */
+  /** When true (technician dashboard), hide the admin "View project details" link; drawings use expandable list here */
   isTechnicianView?: boolean;
 }
 
@@ -101,105 +102,6 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
   };
 
   const hasAdminInstructions = !!(task.locationName || task.locationNotes || task.engagementNotes);
-
-  // Helper function to capitalize structure type names (title case)
-  const capitalizeStructureType = (type: string): string => {
-    if (!type) return type;
-    // Split by spaces and capitalize first letter of each word
-    return type
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-      .join(' ');
-  };
-
-  const renderConcreteSpecs = () => {
-    if (!project?.concreteSpecs || Object.keys(project.concreteSpecs).length === 0) {
-      return <p className="specs-empty">No concrete specifications available.</p>;
-    }
-
-    return (
-      <div className="specs-table-container">
-        <table className="specs-table">
-          <thead>
-            <tr>
-              <th>Structure Type</th>
-              <th>Strength (PSI)</th>
-              <th>Ambient Temp (°F)</th>
-              <th>Concrete Temp (°F)</th>
-              <th>Slump</th>
-              <th>Air Content</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(project.concreteSpecs).map(([structureType, spec]: [string, any]) => {
-              // Apply default values for temperature fields if they're empty/undefined
-              const ambientTemp = spec.ambientTempF && spec.ambientTempF.trim() !== '' 
-                ? spec.ambientTempF 
-                : '35-95';
-              const concreteTemp = spec.concreteTempF && spec.concreteTempF.trim() !== '' 
-                ? spec.concreteTempF 
-                : '45-95';
-              
-              return (
-                <tr key={structureType}>
-                  <td className="spec-structure-type">{capitalizeStructureType(structureType)}</td>
-                  <td>{spec.specStrengthPsi || 'N/A'}</td>
-                  <td>{ambientTemp}</td>
-                  <td>{concreteTemp}</td>
-                  <td>{spec.slump || 'N/A'}</td>
-                  <td>{spec.airContent || 'N/A'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
-
-  const renderSoilSpecs = () => {
-    if (!project?.soilSpecs || Object.keys(project.soilSpecs).length === 0) {
-      return <p className="specs-empty">No soil specifications available.</p>;
-    }
-
-    return (
-      <div className="specs-table-container">
-        <table className="specs-table">
-          <thead>
-            <tr>
-              <th>Structure Type</th>
-              <th>Density (%)</th>
-              <th>Moisture Range</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(project.soilSpecs).map(([structureType, spec]) => {
-              const normalized = normalizeSoilSpecRow(spec);
-              const densityPcts = (normalized.densityPcts || []).filter(p => p != null && String(p).trim() !== '');
-              const moistureRanges = (normalized.moistureRanges || []).filter(
-                r => r && (String(r.min || '').trim() !== '' || String(r.max || '').trim() !== '')
-              );
-              const densityDisplay = densityPcts.length > 0 ? densityPcts.join(', ') : 'N/A';
-              const moistureParts = moistureRanges.map(r => {
-                if (r.min && r.max) return `${r.min}% - ${r.max}%`;
-                if (r.min) return `≥ ${r.min}%`;
-                if (r.max) return `≤ ${r.max}%`;
-                return '';
-              });
-              const moistureDisplay = moistureParts.length > 0 ? moistureParts.filter(Boolean).join('; ') : 'N/A';
-              return (
-                <tr key={structureType}>
-                  <td className="spec-structure-type">{capitalizeStructureType(structureType)}</td>
-                  <td>{densityDisplay}</td>
-                  <td>{moistureDisplay}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -318,20 +220,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
           {/* Specifications Section - show for both admin and technician */}
           <div className="specs-section">
             <h3>Specifications</h3>
-            {loadingProject ? (
-              <div className="specs-loading">Loading specifications...</div>
-            ) : (
-              <>
-                <div className="specs-subsection">
-                  <h4>Concrete Specifications</h4>
-                  {renderConcreteSpecs()}
-                </div>
-                <div className="specs-subsection">
-                  <h4>Soil Specifications</h4>
-                  {renderSoilSpecs()}
-                </div>
-              </>
-            )}
+            <ProjectSpecsReadOnly project={project} loadingProject={loadingProject} />
           </div>
 
           {/* Technician: Drawings list (expandable) */}

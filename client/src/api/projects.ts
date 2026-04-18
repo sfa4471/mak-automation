@@ -100,6 +100,14 @@ export interface ProjectDrawing {
   displayName?: string;
 }
 
+/** Optional lab-reported proctor line items saved on the project; used to pre-fill Density Proctor Summary. */
+export interface PresetProctorRow {
+  proctorNo: number | null;
+  description?: string;
+  optMoisture?: string;
+  maxDensity?: string;
+}
+
 export interface Project {
   id: number;
   projectNumber: string;
@@ -111,6 +119,9 @@ export interface Project {
   customerDetails?: CustomerDetails;
   soilSpecs?: SoilSpecs;
   concreteSpecs?: ConcreteSpecs;
+  /** When true, preset proctor rows are applied to new/empty density Proctor Summary cells for this project. */
+  presetProctorsDeclared?: boolean;
+  presetProctorRows?: PresetProctorRow[];
   drawings?: ProjectDrawing[];
   folderCreation?: FolderCreationResult;
   // Legacy fields (kept for backward compatibility, but deprecated)

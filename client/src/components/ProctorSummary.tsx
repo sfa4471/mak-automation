@@ -7,7 +7,7 @@ import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
 import RejectTaskModal from './RejectTaskModal';
-import { getCurrentApiBaseUrl, getApiPathPrefix } from '../api/api';
+import { getBackendPublicFileUrl, getApiPathPrefix } from '../api/api';
 import { useAppDialog } from '../context/AppDialogContext';
 import './ProctorSummary.css';
 
@@ -801,7 +801,7 @@ const ProctorSummary: React.FC = () => {
         <div className="header-logo">
           <img
             src={tenant?.logoPath
-              ? `${getCurrentApiBaseUrl()}/${tenant.logoPath.replace(/^\/+/, '')}`
+              ? getBackendPublicFileUrl(tenant.logoPath)
               : encodeURI(DEFAULT_LOGO)}
             alt={tenant?.name || 'Company logo'}
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

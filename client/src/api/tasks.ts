@@ -231,6 +231,12 @@ export const tasksAPI = {
     return response.data;
   },
 
+  /** Tasks with field work marked complete (admin/PM activity log). */
+  getCompletedFieldWork: async (): Promise<Task[]> => {
+    const response = await api.get<Task[]>(`/tasks/dashboard/completed-field-work?_=${Date.now()}`);
+    return response.data;
+  },
+
   getHistory: async (taskId: number): Promise<TaskHistoryEntry[]> => {
     const response = await api.get<TaskHistoryEntry[]>(`/tasks/${taskId}/history`);
     return response.data;
@@ -249,6 +255,14 @@ export const tasksAPI = {
 
   getTechnicianActivity: async (date: string): Promise<any[]> => {
     const response = await api.get<any[]>(`/tasks/dashboard/technician/activity?date=${date}`);
+    return response.data;
+  },
+
+  /** Assigned tasks with field work marked complete (technician activity log). */
+  getTechnicianCompletedFieldWork: async (): Promise<Task[]> => {
+    const response = await api.get<Task[]>(
+      `/tasks/dashboard/technician/completed-field-work?_=${Date.now()}`
+    );
     return response.data;
   },
 

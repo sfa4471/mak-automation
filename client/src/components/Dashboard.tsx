@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAppDialog } from '../context/AppDialogContext';
 import { useTenant } from '../context/TenantContext';
-import { getCurrentApiBaseUrl } from '../api/api';
+import { getBackendPublicFileUrl } from '../api/api';
 import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
@@ -215,7 +215,7 @@ const Dashboard: React.FC = () => {
         <div className="header-logo">
           {tenant?.logoPath ? (
             <img
-              src={`${getCurrentApiBaseUrl()}/${tenant.logoPath.replace(/^\/+/, '')}`}
+              src={getBackendPublicFileUrl(tenant.logoPath)}
               alt={tenant.name ?? ''}
               className="company-logo"
               onError={(e) => {

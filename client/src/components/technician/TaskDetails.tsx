@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { tasksAPI, Task, taskTypeLabel } from '../../api/tasks';
+import { projectsAPI, Project } from '../../api/projects';
+import ProjectSpecsReadOnly from '../ProjectSpecsReadOnly';
 import { useAuth } from '../../context/AuthContext';
 import { getApiPathPrefix } from '../../api/api';
 import { useAppDialog } from '../../context/AppDialogContext';
@@ -14,6 +16,8 @@ const TaskDetails: React.FC = () => {
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [project, setProject] = useState<Project | null>(null);
+  const [loadingProject, setLoadingProject] = useState(false);
 
   useEffect(() => {
     loadTask();
@@ -37,6 +41,30 @@ const TaskDetails: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!task?.projectId) {
+      setProject(null);
+      setLoadingProject(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoadingProject(true);
+        const projectData = await projectsAPI.get(task.projectId);
+        if (!cancelled) setProject(projectData);
+      } catch (e) {
+        console.error('Error loading project for task details:', e);
+        if (!cancelled) setProject(null);
+      } finally {
+        if (!cancelled) setLoadingProject(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [task?.projectId]);
 
   const openPdfBlob = (blob: Blob, filename: string) => {
     const blobUrl = window.URL.createObjectURL(blob);
@@ -236,6 +264,17 @@ const TaskDetails: React.FC = () => {
             <span className="detail-label">Due Date:</span>
             <span className="detail-value">{formatDate(task.dueDate)}</span>
           </div>
+        </div>
+
+        <div className="task-details-section">
+          <h2>Specifications</h2>
+          {!task.projectId ? (
+            <p className="specs-empty" style={{ marginTop: 0 }}>
+              No project is linked to this task.
+            </p>
+          ) : (
+            <ProjectSpecsReadOnly project={project} loadingProject={loadingProject} />
+          )}
         </div>
 
         <div className="task-details-section">

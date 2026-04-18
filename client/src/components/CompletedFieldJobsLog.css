@@ -1,0 +1,144 @@
+.completed-jobs-log {
+  margin-top: 8px;
+}
+
+.completed-jobs-intro {
+  color: #555;
+  font-size: 14px;
+  margin: 0 0 16px 0;
+  line-height: 1.45;
+}
+
+.completed-jobs-year {
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.completed-jobs-year-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border: none;
+  background: #f1f3f5;
+  font-size: 16px;
+  font-weight: 600;
+  color: #212529;
+  cursor: pointer;
+  text-align: left;
+}
+
+.completed-jobs-year-toggle:hover {
+  background: #e9ecef;
+}
+
+.completed-jobs-year-body {
+  padding: 8px 12px 12px;
+  border-top: 1px solid #dee2e6;
+  background: #fafafa;
+}
+
+.completed-jobs-month {
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.completed-jobs-month:last-child {
+  margin-bottom: 0;
+}
+
+.completed-jobs-month-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border: none;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  color: #495057;
+  cursor: pointer;
+  text-align: left;
+}
+
+.completed-jobs-month-toggle:hover {
+  background: #f8f9fa;
+}
+
+.completed-jobs-month-body {
+  padding: 0 8px 12px;
+}
+
+.completed-jobs-count {
+  font-weight: 500;
+  color: #6c757d;
+  font-size: 13px;
+}
+
+.completed-jobs-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+}
+
+.completed-jobs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.completed-jobs-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border-bottom: 2px solid #dee2e6;
+  font-weight: 600;
+  color: #495057;
+  white-space: nowrap;
+}
+
+.completed-jobs-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
+}
+
+.completed-jobs-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.completed-jobs-chevron {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  margin-right: 8px;
+  color: #6c757d;
+}
+
+.completed-jobs-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.completed-jobs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+@media (max-width: 768px) {
+  .completed-jobs-table {
+    font-size: 13px;
+  }
+
+  .completed-jobs-table th,
+  .completed-jobs-table td {
+    padding: 8px;
+  }
+}

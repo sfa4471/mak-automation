@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useAppDialog } from '../../context/AppDialogContext';
-import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress, normalizeSoilSpecRow } from '../../api/projects';
+import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress, normalizeSoilSpecRow, PresetProctorRow } from '../../api/projects';
 import './ProjectDetails.css';
 
 const SOIL_STRUCTURE_TYPES = [
@@ -58,6 +58,10 @@ const ProjectDetails: React.FC = () => {
   const [customerDetails, setCustomerDetails] = useState<CustomerDetails>({});
   const [soilSpecs, setSoilSpecs] = useState<SoilSpecs>({});
   const [concreteSpecs, setConcreteSpecs] = useState<ConcreteSpecs>({});
+  const [presetProctorsDeclared, setPresetProctorsDeclared] = useState(false);
+  const [presetProctorRows, setPresetProctorRows] = useState<PresetProctorRow[]>([
+    { proctorNo: 1, description: '', optMoisture: '', maxDensity: '' }
+  ]);
   const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
 
   useEffect(() => {
@@ -138,6 +142,24 @@ const ProjectDetails: React.FC = () => {
         }
       });
       setConcreteSpecs(normalizedConcreteSpecs);
+
+      setPresetProctorsDeclared(!!projectData.presetProctorsDeclared);
+      const presetRows = projectData.presetProctorRows;
+      if (Array.isArray(presetRows) && presetRows.length > 0) {
+        setPresetProctorRows(
+          presetRows.map((r) => ({
+            proctorNo:
+              r.proctorNo != null && !isNaN(Number(r.proctorNo))
+                ? Math.min(99, Math.max(1, Number(r.proctorNo)))
+                : null,
+            description: r.description != null ? String(r.description) : '',
+            optMoisture: r.optMoisture != null ? String(r.optMoisture) : '',
+            maxDensity: r.maxDensity != null ? String(r.maxDensity) : ''
+          }))
+        );
+      } else {
+        setPresetProctorRows([{ proctorNo: 1, description: '', optMoisture: '', maxDensity: '' }]);
+      }
     } catch (err: any) {
       console.error('Error loading project:', err);
       
@@ -367,6 +389,100 @@ const ProjectDetails: React.FC = () => {
     return Object.keys(errors).length === 0;
   };
 
+  const validatePresetProctors = (): boolean => {
+    const errors: { [key: string]: string } = {};
+    if (!presetProctorsDeclared) {
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((k) => {
+          if (k.startsWith('preset-')) delete next[k];
+        });
+        return next;
+      });
+      return true;
+    }
+    const nonempty = presetProctorRows.filter(
+      (r) =>
+        String(r.proctorNo ?? '').trim() !== '' ||
+        String(r.description ?? '').trim() !== '' ||
+        String(r.optMoisture ?? '').trim() !== '' ||
+        String(r.maxDensity ?? '').trim() !== ''
+    );
+    if (nonempty.length === 0) {
+      errors['preset-form'] = 'Add at least one proctor line, or clear the option.';
+    }
+    presetProctorRows.forEach((r, i) => {
+      const hasAny =
+        String(r.proctorNo ?? '').trim() !== '' ||
+        String(r.description ?? '').trim() !== '' ||
+        String(r.optMoisture ?? '').trim() !== '' ||
+        String(r.maxDensity ?? '').trim() !== '';
+      if (!hasAny) return;
+      const n = parseInt(String(r.proctorNo ?? ''), 10);
+      if (isNaN(n) || n < 1 || n > 99) {
+        errors[`preset-row-${i}-no`] = 'Proctor number must be between 1 and 99';
+      }
+    });
+    setValidationErrors((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((k) => {
+        if (k.startsWith('preset-')) delete next[k];
+      });
+      return { ...next, ...errors };
+    });
+    return Object.keys(errors).length === 0;
+  };
+
+  const addPresetProctorRow = () => {
+    setPresetProctorRows((prev) => {
+      const used = new Set(
+        prev.map((r) => (r.proctorNo != null && !isNaN(Number(r.proctorNo)) ? Number(r.proctorNo) : NaN)).filter((n) => !isNaN(n))
+      );
+      let nextNo = 1;
+      while (nextNo <= 99 && used.has(nextNo)) nextNo += 1;
+      if (nextNo > 99) nextNo = prev.length + 1;
+      return [...prev, { proctorNo: nextNo <= 99 ? nextNo : null, description: '', optMoisture: '', maxDensity: '' }];
+    });
+  };
+
+  const removePresetProctorRow = (index: number) => {
+    setPresetProctorRows((prev) => {
+      if (prev.length <= 1) return [{ proctorNo: 1, description: '', optMoisture: '', maxDensity: '' }];
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  const updatePresetProctorRow = (index: number, field: keyof PresetProctorRow, value: string) => {
+    setPresetProctorRows((prev) =>
+      prev.map((row, i) => {
+        if (i !== index) return row;
+        if (field === 'proctorNo') {
+          const trimmed = value.trim();
+          if (trimmed === '') return { ...row, proctorNo: null };
+          const n = parseInt(trimmed, 10);
+          return { ...row, proctorNo: !isNaN(n) ? n : null };
+        }
+        return { ...row, [field]: value };
+      })
+    );
+    const errKey = `preset-row-${index}-${field === 'proctorNo' ? 'no' : field}`;
+    if (validationErrors[errKey] || validationErrors[`preset-row-${index}-no`]) {
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        delete next[`preset-row-${index}-no`];
+        delete next[errKey];
+        return next;
+      });
+    }
+    if (validationErrors['preset-form']) {
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        delete next['preset-form'];
+        return next;
+      });
+    }
+  };
+
   const updateConcreteSpec = (structureType: string, field: string, value: any) => {
     // Use functional update to ensure we have the latest state
     setConcreteSpecs(prev => {
@@ -445,6 +561,11 @@ const ProjectDetails: React.FC = () => {
       return;
     }
 
+    if (!validatePresetProctors()) {
+      setError('Please fix validation errors in Reference proctor values.');
+      return;
+    }
+
     try {
       setSaving(true);
       
@@ -464,13 +585,31 @@ const ProjectDetails: React.FC = () => {
         detailsPayload.shippingAddress = { ...detailsPayload.billingAddress };
       }
 
+      const presetRowsPayload = presetProctorRows
+        .map((r) => ({
+          proctorNo:
+            r.proctorNo != null && !isNaN(Number(r.proctorNo))
+              ? Math.min(99, Math.max(1, Number(r.proctorNo)))
+              : null,
+          description: String(r.description ?? '').trim(),
+          optMoisture: String(r.optMoisture ?? '').trim(),
+          maxDensity: String(r.maxDensity ?? '').trim()
+        }))
+        .filter(
+          (r) =>
+            r.proctorNo != null &&
+            (r.description !== '' || r.optMoisture !== '' || r.maxDensity !== '')
+        );
+
       const updateData: any = {
         projectName,
         clientName: clientName.trim(),
         customerEmails: validTo,
         ccEmails: validCc,
         bccEmails: validBcc,
-        customerDetails: detailsPayload
+        customerDetails: detailsPayload,
+        presetProctorsDeclared,
+        presetProctorRows: presetRowsPayload
       };
       
       // Build soil specs - normalize keys to use correct case from defined structure types
@@ -619,6 +758,24 @@ const ProjectDetails: React.FC = () => {
       // The filtered specs already have the correct normalized keys
       setSoilSpecs(filteredSoilSpecs);
       setConcreteSpecs(filteredConcreteSpecs);
+
+      setPresetProctorsDeclared(!!updatedProject.presetProctorsDeclared);
+      const savedPreset = updatedProject.presetProctorRows;
+      if (Array.isArray(savedPreset) && savedPreset.length > 0) {
+        setPresetProctorRows(
+          savedPreset.map((r) => ({
+            proctorNo:
+              r.proctorNo != null && !isNaN(Number(r.proctorNo))
+                ? Math.min(99, Math.max(1, Number(r.proctorNo)))
+                : null,
+            description: r.description != null ? String(r.description) : '',
+            optMoisture: r.optMoisture != null ? String(r.optMoisture) : '',
+            maxDensity: r.maxDensity != null ? String(r.maxDensity) : ''
+          }))
+        );
+      } else {
+        setPresetProctorRows([{ proctorNo: 1, description: '', optMoisture: '', maxDensity: '' }]);
+      }
       
       // Debug: Log state after update
       console.log('✅ Updated state after save (using filtered data):', {
@@ -1225,6 +1382,125 @@ const ProjectDetails: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+          </div>
+
+          <div className="form-section">
+            <h2>Reference proctor values (density)</h2>
+            <p style={{ color: '#555', fontSize: 14, marginTop: 0, marginBottom: 16, lineHeight: 1.45 }}>
+              When optimum moisture and maximum dry density are already known (for example from an existing lab report), capture them here.
+              They will pre-fill the Proctor Summary table in the Density field workflow for this project.
+            </p>
+            <div className="form-group checkbox-group" style={{ marginBottom: 16 }}>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={presetProctorsDeclared}
+                  onChange={(e) => setPresetProctorsDeclared(e.target.checked)}
+                />
+                Reference proctor data is available for this project
+              </label>
+            </div>
+            {presetProctorsDeclared && (
+              <>
+                {validationErrors['preset-form'] && (
+                  <p className="field-error" style={{ marginBottom: 12 }}>
+                    {validationErrors['preset-form']}
+                  </p>
+                )}
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Proctor no.</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Description</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Opt. moisture (%)</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #dee2e6' }}>Max. dry density (pcf)</th>
+                        <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #dee2e6', width: 88 }} aria-label="Row actions">
+                          &nbsp;
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {presetProctorRows.map((row, index) => (
+                        <tr key={index}>
+                          <td style={{ padding: '8px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <input
+                              type="number"
+                              min={1}
+                              max={99}
+                              className={`form-input ${validationErrors[`preset-row-${index}-no`] ? 'error' : ''}`}
+                              style={{ width: '72px' }}
+                              value={row.proctorNo != null && row.proctorNo > 0 ? row.proctorNo : ''}
+                              onChange={(e) => updatePresetProctorRow(index, 'proctorNo', e.target.value)}
+                              placeholder="No."
+                            />
+                            {validationErrors[`preset-row-${index}-no`] && (
+                              <span className="field-error" style={{ display: 'block', fontSize: 12 }}>
+                                {validationErrors[`preset-row-${index}-no`]}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: '8px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <input
+                              type="text"
+                              className="form-input"
+                              style={{ width: '100%', minWidth: 120 }}
+                              value={row.description ?? ''}
+                              onChange={(e) => updatePresetProctorRow(index, 'description', e.target.value)}
+                              placeholder="Soil / location label"
+                            />
+                          </td>
+                          <td style={{ padding: '8px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <input
+                              type="text"
+                              className="form-input"
+                              style={{ width: '100%', minWidth: 80 }}
+                              value={row.optMoisture ?? ''}
+                              onChange={(e) => updatePresetProctorRow(index, 'optMoisture', e.target.value)}
+                              placeholder="%"
+                            />
+                          </td>
+                          <td style={{ padding: '8px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <input
+                              type="text"
+                              className="form-input"
+                              style={{ width: '100%', minWidth: 80 }}
+                              value={row.maxDensity ?? ''}
+                              onChange={(e) => updatePresetProctorRow(index, 'maxDensity', e.target.value)}
+                              placeholder="pcf"
+                            />
+                          </td>
+                          <td style={{ padding: '8px', border: '1px solid #dee2e6', textAlign: 'center', verticalAlign: 'middle' }}>
+                            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                              {index === presetProctorRows.length - 1 && (
+                                <button
+                                  type="button"
+                                  onClick={addPresetProctorRow}
+                                  title="Add another proctor line"
+                                  style={{ padding: '4px 10px', minWidth: 32, fontWeight: 'bold' }}
+                                >
+                                  +
+                                </button>
+                              )}
+                              {presetProctorRows.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => removePresetProctorRow(index)}
+                                  title="Remove this line"
+                                  style={{ padding: '4px 10px', minWidth: 32 }}
+                                >
+                                  −
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="form-section">

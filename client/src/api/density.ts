@@ -1,5 +1,5 @@
 import api from './api';
-import { ConcreteSpecs, SoilSpecs } from './projects';
+import { ConcreteSpecs, SoilSpecs, PresetProctorRow } from './projects';
 
 export interface TestRow {
   testNo: number;
@@ -66,6 +66,9 @@ export interface DensityReport {
   proctorSoilClassification?: string;
   proctorSoilClassificationText?: string;
   proctorDescriptionLabel?: string;
+  /** From project settings; used to resolve proctor numbers without a Proctor workflow task. */
+  projectPresetProctorsDeclared?: boolean;
+  projectPresetProctorRows?: PresetProctorRow[];
 }
 
 export const densityAPI = {

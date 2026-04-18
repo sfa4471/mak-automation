@@ -77,6 +77,18 @@ export function getApiPathPrefix(): string {
   return origin ? `${origin}/api` : '/api';
 }
 
+/**
+ * Absolute or same-origin URL for files stored under server/public (e.g. tenants/{id}/logo.png).
+ * Always uses the /api/files/ prefix so production frontends (Vercel, etc.) that only proxy /api
+ * to the backend can load images; plain /tenants/... would hit the static host and fail.
+ */
+export function getBackendPublicFileUrl(relativePath: string): string {
+  const rel = String(relativePath || '').replace(/^\/+/, '');
+  if (!rel) return '';
+  const prefix = getApiPathPrefix();
+  return `${prefix}/files/${rel}`;
+}
+
 // Add token to requests
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');

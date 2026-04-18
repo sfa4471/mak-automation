@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAppDialog } from '../context/AppDialogContext';
@@ -6,6 +6,7 @@ import { useTenant } from '../context/TenantContext';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
 import TaskDetailModal from './TaskDetailModal';
+import CompletedFieldJobsLog from './CompletedFieldJobsLog';
 import './TechnicianDashboard.css';
 
 const TechnicianDashboard: React.FC = () => {
@@ -15,14 +16,9 @@ const TechnicianDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tomorrowTasks, setTomorrowTasks] = useState<Task[]>([]);
+  const [allUpcomingTasks, setAllUpcomingTasks] = useState<Task[]>([]);
   const [openReports, setOpenReports] = useState<Task[]>([]);
-  const [activity, setActivity] = useState<any[]>([]);
   const [activeFilter, setActiveFilter] = useState<'today' | 'upcoming' | 'activity'>('today');
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    return yesterday.toISOString().split('T')[0];
-  });
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -35,33 +31,38 @@ const TechnicianDashboard: React.FC = () => {
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter, selectedDate]);
+  }, [activeFilter]);
+
+  const laterUpcomingTasks = useMemo(() => {
+    const tomorrowIds = new Set(tomorrowTasks.map((t) => t.id));
+    return allUpcomingTasks.filter((t) => !tomorrowIds.has(t.id));
+  }, [allUpcomingTasks, tomorrowTasks]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       // Clear data immediately when switching filters
       setTasks([]);
-      setActivity([]);
-      
+
       // Always load Tomorrow snapshot and Open Reports (shown at top)
-      const [tomorrowData, openReportsData] = await Promise.all([
+      const [tomorrowData, openReportsData, upcomingData] = await Promise.all([
         tasksAPI.getTechnicianTomorrow().catch(() => []),
-        tasksAPI.getTechnicianOpenReports().catch(() => [])
+        tasksAPI.getTechnicianOpenReports().catch(() => []),
+        tasksAPI.getTechnicianUpcoming().catch(() => [])
       ]);
       setTomorrowTasks(tomorrowData);
       setOpenReports(openReportsData);
+      setAllUpcomingTasks(upcomingData);
       
-      // Load tasks based on active filter
+      // Load tasks based on active filter (upcoming list already loaded above)
       if (activeFilter === 'today') {
         const tasksData = await tasksAPI.getTechnicianToday();
         setTasks(tasksData);
       } else if (activeFilter === 'upcoming') {
-        const tasksData = await tasksAPI.getTechnicianUpcoming();
-        setTasks(tasksData);
+        setTasks(upcomingData);
       } else if (activeFilter === 'activity') {
-        const activityData = await tasksAPI.getTechnicianActivity(selectedDate);
-        setActivity(activityData);
+        const completedData = await tasksAPI.getTechnicianCompletedFieldWork();
+        setTasks(completedData);
       }
 
       // Load notifications
@@ -72,7 +73,6 @@ const TechnicianDashboard: React.FC = () => {
     } catch (error) {
       console.error('Error loading data:', error);
       setTasks([]);
-      setActivity([]);
     } finally {
       setLoading(false);
     }
@@ -365,6 +365,64 @@ const TechnicianDashboard: React.FC = () => {
           </div>
         )}
 
+        {laterUpcomingTasks.length > 0 && (
+          <div className="coming-up-section">
+            <div className="coming-up-header">
+              <h2>Coming up</h2>
+              <p className="coming-up-subtitle">
+                Work on your schedule that is not listed under Tomorrow's Field Work. Use the Upcoming tab for the full list.
+              </p>
+            </div>
+            <div className="coming-up-list">
+              {laterUpcomingTasks.slice(0, 3).map((task) => (
+                <div key={task.id} className="coming-up-item">
+                  <div className="coming-up-item-info">
+                    <strong>{task.projectNumber}</strong>
+                    <span className="coming-up-sep">·</span>
+                    <span>{task.projectName || taskTypeLabel(task)}</span>
+                    <div className="coming-up-item-meta">
+                      <span>Field: {formatFieldDates(task)}</span>
+                      {task.dueDate && (
+                        <span>Report due: {formatDate(task.dueDate)}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="coming-up-item-actions">
+                    <button
+                      type="button"
+                      className="coming-up-btn secondary"
+                      onClick={() => setSelectedTaskForDetail(task)}
+                    >
+                      Task detail
+                    </button>
+                    <button
+                      type="button"
+                      className="coming-up-btn primary"
+                      onClick={() => setActiveFilter('upcoming')}
+                    >
+                      Upcoming tab
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="coming-up-footer">
+              {laterUpcomingTasks.length > 3 && (
+                <span className="coming-up-more">
+                  +{laterUpcomingTasks.length - 3} more in Upcoming
+                </span>
+              )}
+              <button
+                type="button"
+                className="coming-up-view-all"
+                onClick={() => setActiveFilter('upcoming')}
+              >
+                View all upcoming
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="filter-tabs">
           <button
             className={`filter-tab ${activeFilter === 'today' ? 'active' : ''}`}
@@ -373,10 +431,15 @@ const TechnicianDashboard: React.FC = () => {
             Today
           </button>
           <button
-            className={`filter-tab ${activeFilter === 'upcoming' ? 'active' : ''}`}
+            className={`filter-tab filter-tab-with-badge ${activeFilter === 'upcoming' ? 'active' : ''}`}
             onClick={() => setActiveFilter('upcoming')}
           >
             Upcoming
+            {allUpcomingTasks.length > 0 && (
+              <span className="filter-tab-count" aria-label={`${allUpcomingTasks.length} upcoming tasks`}>
+                {allUpcomingTasks.length}
+              </span>
+            )}
           </button>
           <button
             className={`filter-tab ${activeFilter === 'activity' ? 'active' : ''}`}
@@ -386,65 +449,42 @@ const TechnicianDashboard: React.FC = () => {
           </button>
         </div>
 
-        {activeFilter === 'activity' && (
-          <div className="date-picker-container">
-            <label htmlFor="activity-date">Select Date:</label>
-            <input
-              type="date"
-              id="activity-date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              max={new Date().toISOString().split('T')[0]}
-              className="date-picker"
-            />
-          </div>
-        )}
-
         {loading ? (
           <div className="technician-dashboard-loading">Loading...</div>
         ) : activeFilter === 'activity' ? (
-          // Activity Log view
-          activity.length === 0 ? (
-            <div className="empty-state">
-              <p>No activity found for the selected date.</p>
-            </div>
-          ) : (
-            <div className="activity-log-container">
-              <table className="activity-table">
-                <thead>
-                  <tr>
-                    <th>Timestamp</th>
-                    <th>Task Type</th>
-                    <th>Project</th>
-                    <th>Action</th>
-                    <th>Actor</th>
-                    <th>Note</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activity.map((entry: any) => (
-                    <tr key={entry.id} className="activity-row">
-                      <td>{new Date(entry.timestamp).toLocaleString()}</td>
-                      <td>{taskTypeLabel(entry.taskType as any)}</td>
-                      <td>{entry.projectNumber}</td>
-                      <td>
-                        <span className={`action-badge action-${entry.actionType.toLowerCase()}`}>
-                          {entry.actionType}
-                        </span>
-                      </td>
-                      <td>{entry.actorName} ({entry.actorRole})</td>
-                      <td>{entry.note || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )
+          <CompletedFieldJobsLog
+            key="activity-log"
+            tasks={tasks}
+            variant="technician"
+            taskTypeLabel={taskTypeLabel}
+            formatDate={formatDate}
+            formatFieldDates={formatFieldDates}
+            getStatusLabel={getStatusLabel}
+            onTechnicianTaskDetail={setSelectedTaskForDetail}
+            onTechnicianOpenTask={handleTaskClick}
+          />
         ) : (
           // Tasks view (Today or Upcoming)
           tasks.length === 0 ? (
             <div className="empty-state">
-              <p>No tasks found for the selected filter.</p>
+              {activeFilter === 'today' && laterUpcomingTasks.length > 0 ? (
+                <>
+                  <p className="empty-state-lead">Nothing scheduled for you today.</p>
+                  <p className="empty-state-detail">
+                    You still have {allUpcomingTasks.length} upcoming assignment
+                    {allUpcomingTasks.length !== 1 ? 's' : ''}. Check the Coming up section above, or open the full Upcoming list.
+                  </p>
+                  <button
+                    type="button"
+                    className="empty-state-cta"
+                    onClick={() => setActiveFilter('upcoming')}
+                  >
+                    Open Upcoming
+                  </button>
+                </>
+              ) : (
+                <p>No tasks found for the selected filter.</p>
+              )}
             </div>
           ) : (
             <div className="work-packages-table">

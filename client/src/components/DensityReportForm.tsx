@@ -4,7 +4,12 @@ import { densityAPI, DensityReport, TestRow, ProctorRow } from '../api/density';
 import { tasksAPI, Task, TaskHistoryEntry, ProctorTask, taskTypeLabel } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
-import { SoilSpecRow, normalizeSoilSpecRow } from '../api/projects';
+import { SoilSpecRow, normalizeSoilSpecRow, projectsAPI } from '../api/projects';
+import {
+  mergeProjectPresetIntoProctors,
+  projectPresetSignature,
+  normalizePresetProctorRow
+} from '../utils/mergeProjectPresetProctors';
 import { proctorAPI } from '../api/proctor';
 import { getApiPathPrefix } from '../api/api';
 import { useAppDialog } from '../context/AppDialogContext';
@@ -53,6 +58,10 @@ const DensityReportForm: React.FC = () => {
   const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const lastSavedDataRef = useRef<string>('');
   const proctorCacheRef = useRef<{ [key: string]: any }>({}); // Cache proctor fetches by "projectId:proctorNo"
+  const projectPresetRowsRef = useRef<NonNullable<DensityReport['projectPresetProctorRows']>>([]);
+  const projectPresetDeclaredRef = useRef(false);
+  const projectPresetSigRef = useRef<string>('');
+  const taskRef = useRef<Task | null>(null);
   const hasAutoPopulatedRef = useRef<boolean>(false); // Track if we've already auto-populated on load
   const latestFormDataRef = useRef<DensityReport | null>(null); // Track latest formData for immediate saves
 
@@ -64,6 +73,47 @@ const DensityReportForm: React.FC = () => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
+
+  // When project preset proctors change (e.g. user saved Project Details in another tab), refresh merge into this form.
+  useEffect(() => {
+    const onVisibility = async () => {
+      if (document.visibilityState !== 'visible') return;
+      if (loading) return;
+      const t = taskRef.current;
+      if (!t?.projectId) return;
+      try {
+        const p = await projectsAPI.get(t.projectId);
+        const sig = projectPresetSignature(!!p.presetProctorsDeclared, p.presetProctorRows);
+        if (sig === projectPresetSigRef.current) return;
+        projectPresetSigRef.current = sig;
+        projectPresetDeclaredRef.current = !!p.presetProctorsDeclared;
+        projectPresetRowsRef.current = p.presetProctorRows ? [...p.presetProctorRows] : [];
+        Object.keys(proctorCacheRef.current).forEach((k) => delete proctorCacheRef.current[k]);
+        setFormData((prev) => {
+          if (!prev) return prev;
+          const merged = mergeProjectPresetIntoProctors(
+            prev.proctors,
+            !!p.presetProctorsDeclared,
+            p.presetProctorRows
+          );
+          return {
+            ...prev,
+            projectPresetProctorsDeclared: !!p.presetProctorsDeclared,
+            projectPresetProctorRows: p.presetProctorRows ? [...p.presetProctorRows] : [],
+            proctors: merged
+          };
+        });
+      } catch (e) {
+        console.warn('Density form: could not refresh project preset proctors', e);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [loading, id]);
 
   // Auto-populate proctor rows on initial load
   useEffect(() => {
@@ -176,6 +226,13 @@ const DensityReportForm: React.FC = () => {
         densityAPI.getByTask(taskId)
       ]);
       setTask(taskData);
+      projectPresetDeclaredRef.current = !!(reportData && reportData.projectPresetProctorsDeclared);
+      projectPresetRowsRef.current = reportData?.projectPresetProctorRows
+        ? [...reportData.projectPresetProctorRows]
+        : [];
+      projectPresetSigRef.current = reportData
+        ? projectPresetSignature(!!reportData.projectPresetProctorsDeclared, reportData.projectPresetProctorRows)
+        : '';
       
       // Debug: Log loaded data to verify header fields and specs are present
       if (reportData) {
@@ -418,44 +475,71 @@ const DensityReportForm: React.FC = () => {
       };
     }
 
+    const tryPreset = (): {
+      description: string;
+      optMoisture: string;
+      maxDensity: string;
+      soilClassificationText: string;
+    } | null => {
+      if (!projectPresetDeclaredRef.current || projectPresetRowsRef.current.length === 0) return null;
+      const raw = projectPresetRowsRef.current.find((r) => {
+        if (r == null) return false;
+        const n = normalizePresetProctorRow(r as unknown as Record<string, unknown>).proctorNo;
+        return n != null && n === proctorNo;
+      });
+      if (!raw) return null;
+      const match = normalizePresetProctorRow(raw as unknown as Record<string, unknown>);
+      const description = String(match.description || '').trim() || `Proctor ${proctorNo}`;
+      const optMoisture =
+        match.optMoisture !== null && match.optMoisture !== undefined ? String(match.optMoisture).trim() : '';
+      const maxDensity =
+        match.maxDensity !== null && match.maxDensity !== undefined ? String(match.maxDensity).trim() : '';
+      return {
+        description,
+        optMoisture,
+        maxDensity,
+        soilClassificationText: ''
+      };
+    };
+
     try {
-      // Fetch Proctor data by projectId + proctorNo
+      // Prefer completed Proctor workflow data when it exists
       const proctorData = await proctorAPI.getByProjectAndProctorNo(task.projectId, proctorNo);
-      
+
       // Use soilClassificationText if available, otherwise fallback to soilClassification
       const soilClassificationText = proctorData?.soilClassificationText || proctorData?.soilClassification || '';
-      const descriptionLabel = soilClassificationText 
+      const descriptionLabel = soilClassificationText
         ? `Soil ${proctorNo}: ${soilClassificationText}`
         : `Soil ${proctorNo}`;
-      
-      // Auto-populate the row
-      const optMoisture = proctorData?.optMoisturePct !== null && proctorData?.optMoisturePct !== undefined
-        ? String(proctorData.optMoisturePct)
-        : '';
-      
-      const maxDensity = proctorData?.maxDryDensityPcf !== null && proctorData?.maxDryDensityPcf !== undefined
-        ? String(proctorData.maxDryDensityPcf)
-        : '';
-      
+
+      const optMoisture =
+        proctorData?.optMoisturePct !== null && proctorData?.optMoisturePct !== undefined
+          ? String(proctorData.optMoisturePct)
+          : '';
+
+      const maxDensity =
+        proctorData?.maxDryDensityPcf !== null && proctorData?.maxDryDensityPcf !== undefined
+          ? String(proctorData.maxDryDensityPcf)
+          : '';
+
       const result = {
         description: descriptionLabel,
-        optMoisture: optMoisture,
-        maxDensity: maxDensity,
+        optMoisture,
+        maxDensity,
         soilClassificationText: soilClassificationText
       };
 
-      // Cache the result
       proctorCacheRef.current[cacheKey] = result;
-      
       return result;
     } catch (err: any) {
-      // Only log as error if it's not a 404 (expected when proctor doesn't exist)
       if (err.response?.status === 404) {
-        // Proctor not found - this is expected if the proctor hasn't been created yet
-        // Silently return null without logging an error
+        const presetOnly = tryPreset();
+        if (presetOnly) {
+          proctorCacheRef.current[cacheKey] = presetOnly;
+          return presetOnly;
+        }
         return null;
       }
-      // For other errors, log them
       console.error(`Error fetching Proctor ${proctorNo} data:`, err);
       return null;
     }

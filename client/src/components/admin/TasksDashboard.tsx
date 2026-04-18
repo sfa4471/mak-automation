@@ -5,6 +5,7 @@ import { useAppDialog } from '../../context/AppDialogContext';
 import { tasksAPI, Task, taskTypeLabel, TaskType } from '../../api/tasks';
 import { settingsAPI } from '../../api/settings';
 import RejectTaskModal from '../RejectTaskModal';
+import CompletedFieldJobsLog from '../CompletedFieldJobsLog';
 import './TasksDashboard.css';
 
 /** Normalize task id from API (number or numeric string) for selection and bulk APIs. */
@@ -20,11 +21,6 @@ const TasksDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeFilter, setActiveFilter] = useState<'today' | 'upcoming' | 'overdue' | 'activity'>('today');
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    return yesterday.toISOString().split('T')[0];
-  });
   const [upcomingDays, setUpcomingDays] = useState<number>(7);
   const [loading, setLoading] = useState(true);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
@@ -54,7 +50,7 @@ const TasksDashboard: React.FC = () => {
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter, selectedDate, upcomingDays]);
+  }, [activeFilter, upcomingDays]);
 
   useEffect(() => {
     // Load auto-send email settings once for this tenant.
@@ -88,7 +84,7 @@ const TasksDashboard: React.FC = () => {
       } else if (activeFilter === 'overdue') {
         data = await tasksAPI.getOverdue();
       } else if (activeFilter === 'activity') {
-        data = await tasksAPI.getActivity(selectedDate);
+        data = await tasksAPI.getCompletedFieldWork();
       }
       setTasks(data);
     } catch (error) {
@@ -645,37 +641,36 @@ const TasksDashboard: React.FC = () => {
           </div>
         )}
 
-        {activeFilter === 'activity' && (
-          <div className="date-picker-container">
-            <label htmlFor="activity-date">Select Date:</label>
-            <input
-              type="date"
-              id="activity-date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              max={new Date().toISOString().split('T')[0]}
-              className="date-picker"
-            />
-          </div>
-        )}
-
         <div className="tasks-table-container">
-          <div className="bulk-approve-bar">
-            <div className="bulk-approve-meta">
-              Selected: <strong>{selectedTaskIds.size}</strong>
+          {activeFilter !== 'activity' && (
+            <div className="bulk-approve-bar">
+              <div className="bulk-approve-meta">
+                Selected: <strong>{selectedTaskIds.size}</strong>
+              </div>
+              <button
+                type="button"
+                className="btn-primary bulk-approve-button"
+                disabled={selectedTaskIds.size === 0 || isBulkApproving}
+                onClick={handleBulkApproveClick}
+                title="Approve all selected tasks (one-click)"
+              >
+                {isBulkApproving ? 'Approving...' : 'Approve selected'}
+              </button>
             </div>
-            <button
-              type="button"
-              className="btn-primary bulk-approve-button"
-              disabled={selectedTaskIds.size === 0 || isBulkApproving}
-              onClick={handleBulkApproveClick}
-              title="Approve all selected tasks (one-click)"
-            >
-              {isBulkApproving ? 'Approving...' : 'Approve selected'}
-            </button>
-          </div>
+          )}
 
-          {tasks.length === 0 && !loading ? (
+          {activeFilter === 'activity' ? (
+            <CompletedFieldJobsLog
+              key="activity-log"
+              tasks={tasks}
+              variant="admin"
+              taskTypeLabel={taskTypeLabel}
+              formatDate={formatDate}
+              formatFieldDates={formatFieldDates}
+              getStatusLabel={getStatusLabel}
+              renderAdminActions={getTaskActions}
+            />
+          ) : tasks.length === 0 && !loading ? (
             <div className="empty-state">
               <p>No tasks found for the selected filter.</p>
             </div>

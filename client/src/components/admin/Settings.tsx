@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { settingsAPI, WorkflowStatusResponse } from '../../api/settings';
 import { tenantsAPI, TenantMe, TenantMeUpdate } from '../../api/tenants';
-import { getCurrentApiBaseUrl } from '../../api/api';
+import { getBackendPublicFileUrl } from '../../api/api';
 import {
   isFolderPickerSupported,
   hasChosenFolder,
@@ -197,7 +197,7 @@ const Settings: React.FC = () => {
                         ) : (
                           <img
                             className="signature-preview-img"
-                            src={`${getCurrentApiBaseUrl()}/${String(tenant.signatureUrl).replace(/^\/+/, '')}`}
+                            src={getBackendPublicFileUrl(String(tenant.signatureUrl))}
                             alt=""
                             decoding="async"
                             onError={() => setSignaturePreviewFailed(true)}
