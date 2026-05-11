@@ -44,11 +44,14 @@ const TechnicianDashboard: React.FC = () => {
       // Clear data immediately when switching filters
       setTasks([]);
 
+      // Align dashboard dates with the technician's browser (server may be UTC).
+      const asOf = tasksAPI.getTechnicianCalendarAsOf();
+
       // Always load Tomorrow snapshot and Open Reports (shown at top)
       const [tomorrowData, openReportsData, upcomingData] = await Promise.all([
-        tasksAPI.getTechnicianTomorrow().catch(() => []),
+        tasksAPI.getTechnicianTomorrow(asOf).catch(() => []),
         tasksAPI.getTechnicianOpenReports().catch(() => []),
-        tasksAPI.getTechnicianUpcoming().catch(() => [])
+        tasksAPI.getTechnicianUpcoming(asOf).catch(() => [])
       ]);
       setTomorrowTasks(tomorrowData);
       setOpenReports(openReportsData);
@@ -56,7 +59,7 @@ const TechnicianDashboard: React.FC = () => {
       
       // Load tasks based on active filter (upcoming list already loaded above)
       if (activeFilter === 'today') {
-        const tasksData = await tasksAPI.getTechnicianToday();
+        const tasksData = await tasksAPI.getTechnicianToday(asOf);
         setTasks(tasksData);
       } else if (activeFilter === 'upcoming') {
         setTasks(upcomingData);

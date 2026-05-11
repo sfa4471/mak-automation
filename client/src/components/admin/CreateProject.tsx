@@ -3,7 +3,7 @@
  * Required: project number, tenant logo, To/Cc/Bcc emails, customer details,
  * billing/shipping addresses, optional drawings upload. See commit 8b75d4f as reference.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { projectsAPI, SoilSpecs, ConcreteSpecs, CustomerDetails, normalizeSoilSpecRow } from '../../api/projects';
 import { tenantsAPI, TenantMe } from '../../api/tenants';
@@ -61,6 +61,8 @@ const CreateProject: React.FC = () => {
   const [logoError, setLogoError] = useState(false);
   const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
   const [drawingFiles, setDrawingFiles] = useState<File[]>([]);
+  /** Prevents double submit (e.g. double-click) from creating the same project twice. */
+  const createInFlightRef = useRef(false);
 
   useEffect(() => {
     tenantsAPI.getMe().then(setTenant).catch(() => setTenant(null));
@@ -246,6 +248,8 @@ const CreateProject: React.FC = () => {
       }
     }
 
+    if (createInFlightRef.current) return;
+    createInFlightRef.current = true;
     setLoading(true);
 
     try {
@@ -312,8 +316,14 @@ const CreateProject: React.FC = () => {
         try {
           await projectsAPI.uploadDrawings(created.id, drawingFiles);
         } catch (uploadErr: any) {
-          setError(uploadErr.response?.data?.error || 'Project created but drawings upload failed. You can add drawings in Project Details.');
-          setLoading(false);
+          const msg =
+            uploadErr.response?.data?.error ||
+            'Drawings could not be uploaded right now. You can add PDFs from Project Details.';
+          // Project row already exists; leave Create page so the user does not resubmit the same number.
+          navigate(`/admin/projects/${created.id}/details`, {
+            replace: true,
+            state: { postCreateDrawingUploadNotice: msg },
+          });
           return;
         }
       }
@@ -322,6 +332,7 @@ const CreateProject: React.FC = () => {
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create project');
     } finally {
+      createInFlightRef.current = false;
       setLoading(false);
     }
   };

@@ -68,7 +68,11 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
       setTimeout(() => window.URL.revokeObjectURL(url), 120000);
     } catch (err) {
       console.error('Error opening drawing:', err);
-      setDrawingError('This file could not be opened. Check your connection and try again, or contact your administrator if the problem continues.');
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : 'This file could not be opened. Check your connection and try again, or contact your administrator if the problem continues.';
+      setDrawingError(msg);
     } finally {
       setOpeningDrawing(null);
     }

@@ -243,13 +243,27 @@ export const tasksAPI = {
   },
 
   // Technician dashboard views (filtered by assigned technician)
-  getTechnicianToday: async (): Promise<Task[]> => {
-    const response = await api.get<Task[]>(`/tasks/dashboard/technician/today?_=${Date.now()}`);
+  /**
+   * Browser-local calendar day YYYY-MM-DD (for technician dashboard ?asOf= with server).
+   */
+  getTechnicianCalendarAsOf: (): string => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  },
+
+  getTechnicianToday: async (asOf?: string): Promise<Task[]> => {
+    const params = new URLSearchParams();
+    params.set('_', String(Date.now()));
+    if (asOf) params.set('asOf', asOf);
+    const response = await api.get<Task[]>(`/tasks/dashboard/technician/today?${params.toString()}`);
     return response.data;
   },
 
-  getTechnicianUpcoming: async (): Promise<Task[]> => {
-    const response = await api.get<Task[]>(`/tasks/dashboard/technician/upcoming?_=${Date.now()}`);
+  getTechnicianUpcoming: async (asOf?: string): Promise<Task[]> => {
+    const params = new URLSearchParams();
+    params.set('_', String(Date.now()));
+    if (asOf) params.set('asOf', asOf);
+    const response = await api.get<Task[]>(`/tasks/dashboard/technician/upcoming?${params.toString()}`);
     return response.data;
   },
 
@@ -267,8 +281,11 @@ export const tasksAPI = {
   },
 
   // Tomorrow and Open Reports views
-  getTechnicianTomorrow: async (): Promise<Task[]> => {
-    const response = await api.get<Task[]>(`/tasks/dashboard/technician/tomorrow?_=${Date.now()}`);
+  getTechnicianTomorrow: async (asOf?: string): Promise<Task[]> => {
+    const params = new URLSearchParams();
+    params.set('_', String(Date.now()));
+    if (asOf) params.set('asOf', asOf);
+    const response = await api.get<Task[]>(`/tasks/dashboard/technician/tomorrow?${params.toString()}`);
     return response.data;
   },
 

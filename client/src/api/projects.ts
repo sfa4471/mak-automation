@@ -219,10 +219,54 @@ export const projectsAPI = {
 
   /** Fetch drawing PDF as blob (for View/Download with auth). */
   getDrawingBlob: async (projectId: number, filename: string): Promise<Blob> => {
-    const response = await api.get(`/projects/${projectId}/drawings/${encodeURIComponent(filename)}`, {
-      responseType: 'blob',
-    });
-    return response.data;
+    const assertPdfBlob = async (blob: Blob, headers: { 'content-type'?: string }): Promise<Blob> => {
+      const ctype = String(headers['content-type'] ?? '').toLowerCase();
+      if (ctype.includes('application/json')) {
+        const text = await blob.text();
+        let message = 'Failed to load drawing';
+        try {
+          const parsed = JSON.parse(text) as { error?: string };
+          if (parsed?.error) message = parsed.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(message);
+      }
+      const probe = await blob.slice(0, Math.min(blob.size, 8)).text();
+      if (!probe.startsWith('%PDF')) {
+        throw new Error(
+          'The drawing could not be loaded (missing file or invalid PDF). If this is a new upload, ask your administrator to verify the server workflow path and disk access.'
+        );
+      }
+      if (!blob.type || blob.type === 'application/octet-stream') {
+        return new Blob([blob], { type: 'application/pdf' });
+      }
+      return blob;
+    };
+
+    try {
+      const response = await api.get(`/projects/${projectId}/drawings/${encodeURIComponent(filename)}`, {
+        responseType: 'blob',
+      });
+      return assertPdfBlob(response.data as Blob, response.headers as { 'content-type'?: string });
+    } catch (e: unknown) {
+      const resp = (e as { response?: { data?: unknown; headers?: { 'content-type'?: string } } }).response;
+      const body = resp?.data;
+      if (body instanceof Blob && body.size > 0 && body.size < 65536) {
+        const text = await body.text();
+        if (text.trimStart().startsWith('{')) {
+          let parsed: { error?: string } = {};
+          try {
+            parsed = JSON.parse(text) as { error?: string };
+          } catch {
+            /* ignore */
+          }
+          if (parsed.error) throw new Error(parsed.error);
+        }
+      }
+      if (e instanceof Error) throw e;
+      throw new Error('Failed to load drawing');
+    }
   },
 
   deleteDrawing: async (projectId: number, filename: string): Promise<{ drawings: ProjectDrawing[] }> => {

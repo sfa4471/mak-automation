@@ -512,6 +512,70 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
   }
 });
 
+/**
+ * Same rules as single-project GET: legacy DB skips strict tenant match on the row;
+ * technicians must have a task or work package on the project.
+ * @returns {Promise<boolean>} true if a 403/response was sent (caller should return)
+ */
+async function denyUnlessProjectReadable(req, res, project, projectId) {
+  const tenantId = req.tenantId;
+  if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+    res.status(403).json({ error: 'Access denied' });
+    return true;
+  }
+  if (req.user.role === 'TECHNICIAN') {
+    let hasAccess = false;
+    if (db.isSupabase()) {
+      const [tasksResult, wpResult] = await Promise.all([
+        supabase
+          .from('tasks')
+          .select('id')
+          .eq('project_id', projectId)
+          .eq('assigned_technician_id', req.user.id)
+          .limit(1),
+        supabase
+          .from('workpackages')
+          .select('id')
+          .eq('project_id', projectId)
+          .eq('assigned_to', req.user.id)
+          .limit(1)
+      ]);
+      hasAccess = (tasksResult.data && tasksResult.data.length > 0) ||
+        (wpResult.data && wpResult.data.length > 0);
+    } else {
+      const sqliteDb = require('../database');
+      const [wpCount, taskCount] = await Promise.all([
+        new Promise((resolve, reject) => {
+          sqliteDb.get(
+            'SELECT COUNT(*) as count FROM workpackages WHERE projectId = ? AND assignedTo = ?',
+            [projectId, req.user.id],
+            (err, row) => {
+              if (err) return reject(err);
+              resolve(row ? row.count : 0);
+            }
+          );
+        }),
+        new Promise((resolve, reject) => {
+          sqliteDb.get(
+            'SELECT COUNT(*) as count FROM tasks WHERE projectId = ? AND assignedTechnicianId = ?',
+            [projectId, req.user.id],
+            (err, row) => {
+              if (err) return reject(err);
+              resolve(row ? row.count : 0);
+            }
+          );
+        })
+      ]);
+      hasAccess = wpCount > 0 || taskCount > 0;
+    }
+    if (!hasAccess) {
+      res.status(403).json({ error: 'Access denied' });
+      return true;
+    }
+  }
+  return false;
+}
+
 // Get all projects (tenant-scoped: Admin sees all for tenant, Technician sees assigned only; legacy DB: no tenant filter)
 router.get('/', authenticate, requireTenant, async (req, res) => {
   try {
@@ -601,7 +665,6 @@ router.get('/', authenticate, requireTenant, async (req, res) => {
 router.get('/:id', authenticate, requireTenant, async (req, res) => {
   try {
     const projectId = parseInt(req.params.id);
-    const tenantId = req.tenantId;
 
     if (isNaN(projectId)) {
       return res.status(400).json({ error: 'Invalid project ID' });
@@ -611,67 +674,10 @@ router.get('/:id', authenticate, requireTenant, async (req, res) => {
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
-      return res.status(403).json({ error: 'Access denied' });
+    if (await denyUnlessProjectReadable(req, res, project, projectId)) {
+      return;
     }
 
-    // Check access: Admin can see all in tenant, Technician only assigned
-    if (req.user.role === 'TECHNICIAN') {
-      let hasAccess = false;
-      
-      if (db.isSupabase()) {
-        // Check if technician has tasks or work packages assigned to this project
-        const [tasksResult, wpResult] = await Promise.all([
-          supabase
-            .from('tasks')
-            .select('id')
-            .eq('project_id', projectId)
-            .eq('assigned_technician_id', req.user.id)
-            .limit(1),
-          supabase
-            .from('workpackages')
-            .select('id')
-            .eq('project_id', projectId)
-            .eq('assigned_to', req.user.id)
-            .limit(1)
-        ]);
-        
-        hasAccess = (tasksResult.data && tasksResult.data.length > 0) || 
-                   (wpResult.data && wpResult.data.length > 0);
-      } else {
-        // SQLite fallback - check both workpackages and tasks
-        const sqliteDb = require('../database');
-        const [wpCount, taskCount] = await Promise.all([
-          new Promise((resolve, reject) => {
-            sqliteDb.get(
-              'SELECT COUNT(*) as count FROM workpackages WHERE projectId = ? AND assignedTo = ?',
-              [projectId, req.user.id],
-              (err, row) => {
-                if (err) return reject(err);
-                resolve(row ? row.count : 0);
-              }
-            );
-          }),
-          new Promise((resolve, reject) => {
-            sqliteDb.get(
-              'SELECT COUNT(*) as count FROM tasks WHERE projectId = ? AND assignedTechnicianId = ?',
-              [projectId, req.user.id],
-              (err, row) => {
-                if (err) return reject(err);
-                resolve(row ? row.count : 0);
-              }
-            );
-          })
-        ]);
-        
-        hasAccess = wpCount > 0 || taskCount > 0;
-      }
-      
-      if (!hasAccess) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-    }
-    
     parseProjectJSONFields(project);
     res.json(project);
   } catch (error) {
@@ -922,7 +928,9 @@ router.post('/:id/drawings', authenticate, requireTenant, requireAdmin, uploadDr
 
     const project = await db.get('projects', { id: projectId });
     if (!project) return res.status(404).json({ error: 'Project not found' });
-    if ((project.tenant_id ?? project.tenantId) !== tenantId) return res.status(403).json({ error: 'Access denied' });
+    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
     const projectNumber = project.project_number ?? project.projectNumber;
     if (!projectNumber) return res.status(500).json({ error: 'Project has no project number' });
@@ -972,12 +980,13 @@ router.get('/:id/drawings/:filename', authenticate, requireTenant, async (req, r
 
     const project = await db.get('projects', { id: projectId });
     if (!project) return res.status(404).json({ error: 'Project not found' });
-    if ((project.tenant_id ?? project.tenantId) !== tenantId) return res.status(403).json({ error: 'Access denied' });
+    if (await denyUnlessProjectReadable(req, res, project, projectId)) {
+      return;
+    }
 
-    let drawings = project.drawings;
-    if (typeof drawings === 'string') { try { drawings = JSON.parse(drawings); } catch (e) { drawings = []; } }
-    if (!Array.isArray(drawings)) drawings = [];
-    const entry = drawings.find(d => (d.filename === filename));
+    parseProjectJSONFields(project);
+    const drawings = Array.isArray(project.drawings) ? project.drawings : [];
+    const entry = drawings.find((d) => d && (d.filename === filename || d.fileName === filename));
     if (!entry) return res.status(404).json({ error: 'Drawing not found' });
 
     const projectNumber = project.project_number ?? project.projectNumber;
@@ -985,6 +994,8 @@ router.get('/:id/drawings/:filename', authenticate, requireTenant, async (req, r
     const filePath = path.join(drawingsDir, filename);
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
     res.setHeader('Content-Type', 'application/pdf');
+    const safeInlineName = path.basename(String(entry.displayName || filename)).replace(/["\r\n]/g, '_');
+    res.setHeader('Content-Disposition', `inline; filename="${safeInlineName}"`);
     res.sendFile(path.resolve(filePath));
   } catch (err) {
     console.error('Error serving drawing:', err);
@@ -1002,12 +1013,14 @@ router.delete('/:id/drawings/:filename', authenticate, requireTenant, requireAdm
 
     const project = await db.get('projects', { id: projectId });
     if (!project) return res.status(404).json({ error: 'Project not found' });
-    if ((project.tenant_id ?? project.tenantId) !== tenantId) return res.status(403).json({ error: 'Access denied' });
+    if (!req.legacyDb && (project.tenant_id ?? project.tenantId) !== tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
     let drawings = project.drawings;
     if (typeof drawings === 'string') { try { drawings = JSON.parse(drawings); } catch (e) { drawings = []; } }
     if (!Array.isArray(drawings)) drawings = [];
-    const filtered = drawings.filter(d => d.filename !== filename);
+    const filtered = drawings.filter((d) => d && d.filename !== filename);
     if (filtered.length === drawings.length) return res.status(404).json({ error: 'Drawing not found' });
 
     const projectNumber = project.project_number ?? project.projectNumber;

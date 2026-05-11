@@ -22,6 +22,50 @@ function mustEnforceTenantOnTasks(legacyDb) {
   return db.isSupabase() || !legacyDb;
 }
 
+/** Normalize DB date / ISO string to YYYY-MM-DD for safe string comparisons. */
+function toCalendarYmd(value) {
+  if (value == null || value === '') return null;
+  const s = String(value).trim();
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
+/** Validate client-sent calendar day (browser local). */
+function parseClientAsOfDay(q) {
+  if (q == null || typeof q !== 'string') return null;
+  const trimmed = q.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null;
+  const parts = trimmed.split('-').map((n) => parseInt(n, 10));
+  const y = parts[0];
+  const mo = parts[1];
+  const d = parts[2];
+  const dt = new Date(y, mo - 1, d);
+  if (Number.isNaN(dt.getTime())) return null;
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return trimmed;
+}
+
+/** Add days to a calendar YYYY-MM-DD without UTC midnight surprises. */
+function addCalendarDaysYmd(ymd, deltaDays) {
+  const parts = ymd.split('-').map((n) => parseInt(n, 10));
+  const y = parts[0];
+  const mo = parts[1];
+  const d = parts[2];
+  const dt = new Date(y, mo - 1, d + deltaDays);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Technician dashboard date anchor: optional ?asOf=YYYY-MM-DD from the client (browser-local
+ * "today"). Falls back to the server's local calendar day.
+ */
+function getTechnicianCalendarToday(req) {
+  const fromClient = parseClientAsOfDay(req.query && req.query.asOf);
+  if (fromClient) return fromClient;
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 // Helper function to log task history
 async function logTaskHistory(taskId, tenantId, actorRole, actorName, actorUserId, actionType, note) {
   try {
@@ -2097,10 +2141,8 @@ router.get('/dashboard/technician/today', authenticate, requireTenant, async (re
 
     const legacyDb = req.legacyDb;
     const tenantId = req.tenantId;
-    // Get today's date in YYYY-MM-DD format (local date, no timezone)
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    console.log(`[TECHNICIAN TODAY] Querying for tasks on: ${today} (technician: ${req.user.id})`);
+    const today = getTechnicianCalendarToday(req);
+    console.log(`[TECHNICIAN TODAY] Querying for tasks on: ${today} (technician: ${req.user.id}, asOf=${req.query.asOf || 'server'})`);
     
     let tasks;
     if (db.isSupabase()) {
@@ -2119,9 +2161,9 @@ router.get('/dashboard/technician/today', authenticate, requireTenant, async (re
       
       // Filter tasks based on date logic
       tasks = (data || []).filter(task => {
-        const dueDate = task.due_date;
-        const scheduledStart = task.scheduled_start_date;
-        const scheduledEnd = task.scheduled_end_date;
+        const dueDate = toCalendarYmd(task.due_date);
+        const scheduledStart = toCalendarYmd(task.scheduled_start_date);
+        const scheduledEnd = toCalendarYmd(task.scheduled_end_date);
         
         // Rule A: Report Due Date is today
         if (dueDate === today) return true;
@@ -2160,12 +2202,12 @@ router.get('/dashboard/technician/today', authenticate, requireTenant, async (re
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.assignedTechnicianId = ?
            AND (
-             (t.dueDate IS NOT NULL AND t.dueDate = ?)
+             (t.dueDate IS NOT NULL AND substr(trim(t.dueDate),1,10) = ?)
              OR
-             (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NULL AND t.scheduledStartDate = ?)
+             (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NULL AND substr(trim(t.scheduledStartDate),1,10) = ?)
              OR
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
-              AND t.scheduledStartDate <= ? AND t.scheduledEndDate >= ?)
+              AND substr(trim(t.scheduledStartDate),1,10) <= ? AND substr(trim(t.scheduledEndDate),1,10) >= ?)
            )`
           + (legacyDb ? '' : ' AND t.tenantId = ?') +
           `
@@ -2202,20 +2244,11 @@ router.get('/dashboard/technician/upcoming', authenticate, requireTenant, async 
 
     const legacyDb = req.legacyDb;
     const tenantId = req.tenantId;
-    // Get dates in YYYY-MM-DD format (local date, no timezone)
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const today = getTechnicianCalendarToday(req);
+    const tomorrowStr = addCalendarDaysYmd(today, 1);
+    const rangeEndStr = addCalendarDaysYmd(today, 14);
     
-    // Upcoming window: tomorrow through today+14 days (inclusive)
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
-    
-    const rangeEnd = new Date(now);
-    rangeEnd.setDate(rangeEnd.getDate() + 14); // 14-day window
-    const rangeEndStr = `${rangeEnd.getFullYear()}-${String(rangeEnd.getMonth() + 1).padStart(2, '0')}-${String(rangeEnd.getDate()).padStart(2, '0')}`;
-    
-    console.log(`[TECHNICIAN UPCOMING] Querying for tasks from ${tomorrowStr} to ${rangeEndStr} (technician: ${req.user.id})`);
+    console.log(`[TECHNICIAN UPCOMING] Querying for tasks from ${tomorrowStr} to ${rangeEndStr} (technician: ${req.user.id}, asOf=${req.query.asOf || 'server'})`);
     
     let tasks;
     if (db.isSupabase()) {
@@ -2235,9 +2268,9 @@ router.get('/dashboard/technician/upcoming', authenticate, requireTenant, async 
       
       // Filter tasks based on date logic
       tasks = (data || []).filter(task => {
-        const dueDate = task.due_date;
-        const scheduledStart = task.scheduled_start_date;
-        const scheduledEnd = task.scheduled_end_date;
+        const dueDate = toCalendarYmd(task.due_date);
+        const scheduledStart = toCalendarYmd(task.scheduled_start_date);
+        const scheduledEnd = toCalendarYmd(task.scheduled_end_date);
         
         // Rule A: Report Due Date is within next 14 days (future only, starting tomorrow)
         if (dueDate && dueDate >= tomorrowStr && dueDate <= rangeEndStr) return true;
@@ -2255,8 +2288,8 @@ router.get('/dashboard/technician/upcoming', authenticate, requireTenant, async 
       tasks.sort((a, b) => {
         if (a.status === 'READY_FOR_REVIEW' && b.status !== 'READY_FOR_REVIEW') return -1;
         if (a.status !== 'READY_FOR_REVIEW' && b.status === 'READY_FOR_REVIEW') return 1;
-        const aDate = a.dueDate || a.scheduledStartDate || '9999-12-31';
-        const bDate = b.dueDate || b.scheduledStartDate || '9999-12-31';
+        const aDate = toCalendarYmd(a.dueDate) || toCalendarYmd(a.scheduledStartDate) || '9999-12-31';
+        const bDate = toCalendarYmd(b.dueDate) || toCalendarYmd(b.scheduledStartDate) || '9999-12-31';
         if (aDate !== bDate) return aDate.localeCompare(bDate);
         return (a.scheduledEndDate || '').localeCompare(b.scheduledEndDate || '');
       });
@@ -2271,13 +2304,13 @@ router.get('/dashboard/technician/upcoming', authenticate, requireTenant, async 
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.assignedTechnicianId = ?
            AND (
-             (t.dueDate IS NOT NULL AND t.dueDate >= ? AND t.dueDate <= ?)
+             (t.dueDate IS NOT NULL AND substr(trim(t.dueDate),1,10) >= ? AND substr(trim(t.dueDate),1,10) <= ?)
              OR
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NULL 
-              AND t.scheduledStartDate >= ? AND t.scheduledStartDate <= ?)
+              AND substr(trim(t.scheduledStartDate),1,10) >= ? AND substr(trim(t.scheduledStartDate),1,10) <= ?)
              OR
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
-              AND t.scheduledEndDate >= ? AND t.scheduledStartDate <= ?)
+              AND substr(trim(t.scheduledEndDate),1,10) >= ? AND substr(trim(t.scheduledStartDate),1,10) <= ?)
            )
            AND t.status != 'APPROVED'`
           + (legacyDb ? '' : ' AND t.tenantId = ?') +
@@ -2315,13 +2348,10 @@ router.get('/dashboard/technician/tomorrow', authenticate, requireTenant, async 
 
     const legacyDb = req.legacyDb;
     const tenantId = req.tenantId;
-    // Get tomorrow's date in YYYY-MM-DD format (local date, no timezone)
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+    const today = getTechnicianCalendarToday(req);
+    const tomorrowStr = addCalendarDaysYmd(today, 1);
     
-    console.log(`[TECHNICIAN TOMORROW] Querying for tasks on: ${tomorrowStr} (technician: ${req.user.id})`);
+    console.log(`[TECHNICIAN TOMORROW] Querying for tasks on: ${tomorrowStr} (technician: ${req.user.id}, asOf=${req.query.asOf || 'server'})`);
     
     let tasks;
     if (db.isSupabase()) {
@@ -2340,8 +2370,12 @@ router.get('/dashboard/technician/tomorrow', authenticate, requireTenant, async 
       
       // Filter tasks based on date logic
       tasks = (data || []).filter(task => {
-        const scheduledStart = task.scheduled_start_date;
-        const scheduledEnd = task.scheduled_end_date;
+        const dueDate = toCalendarYmd(task.due_date);
+        const scheduledStart = toCalendarYmd(task.scheduled_start_date);
+        const scheduledEnd = toCalendarYmd(task.scheduled_end_date);
+        
+        // Report due tomorrow (no field dates required — still "due tomorrow" for the tech)
+        if (dueDate === tomorrowStr) return true;
         
         // Single field date: fieldDate == tomorrow
         if (scheduledStart === tomorrowStr && !scheduledEnd) return true;
@@ -2375,10 +2409,12 @@ router.get('/dashboard/technician/tomorrow', authenticate, requireTenant, async 
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.assignedTechnicianId = ?
            AND (
-             (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NULL AND t.scheduledStartDate = ?)
+             (t.dueDate IS NOT NULL AND substr(trim(t.dueDate),1,10) = ?)
+             OR
+             (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NULL AND substr(trim(t.scheduledStartDate),1,10) = ?)
              OR
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
-              AND t.scheduledStartDate <= ? AND t.scheduledEndDate >= ?)
+              AND substr(trim(t.scheduledStartDate),1,10) <= ? AND substr(trim(t.scheduledEndDate),1,10) >= ?)
            )`
           + (legacyDb ? '' : ' AND t.tenantId = ?') +
           `
@@ -2386,8 +2422,8 @@ router.get('/dashboard/technician/tomorrow', authenticate, requireTenant, async 
              t.scheduledStartDate ASC,
              t.dueDate ASC`,
           legacyDb
-            ? [req.user.id, tomorrowStr, tomorrowStr, tomorrowStr]
-            : [req.user.id, tomorrowStr, tomorrowStr, tomorrowStr, tenantId],
+            ? [req.user.id, tomorrowStr, tomorrowStr, tomorrowStr, tomorrowStr]
+            : [req.user.id, tomorrowStr, tomorrowStr, tomorrowStr, tomorrowStr, tenantId],
           (err, rows) => {
             if (err) reject(err);
             else resolve(rows || []);

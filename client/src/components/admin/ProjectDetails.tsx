@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useAppDialog } from '../../context/AppDialogContext';
 import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress, normalizeSoilSpecRow, PresetProctorRow } from '../../api/projects';
@@ -36,6 +36,7 @@ function CopyIcon() {
 const ProjectDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user: _user, isAdmin } = useAuth();
   const { showAlert } = useAppDialog();
   const [openingDrawing, setOpeningDrawing] = useState<string | null>(null);
@@ -68,6 +69,17 @@ const ProjectDetails: React.FC = () => {
     loadProject();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  /** After create-project + failed drawing upload, redirect lands here with a one-shot notice (avoids duplicate project number resubmits). */
+  useEffect(() => {
+    const notice = (location.state as { postCreateDrawingUploadNotice?: string } | null)?.postCreateDrawingUploadNotice;
+    if (!notice) return;
+    void showAlert(
+      `${notice}\n\nThis project is already saved. Submitting Create Project again with the same project number will show "Project number already exists." Use the Drawings section on this page to upload PDFs.`,
+      'Project saved'
+    );
+    navigate('.', { replace: true, state: {} });
+  }, [location.state, navigate, showAlert]);
 
   const loadProject = async () => {
     try {
@@ -1575,8 +1587,12 @@ const ProjectDetails: React.FC = () => {
                           const url = URL.createObjectURL(blob);
                           window.open(url, '_blank');
                           setTimeout(() => URL.revokeObjectURL(url), 60000);
-                        } catch {
-                          // ignore
+                        } catch (e) {
+                          setError(
+                            e instanceof Error && e.message
+                              ? e.message
+                              : 'Could not open drawing. Check your connection or try again.'
+                          );
                         } finally {
                           setOpeningDrawing(null);
                         }
@@ -1597,8 +1613,12 @@ const ProjectDetails: React.FC = () => {
                           a.download = (d.displayName || d.filename).replace(/\.pdf$/i, '') + '.pdf';
                           a.click();
                           URL.revokeObjectURL(url);
-                        } catch {
-                          // ignore
+                        } catch (e) {
+                          setError(
+                            e instanceof Error && e.message
+                              ? e.message
+                              : 'Could not download drawing. Check your connection or try again.'
+                          );
                         }
                       }}
                       style={{ fontSize: 14 }}
