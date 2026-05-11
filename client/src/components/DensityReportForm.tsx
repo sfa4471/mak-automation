@@ -4,7 +4,7 @@ import { densityAPI, DensityReport, TestRow, ProctorRow } from '../api/density';
 import { tasksAPI, Task, TaskHistoryEntry, ProctorTask, taskTypeLabel } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
-import { SoilSpecRow, normalizeSoilSpecRow, projectsAPI } from '../api/projects';
+import { SoilSpecRow, normalizeSoilSpecRow, projectsAPI, structureTypeDisplayLabel } from '../api/projects';
 import {
   mergeProjectPresetIntoProctors,
   projectPresetSignature,
@@ -19,23 +19,6 @@ import './DensityReportForm.css';
 
 // Note: We no longer use fallback structure types - only show structure types
 // that are actually defined in the project's Soil Specs section
-
-/**
- * Format structure name for display
- * Converts "_building_pad" -> "Building Pad"
- * Handles underscores, leading underscores, and capitalization
- */
-const formatStructureName = (structureName: string): string => {
-  if (!structureName) return '';
-  
-  return structureName
-    .replace(/^_+/, '') // Remove leading underscores
-    .replace(/_/g, ' ') // Replace underscores with spaces
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ')
-    .trim();
-};
 
 const DensityReportForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -1280,9 +1263,14 @@ const DensityReportForm: React.FC = () => {
                     );
                   }
                   
-                  return structureTypes.map((type) => (
-                    <option key={type} value={type}>{formatStructureName(type)}</option>
-                  ));
+                  return structureTypes.map((type) => {
+                    const soilRow = formData.projectSoilSpecs?.[type] as SoilSpecRow | undefined;
+                    return (
+                      <option key={type} value={type}>
+                        {structureTypeDisplayLabel(type, soilRow?.otherDetails)}
+                      </option>
+                    );
+                  });
                 })()}
               </select>
               {formData.structureType && formData.projectSoilSpecs && !formData.projectSoilSpecs[formData.structureType] && (

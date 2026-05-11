@@ -15,6 +15,8 @@ export interface SoilSpecRow {
   moistureRange?: MoistureRange;
   /** Multiple moisture ranges per structure type. Normalize from moistureRange when only legacy present. */
   moistureRanges?: MoistureRange[];
+  /** When structure type is "Other", free-text description shown in workflow UIs and reports. */
+  otherDetails?: string;
 }
 
 export interface ConcreteSpecRow {
@@ -24,6 +26,8 @@ export interface ConcreteSpecRow {
   concreteTempF?: string;
   slump?: string;
   airContent?: string;
+  /** When structure type is "Other", free-text description shown in workflow UIs and reports. */
+  otherDetails?: string;
 }
 
 export interface SoilSpecs {
@@ -56,6 +60,30 @@ export function normalizeSoilSpecRow(spec: SoilSpecRow | undefined): SoilSpecRow
 
 export interface ConcreteSpecs {
   [structureType: string]: ConcreteSpecRow;
+}
+
+/**
+ * Display label for a structure type in dropdowns and read-only specs.
+ * When type is "Other" and otherDetails is set, shows "Other: …".
+ */
+export function structureTypeDisplayLabel(
+  structureType: string,
+  otherDetails?: string | null
+): string {
+  if (!structureType) return '';
+  const base = structureType
+    .replace(/^_+/, '')
+    .replace(/_/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+    .trim();
+  const detail = String(otherDetails ?? '').trim();
+  if (structureType.trim().toLowerCase() === 'other' && detail) {
+    return `${base}: ${detail}`;
+  }
+  return base;
 }
 
 export interface FolderCreationResult {

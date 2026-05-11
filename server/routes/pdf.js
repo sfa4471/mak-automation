@@ -24,6 +24,11 @@ async function safeCloseBrowser(browser) {
 const { getTenant, getTenantAddress, getLogoBase64, getPdfFooterData, buildPdfFooterHtml } = require('../utils/tenantBranding');
 const { ensureDensityReportRow } = require('../utils/ensureDensityReportRow');
 const { ensureRebarReportRow, getFirstRebarReportRow } = require('../utils/ensureRebarReportRow');
+const {
+  structureTypeDisplayLabel,
+  parseSpecsJson,
+  getSpecRow
+} = require('../utils/structureTypeDisplayLabel');
 
 // Generate PDF for WP1 (supports both workPackageId and taskId)
 router.get('/wp1/:id', authenticate, async (req, res) => {
@@ -42,7 +47,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
           .from('tasks')
           .select(`
             *,
-            projects:project_id(project_name, project_number, spec_strength_psi, spec_ambient_temp_f,
+            projects:project_id(project_name, project_number, concrete_specs, spec_strength_psi, spec_ambient_temp_f,
               spec_concrete_temp_f, spec_slump, spec_air_content_by_volume),
             users:assigned_technician_id(name)
           `)
@@ -69,6 +74,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
           ...data,
           projectName: data.projects?.project_name,
           projectNumber: data.projects?.project_number,
+          concreteSpecs: data.projects?.concrete_specs,
           specStrengthPsi: data.projects?.spec_strength_psi,
           specAmbientTempF: data.projects?.spec_ambient_temp_f,
           specConcreteTempF: data.projects?.spec_concrete_temp_f,
@@ -82,7 +88,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         const sqliteDb = require('../database');
         taskOrWp = await new Promise((resolve, reject) => {
           sqliteDb.get(
-            `SELECT t.*, p.projectName, p.projectNumber, p.specStrengthPsi, p.specAmbientTempF,
+            `SELECT t.*, p.projectName, p.projectNumber, p.concreteSpecs, p.specStrengthPsi, p.specAmbientTempF,
              p.specConcreteTempF, p.specSlump, p.specAirContentByVolume,
              u.name as technicianName
              FROM tasks t
@@ -119,7 +125,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
           .from('workpackages')
           .select(`
             *,
-            projects:project_id(project_name, project_number, project_spec, customer_email),
+            projects:project_id(project_name, project_number, project_spec, customer_email, concrete_specs),
             users:assigned_to(name)
           `)
           .eq('id', id)
@@ -136,6 +142,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
           projectNumber: data.projects?.project_number,
           projectSpec: data.projects?.project_spec,
           customerEmail: data.projects?.customer_email,
+          concreteSpecs: data.projects?.concrete_specs,
           technicianName: data.users?.name,
           projects: undefined,
           users: undefined
@@ -144,7 +151,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         const sqliteDb = require('../database');
         taskOrWp = await new Promise((resolve, reject) => {
           sqliteDb.get(
-            `SELECT wp.*, p.projectName, p.projectNumber, p.projectSpec, p.customerEmail,
+            `SELECT wp.*, p.projectName, p.projectNumber, p.projectSpec, p.customerEmail, p.concreteSpecs,
              u.name as technicianName
              FROM workpackages wp
              INNER JOIN projects p ON wp.projectId = p.id
@@ -300,7 +307,13 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     html = html.replace('{{SPEC_STRENGTH_DAYS}}', escapeHtml(specStrengthDays));
 
     // Sample Information
-    html = html.replace('{{STRUCTURE}}', escapeHtml(toTitleCase(wp1Data.structure || '')));
+    const concreteSpecsForPdf = parseSpecsJson(taskOrWp.concreteSpecs ?? taskOrWp.concrete_specs);
+    const wpStructureKey = wp1Data.structure || '';
+    const concreteRowForStructure = getSpecRow(concreteSpecsForPdf, wpStructureKey);
+    const wpStructurePdfLabel =
+      structureTypeDisplayLabel(wpStructureKey, concreteRowForStructure && concreteRowForStructure.otherDetails) ||
+      toTitleCase(wpStructureKey);
+    html = html.replace('{{STRUCTURE}}', escapeHtml(wpStructurePdfLabel));
     html = html.replace('{{SAMPLE_LOCATION}}', escapeHtml(wp1Data.sampleLocation || ''));
     html = html.replace('{{SUPPLIER}}', escapeHtml(wp1Data.supplier || ''));
     html = html.replace('{{TIME_BATCHED}}', escapeHtml(formatTime(wp1Data.timeBatched || '')));
@@ -838,7 +851,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         .from('tasks')
         .select(`
           *,
-          projects:project_id(project_name, project_number),
+          projects:project_id(project_name, project_number, soil_specs),
           users:assigned_technician_id(name)
         `)
         .eq('id', taskId)
@@ -853,6 +866,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         ...data,
         projectName: data.projects?.project_name,
         projectNumber: data.projects?.project_number,
+        soilSpecs: data.projects?.soil_specs,
         assignedTechnicianName: data.users?.name,
         projects: undefined,
         users: undefined
@@ -993,8 +1007,19 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       html = html.replace('{{DATE_PERFORMED}}', escapeHtml(datePerformed));
       html = html.replace('{{PROJECT_NAME}}', escapeHtml(task.projectName || ''));
       html = html.replace('{{PROJECT_NUMBER}}', escapeHtml(task.projectNumber || ''));
-      const toTitleCase = (s) => { if (!s || typeof s !== 'string') return ''; return s.trim().replace(/\b\w/g, (c) => c.toUpperCase()); };
-      html = html.replace('{{STRUCTURE}}', escapeHtml(toTitleCase(data.structure || '')));
+      const toTitleCase = (s) => {
+        if (!s || typeof s !== 'string') return '';
+        return s.trim().replace(/\b\w/g, (c) => c.toUpperCase());
+      };
+      const soilSpecsForPdf = parseSpecsJson(task.soilSpecs ?? task.soil_specs);
+      const densityStructureKey = data.structureType || data.structure || '';
+      const soilRowForStructure = getSpecRow(soilSpecsForPdf, densityStructureKey);
+      const densityStructurePdfLabel =
+        structureTypeDisplayLabel(
+          densityStructureKey,
+          soilRowForStructure && soilRowForStructure.otherDetails
+        ) || toTitleCase(densityStructureKey);
+      html = html.replace('{{STRUCTURE}}', escapeHtml(densityStructurePdfLabel));
 
       // Generate test rows HTML
       let testRowsHtml = '';

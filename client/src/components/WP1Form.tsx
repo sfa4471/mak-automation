@@ -5,7 +5,7 @@ import { wp1API } from '../api/wp1';
 import { tasksAPI, Task, TaskHistoryEntry } from '../api/tasks';
 import { useAuth } from '../context/AuthContext';
 import { authAPI, User } from '../api/auth';
-import { ConcreteSpecs, projectsAPI } from '../api/projects';
+import { ConcreteSpecs, projectsAPI, structureTypeDisplayLabel } from '../api/projects';
 import { getApiPathPrefix } from '../api/api';
 import { useAppDialog } from '../context/AppDialogContext';
 import ProjectHomeButton from './ProjectHomeButton';
@@ -1217,7 +1217,10 @@ const WP1Form: React.FC = () => {
                 {Object.keys(concreteSpecs).length > 0 ? (
                   Object.keys(concreteSpecs).map((structureType) => (
                     <option key={structureType} value={structureType}>
-                      {structureType.replace(/\b\w/g, (c) => c.toUpperCase())}
+                      {structureTypeDisplayLabel(
+                        structureType,
+                        concreteSpecs[structureType]?.otherDetails
+                      )}
                     </option>
                   ))
                 ) : (

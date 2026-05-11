@@ -627,12 +627,15 @@ const ProjectDetails: React.FC = () => {
         const hasMoisture = moistureRanges.some(
           r => (r.min != null && String(r.min).trim() !== '') || (r.max != null && String(r.max).trim() !== '')
         );
-        if (hasDensity || hasMoisture) {
+        const otherDetails = String(spec.otherDetails ?? '').trim();
+        const hasOtherNote = matchingType.toLowerCase() === 'other' && otherDetails !== '';
+        if (hasDensity || hasMoisture || hasOtherNote) {
           filteredSoilSpecs[matchingType] = {
             densityPcts: densityPcts.length ? densityPcts : undefined,
             moistureRanges: moistureRanges.length ? moistureRanges : undefined,
             ...(densityPcts.length > 0 && densityPcts[0] != null && String(densityPcts[0]).trim() !== '' && { densityPct: String(densityPcts[0]) }),
-            ...(moistureRanges.length > 0 && moistureRanges[0] && { moistureRange: moistureRanges[0] })
+            ...(moistureRanges.length > 0 && moistureRanges[0] && { moistureRange: moistureRanges[0] }),
+            ...(otherDetails && { otherDetails })
           };
         }
       });
@@ -651,10 +654,13 @@ const ProjectDetails: React.FC = () => {
             const hasMoisture = (normalized.moistureRanges || []).some(
               r => (r.min != null && String(r.min).trim() !== '') || (r.max != null && String(r.max).trim() !== '')
             );
-            if (hasDensity || hasMoisture) {
+            const od = String(normalized.otherDetails ?? '').trim();
+            const hasOtherNote = matchingType.toLowerCase() === 'other' && od !== '';
+            if (hasDensity || hasMoisture || hasOtherNote) {
               filteredSoilSpecs[matchingType] = {
                 densityPcts: normalized.densityPcts,
-                moistureRanges: normalized.moistureRanges
+                moistureRanges: normalized.moistureRanges,
+                ...(od && { otherDetails: od })
               };
             }
           }
@@ -675,17 +681,21 @@ const ProjectDetails: React.FC = () => {
           
           // Check if it has at least one non-empty value
           // If a value is in state, it means the user interacted with it, so save it (even if it's "35-95" or "45-95")
-          const hasValue = (
+          const otherDetails = String(spec.otherDetails ?? '').trim();
+          const hasOtherNote = matchingType.toLowerCase() === 'other' && otherDetails !== '';
+          const hasValue =
+            hasOtherNote ||
             (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') ||
             (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') ||
             (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
             (spec.slump && String(spec.slump).trim() !== '') ||
-            (spec.airContent && String(spec.airContent).trim() !== '')
-          );
+            (spec.airContent && String(spec.airContent).trim() !== '');
           
           if (hasValue) {
-            // Use normalized key (correct case)
-            filteredConcreteSpecs[matchingType] = { ...spec };
+            filteredConcreteSpecs[matchingType] = {
+              ...spec,
+              ...(otherDetails ? { otherDetails } : {})
+            };
           }
         }
       });
@@ -701,15 +711,21 @@ const ProjectDetails: React.FC = () => {
           // Only preserve if it wasn't already included from current state
           if (!filteredConcreteSpecs[matchingType]) {
             const existingSpec = project.concreteSpecs![key];
-            // Only preserve if it has values
-            if (existingSpec && (
+            if (!existingSpec) return;
+            const exOd = String(existingSpec.otherDetails ?? '').trim();
+            const exOtherNote = matchingType.toLowerCase() === 'other' && exOd !== '';
+            if (
+              exOtherNote ||
               (existingSpec.specStrengthPsi && String(existingSpec.specStrengthPsi).trim() !== '') ||
               (existingSpec.ambientTempF && String(existingSpec.ambientTempF).trim() !== '') ||
               (existingSpec.concreteTempF && String(existingSpec.concreteTempF).trim() !== '') ||
               (existingSpec.slump && String(existingSpec.slump).trim() !== '') ||
               (existingSpec.airContent && String(existingSpec.airContent).trim() !== '')
-            )) {
-              filteredConcreteSpecs[matchingType] = { ...existingSpec };
+            ) {
+              filteredConcreteSpecs[matchingType] = {
+                ...existingSpec,
+                ...(exOd ? { otherDetails: exOd } : {})
+              };
             }
           }
         });
@@ -1205,7 +1221,25 @@ const ProjectDetails: React.FC = () => {
                       const spec = concreteSpecs[structureType] || {};
                       return (
                         <tr key={structureType}>
-                            <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500' }}>{structureType}</td>
+                            <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>
+                              <div>{structureType}</div>
+                              {structureType === 'Other' && (
+                                <textarea
+                                  value={spec.otherDetails ?? ''}
+                                  onChange={(e) => updateConcreteSpec(structureType, 'otherDetails', e.target.value)}
+                                  placeholder="Describe this structure type…"
+                                  rows={2}
+                                  className="form-input"
+                                  style={{
+                                    width: '100%',
+                                    minWidth: '160px',
+                                    marginTop: '8px',
+                                    padding: '6px',
+                                    resize: 'vertical'
+                                  }}
+                                />
+                              )}
+                            </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
                             <input
                               type="text"
@@ -1293,7 +1327,25 @@ const ProjectDetails: React.FC = () => {
                       const moistureRanges = spec.moistureRanges || [{ min: '', max: '' }];
                       return (
                         <tr key={structureType}>
-                          <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>{structureType}</td>
+                          <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>
+                            <div>{structureType}</div>
+                            {structureType === 'Other' && (
+                              <textarea
+                                value={spec.otherDetails ?? ''}
+                                onChange={(e) => updateSoilSpec(structureType, 'otherDetails', e.target.value)}
+                                placeholder="Describe this structure type…"
+                                rows={2}
+                                className="form-input"
+                                style={{
+                                  width: '100%',
+                                  minWidth: '160px',
+                                  marginTop: '8px',
+                                  padding: '6px',
+                                  resize: 'vertical'
+                                }}
+                              />
+                            )}
+                          </td>
                           <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                               {densityPcts.map((pct, rowIndex) => (

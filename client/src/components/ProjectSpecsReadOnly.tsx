@@ -1,14 +1,6 @@
 import React from 'react';
-import { Project, normalizeSoilSpecRow } from '../api/projects';
+import { Project, normalizeSoilSpecRow, structureTypeDisplayLabel } from '../api/projects';
 import './ProjectSpecsReadOnly.css';
-
-function capitalizeStructureType(type: string): string {
-  if (!type) return type;
-  return type
-    .split(' ')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ');
-}
 
 function renderConcreteSpecs(project: Project | null) {
   if (!project?.concreteSpecs || Object.keys(project.concreteSpecs).length === 0) {
@@ -37,7 +29,9 @@ function renderConcreteSpecs(project: Project | null) {
 
             return (
               <tr key={structureType}>
-                <td className="spec-structure-type">{capitalizeStructureType(structureType)}</td>
+                <td className="spec-structure-type">
+                  {structureTypeDisplayLabel(structureType, spec.otherDetails)}
+                </td>
                 <td>{spec.specStrengthPsi || 'N/A'}</td>
                 <td>{ambientTemp}</td>
                 <td>{concreteTemp}</td>
@@ -87,7 +81,9 @@ function renderSoilSpecs(project: Project | null) {
               moistureParts.length > 0 ? moistureParts.filter(Boolean).join('; ') : 'N/A';
             return (
               <tr key={structureType}>
-                <td className="spec-structure-type">{capitalizeStructureType(structureType)}</td>
+                <td className="spec-structure-type">
+                  {structureTypeDisplayLabel(structureType, spec.otherDetails)}
+                </td>
                 <td>{densityDisplay}</td>
                 <td>{moistureDisplay}</td>
               </tr>
