@@ -7,7 +7,7 @@ const { supabase, isAvailable, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin, isStaffReviewer } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
-const { ensureProjectDirectory, getProjectDrawingsDir } = require('../utils/pdfFileManager');
+const { ensureProjectDirectory, getProjectDrawingsDir, resolveDrawingFilePath } = require('../utils/pdfFileManager');
 
 const router = express.Router();
 
@@ -991,12 +991,32 @@ router.get('/:id/drawings/:filename', authenticate, requireTenant, async (req, r
 
     const projectNumber = project.project_number ?? project.projectNumber;
     const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
-    const filePath = path.join(drawingsDir, filename);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    const filePath = resolveDrawingFilePath(drawingsDir, filename);
+    if (!filePath) {
+      let sample = '';
+      try {
+        if (fs.existsSync(drawingsDir) && fs.statSync(drawingsDir).isDirectory()) {
+          sample = fs.readdirSync(drawingsDir).slice(0, 15).join(', ');
+        }
+      } catch {
+        /* ignore */
+      }
+      console.warn('[drawings] File not on disk', {
+        projectId,
+        filename,
+        drawingsDir: path.resolve(drawingsDir),
+        dirExists: fs.existsSync(drawingsDir),
+        sampleFiles: sample || '(none / unreadable)'
+      });
+      return res.status(404).json({
+        error:
+          'Drawing PDF is missing on this server (folder empty, wrong path, or API not on the machine that received the upload). Check Settings → Workflow path, or re-upload the drawing.'
+      });
+    }
     res.setHeader('Content-Type', 'application/pdf');
     const safeInlineName = path.basename(String(entry.displayName || filename)).replace(/["\r\n]/g, '_');
     res.setHeader('Content-Disposition', `inline; filename="${safeInlineName}"`);
-    res.sendFile(path.resolve(filePath));
+    res.sendFile(filePath);
   } catch (err) {
     console.error('Error serving drawing:', err);
     res.status(500).json({ error: err.message || 'Failed to serve drawing' });
@@ -1025,8 +1045,8 @@ router.delete('/:id/drawings/:filename', authenticate, requireTenant, requireAdm
 
     const projectNumber = project.project_number ?? project.projectNumber;
     const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
-    const filePath = path.join(drawingsDir, filename);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    const filePath = resolveDrawingFilePath(drawingsDir, filename);
+    if (filePath) fs.unlinkSync(filePath);
 
     const updatePayload = db.isSupabase() ? { drawings: filtered } : { drawings: JSON.stringify(filtered) };
     await db.update('projects', updatePayload, { id: projectId });

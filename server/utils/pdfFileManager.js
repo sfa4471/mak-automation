@@ -589,6 +589,73 @@ async function getProjectDrawingsDir(projectNumber, tenantId = null) {
 }
 
 /**
+ * Locate a drawing PDF on disk. Tries exact path, Windows long-path form, then
+ * case-insensitive match in the drawings folder (Windows often preserves casing
+ * differently than the stored metadata name).
+ * @param {string} drawingsDir - Full path to the project's drawings folder
+ * @param {string} filename - Stored filename (basename only)
+ * @returns {string|null} Absolute path to an existing file, or null
+ */
+function resolveDrawingFilePath(drawingsDir, filename) {
+  if (!drawingsDir || !filename) return null;
+  const safeName = path.basename(filename);
+  const baseDir = path.resolve(drawingsDir);
+
+  const tryFile = (p) => {
+    if (!p) return null;
+    try {
+      const abs = path.resolve(p);
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return abs;
+    } catch {
+      /* path missing or unreadable */
+    }
+    return null;
+  };
+
+  let hit = tryFile(path.join(baseDir, safeName));
+  if (hit) return hit;
+
+  if (process.platform === 'win32') {
+    hit = tryFile(normalizeWindowsPath(path.join(baseDir, safeName)));
+    if (hit) return hit;
+
+    const longBase = normalizeWindowsPath(baseDir);
+    if (longBase !== baseDir) {
+      hit = tryFile(path.join(longBase, safeName));
+      if (hit) return hit;
+    }
+
+    try {
+      if (fs.existsSync(baseDir) && fs.statSync(baseDir).isDirectory()) {
+        const needle = safeName.toLowerCase();
+        const found = fs.readdirSync(baseDir).find((f) => f.toLowerCase() === needle);
+        if (found) {
+          hit = tryFile(path.join(baseDir, found));
+          if (hit) return hit;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  } else if (process.platform === 'darwin') {
+    try {
+      if (fs.existsSync(baseDir) && fs.statSync(baseDir).isDirectory()) {
+        const needle = safeName.toLowerCase();
+        const found = fs.readdirSync(baseDir).find((f) => f.toLowerCase() === needle);
+        if (found) {
+          hit = tryFile(path.join(baseDir, found));
+          if (hit) return hit;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return null;
+}
+
+/**
  * Get sequence number for a test type within a project
  * @param {string} projectNumber - The project number
  * @param {string} taskType - Task type
@@ -872,5 +939,6 @@ module.exports = {
   getWorkflowBasePath,
   validatePath,
   normalizeWindowsPath,
-  getProjectDrawingsDir
+  getProjectDrawingsDir,
+  resolveDrawingFilePath
 };
