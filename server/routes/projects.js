@@ -113,6 +113,39 @@ function parseProjectJSONFields(project) {
     project.presetProctorsDeclared = false;
   }
 
+  // ccEmails / bccEmails (SQLite string vs Supabase JSONB array)
+  ['ccEmails', 'bccEmails'].forEach((key) => {
+    const val = project[key];
+    if (val !== null && val !== undefined) {
+      if (typeof val === 'string') {
+        try {
+          project[key] = JSON.parse(val);
+        } catch (e) {
+          project[key] = [];
+        }
+      } else if (!Array.isArray(val)) {
+        project[key] = [];
+      }
+    } else {
+      project[key] = [];
+    }
+  });
+
+  // customerDetails (SQLite string vs Supabase JSONB object)
+  if (project.customerDetails !== null && project.customerDetails !== undefined) {
+    if (typeof project.customerDetails === 'string') {
+      try {
+        project.customerDetails = JSON.parse(project.customerDetails);
+      } catch (e) {
+        project.customerDetails = {};
+      }
+    } else if (typeof project.customerDetails !== 'object' || Array.isArray(project.customerDetails)) {
+      project.customerDetails = {};
+    }
+  } else {
+    project.customerDetails = {};
+  }
+
   return project;
 }
 
@@ -282,6 +315,11 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
   body('clientName').optional().trim(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
+  body('ccEmails').optional().isArray(),
+  body('ccEmails.*').optional().isEmail(),
+  body('bccEmails').optional().isArray(),
+  body('bccEmails.*').optional().isEmail(),
+  body('customerDetails').optional().isObject(),
   body('soilSpecs').optional().isObject(),
   body('concreteSpecs').optional().isObject()
 ], async (req, res) => {
@@ -296,6 +334,9 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       projectNumber: bodyProjectNumber,
       clientName,
       customerEmails,
+      ccEmails,
+      bccEmails,
+      customerDetails,
       soilSpecs,
       concreteSpecs
     } = req.body;
@@ -311,6 +352,19 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       if (uniqueEmails.length !== customerEmails.length) {
         return res.status(400).json({ error: 'Duplicate emails are not allowed' });
       }
+    }
+
+    if (ccEmails != null && (!Array.isArray(ccEmails) || ccEmails.some((e) => typeof e !== 'string'))) {
+      return res.status(400).json({ error: 'ccEmails must be an array of strings' });
+    }
+    if (ccEmails && [...new Set(ccEmails)].length !== ccEmails.length) {
+      return res.status(400).json({ error: 'Duplicate emails are not allowed in Cc' });
+    }
+    if (bccEmails != null && (!Array.isArray(bccEmails) || bccEmails.some((e) => typeof e !== 'string'))) {
+      return res.status(400).json({ error: 'bccEmails must be an array of strings' });
+    }
+    if (bccEmails && [...new Set(bccEmails)].length !== bccEmails.length) {
+      return res.status(400).json({ error: 'Duplicate emails are not allowed in Bcc' });
     }
 
     // Check for duplicate project name (case-sensitive, trimmed)
@@ -371,11 +425,29 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       projectData.customerEmails = customerEmails && customerEmails.length > 0 ? customerEmails : null;
       projectData.soilSpecs = soilSpecs && Object.keys(soilSpecs).length > 0 ? soilSpecs : null;
       projectData.concreteSpecs = concreteSpecs && Object.keys(concreteSpecs).length > 0 ? concreteSpecs : null;
+      if (Array.isArray(ccEmails)) {
+        projectData.ccEmails = ccEmails.length > 0 ? ccEmails : [];
+      }
+      if (Array.isArray(bccEmails)) {
+        projectData.bccEmails = bccEmails.length > 0 ? bccEmails : [];
+      }
+      if (customerDetails != null && typeof customerDetails === 'object' && !Array.isArray(customerDetails) && Object.keys(customerDetails).length > 0) {
+        projectData.customerDetails = customerDetails;
+      }
     } else {
       // SQLite: stringify JSON fields
       projectData.customerEmails = customerEmails && customerEmails.length > 0 ? JSON.stringify(customerEmails) : null;
       projectData.soilSpecs = soilSpecs && Object.keys(soilSpecs).length > 0 ? JSON.stringify(soilSpecs) : null;
       projectData.concreteSpecs = concreteSpecs && Object.keys(concreteSpecs).length > 0 ? JSON.stringify(concreteSpecs) : null;
+      if (Array.isArray(ccEmails)) {
+        projectData.ccEmails = JSON.stringify(ccEmails.length > 0 ? ccEmails : []);
+      }
+      if (Array.isArray(bccEmails)) {
+        projectData.bccEmails = JSON.stringify(bccEmails.length > 0 ? bccEmails : []);
+      }
+      if (customerDetails != null && typeof customerDetails === 'object' && !Array.isArray(customerDetails) && Object.keys(customerDetails).length > 0) {
+        projectData.customerDetails = JSON.stringify(customerDetails);
+      }
     }
 
     // Create project (retry with next project number only when number was auto-generated and duplicate race)
@@ -614,6 +686,11 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
   body('clientName').optional().trim(),
   body('customerEmails').optional().isArray(),
   body('customerEmails.*').optional().isEmail(),
+  body('ccEmails').optional().isArray(),
+  body('ccEmails.*').optional().isEmail(),
+  body('bccEmails').optional().isArray(),
+  body('bccEmails.*').optional().isEmail(),
+  body('customerDetails').optional().isObject(),
   body('soilSpecs').optional().isObject(),
   body('concreteSpecs').optional().isObject(),
   body('presetProctorsDeclared').optional().isBoolean(),
@@ -644,6 +721,9 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       projectName, 
       clientName,
       customerEmails,
+      ccEmails,
+      bccEmails,
+      customerDetails,
       soilSpecs,
       concreteSpecs,
       presetProctorsDeclared,
@@ -658,6 +738,23 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       const uniqueEmails = Array.from(new Set(customerEmails));
       if (uniqueEmails.length !== customerEmails.length) {
         return res.status(400).json({ error: 'Duplicate emails are not allowed' });
+      }
+    }
+
+    if (ccEmails !== undefined && ccEmails !== null) {
+      if (!Array.isArray(ccEmails)) {
+        return res.status(400).json({ error: 'ccEmails must be an array' });
+      }
+      if ([...new Set(ccEmails)].length !== ccEmails.length) {
+        return res.status(400).json({ error: 'Duplicate emails are not allowed in Cc' });
+      }
+    }
+    if (bccEmails !== undefined && bccEmails !== null) {
+      if (!Array.isArray(bccEmails)) {
+        return res.status(400).json({ error: 'bccEmails must be an array' });
+      }
+      if ([...new Set(bccEmails)].length !== bccEmails.length) {
+        return res.status(400).json({ error: 'Duplicate emails are not allowed in Bcc' });
       }
     }
 
@@ -676,6 +773,30 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
         updateData.customerEmails = customerEmails;
       } else {
         updateData.customerEmails = JSON.stringify(customerEmails);
+      }
+    }
+    if (ccEmails !== undefined && ccEmails !== null) {
+      if (db.isSupabase()) {
+        updateData.ccEmails = ccEmails;
+      } else {
+        updateData.ccEmails = JSON.stringify(ccEmails);
+      }
+    }
+    if (bccEmails !== undefined && bccEmails !== null) {
+      if (db.isSupabase()) {
+        updateData.bccEmails = bccEmails;
+      } else {
+        updateData.bccEmails = JSON.stringify(bccEmails);
+      }
+    }
+    if (customerDetails !== undefined && customerDetails !== null) {
+      if (typeof customerDetails !== 'object' || Array.isArray(customerDetails)) {
+        return res.status(400).json({ error: 'customerDetails must be an object' });
+      }
+      if (db.isSupabase()) {
+        updateData.customerDetails = customerDetails;
+      } else {
+        updateData.customerDetails = JSON.stringify(customerDetails);
       }
     }
     if (soilSpecs !== undefined && soilSpecs !== null) {

@@ -58,6 +58,15 @@ db.serialize(() => {
     db.run(`ALTER TABLE projects ADD COLUMN presetProctorRows TEXT DEFAULT '[]'`, (err) => {
       if (err && !/duplicate column name/i.test(err.message)) console.error('Adding projects.presetProctorRows:', err.message);
     });
+    db.run(`ALTER TABLE projects ADD COLUMN customerDetails TEXT DEFAULT '{}'`, (err) => {
+      if (err && !/duplicate column name/i.test(err.message)) console.error('Adding projects.customerDetails:', err.message);
+    });
+    db.run(`ALTER TABLE projects ADD COLUMN ccEmails TEXT DEFAULT '[]'`, (err) => {
+      if (err && !/duplicate column name/i.test(err.message)) console.error('Adding projects.ccEmails:', err.message);
+    });
+    db.run(`ALTER TABLE projects ADD COLUMN bccEmails TEXT DEFAULT '[]'`, (err) => {
+      if (err && !/duplicate column name/i.test(err.message)) console.error('Adding projects.bccEmails:', err.message);
+    });
   });
 
   // Work Packages table (deprecated - use tasks instead, kept for backward compatibility)
