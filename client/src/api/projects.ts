@@ -131,6 +131,8 @@ export interface CustomerDetails {
 export interface ProjectDrawing {
   filename: string;
   displayName?: string;
+  /** Present when PDF is stored in Supabase Storage (server-only path; ignored by UI). */
+  storagePath?: string;
 }
 
 /** Optional lab-reported proctor line items saved on the project; used to pre-fill Density Proctor Summary. */

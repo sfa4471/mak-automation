@@ -8,6 +8,7 @@ const { authenticate, requireAdmin, isStaffReviewer } = require('../middleware/a
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { ensureProjectDirectory, getProjectDrawingsDir, resolveDrawingFilePath } = require('../utils/pdfFileManager');
+const drawingsStorage = require('../services/projectDrawingsStorage');
 
 const router = express.Router();
 
@@ -75,7 +76,7 @@ function parseProjectJSONFields(project) {
     project.concreteSpecs = {};
   }
 
-  // drawings: array of { filename, displayName? }
+  // drawings: array of { filename, displayName?, storagePath? } (storagePath = Supabase Storage object path)
   if (project.drawings !== null && project.drawings !== undefined) {
     if (typeof project.drawings === 'string') {
       try {
@@ -935,9 +936,7 @@ router.post('/:id/drawings', authenticate, requireTenant, requireAdmin, uploadDr
     const projectNumber = project.project_number ?? project.projectNumber;
     if (!projectNumber) return res.status(500).json({ error: 'Project has no project number' });
 
-    await ensureProjectDirectory(projectNumber, tenantId);
-    const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
-    if (!fs.existsSync(drawingsDir)) fs.mkdirSync(drawingsDir, { recursive: true });
+    const useSupabaseDrawings = db.isSupabase() && drawingsStorage.drawingsUseSupabaseStorage();
 
     let drawings = [];
     if (project.drawings != null) {
@@ -952,17 +951,47 @@ router.post('/:id/drawings', authenticate, requireTenant, requireAdmin, uploadDr
       return res.json({ drawings: project.drawings || [] });
     }
 
-    for (const file of files) {
-      const baseName = safeDrawingFilename(file.originalname);
-      const filename = uniqueDrawingPath(drawingsDir, baseName);
-      const filePath = path.join(drawingsDir, filename);
-      fs.writeFileSync(filePath, file.buffer);
-      drawings.push({ filename, displayName: file.originalname || filename });
-    }
+    const newStoragePaths = [];
+    try {
+      if (useSupabaseDrawings) {
+        for (const file of files) {
+          const displayName = file.originalname || 'drawing.pdf';
+          const entry = await drawingsStorage.uploadDrawingFromBuffer({
+            tenantId,
+            projectId,
+            buffer: file.buffer,
+            displayName
+          });
+          newStoragePaths.push(entry.storagePath);
+          drawings.push(entry);
+        }
+      } else {
+        await ensureProjectDirectory(projectNumber, tenantId);
+        const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
+        if (!fs.existsSync(drawingsDir)) fs.mkdirSync(drawingsDir, { recursive: true });
 
-    const updatePayload = db.isSupabase() ? { drawings } : { drawings: JSON.stringify(drawings) };
-    await db.update('projects', updatePayload, { id: projectId });
-    res.json({ drawings });
+        for (const file of files) {
+          const baseName = safeDrawingFilename(file.originalname);
+          const filename = uniqueDrawingPath(drawingsDir, baseName);
+          const filePath = path.join(drawingsDir, filename);
+          fs.writeFileSync(filePath, file.buffer);
+          drawings.push({ filename, displayName: file.originalname || filename });
+        }
+      }
+
+      const updatePayload = db.isSupabase() ? { drawings } : { drawings: JSON.stringify(drawings) };
+      await db.update('projects', updatePayload, { id: projectId });
+      res.json({ drawings });
+    } catch (uploadErr) {
+      for (const p of newStoragePaths) {
+        try {
+          await drawingsStorage.removeDrawing(p);
+        } catch (cleanupErr) {
+          console.error('[drawings] storage cleanup after failed upload:', cleanupErr.message);
+        }
+      }
+      throw uploadErr;
+    }
   } catch (err) {
     if (err.message && err.message.includes('Only PDF')) return res.status(400).json({ error: err.message });
     console.error('Error uploading drawings:', err);
@@ -988,6 +1017,26 @@ router.get('/:id/drawings/:filename', authenticate, requireTenant, async (req, r
     const drawings = Array.isArray(project.drawings) ? project.drawings : [];
     const entry = drawings.find((d) => d && (d.filename === filename || d.fileName === filename));
     if (!entry) return res.status(404).json({ error: 'Drawing not found' });
+
+    const storagePath = entry.storagePath ?? entry.storage_path;
+    if (storagePath && db.isSupabase() && drawingsStorage.drawingsUseSupabaseStorage()) {
+      const expectedPrefix = `${Number(tenantId)}/${Number(projectId)}/`;
+      if (!String(storagePath).startsWith(expectedPrefix)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      try {
+        const buf = await drawingsStorage.downloadDrawingBuffer(storagePath);
+        res.setHeader('Content-Type', 'application/pdf');
+        const safeInlineName = path.basename(String(entry.displayName || filename)).replace(/["\r\n]/g, '_');
+        res.setHeader('Content-Disposition', `inline; filename="${safeInlineName}"`);
+        return res.send(buf);
+      } catch (dlErr) {
+        console.error('[drawings] Supabase download failed:', storagePath, dlErr.message);
+        return res.status(dlErr.statusCode === 404 ? 404 : 500).json({
+          error: dlErr.statusCode === 404 ? 'File not found' : (dlErr.message || 'Failed to load drawing')
+        });
+      }
+    }
 
     const projectNumber = project.project_number ?? project.projectNumber;
     const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
@@ -1040,13 +1089,24 @@ router.delete('/:id/drawings/:filename', authenticate, requireTenant, requireAdm
     let drawings = project.drawings;
     if (typeof drawings === 'string') { try { drawings = JSON.parse(drawings); } catch (e) { drawings = []; } }
     if (!Array.isArray(drawings)) drawings = [];
-    const filtered = drawings.filter((d) => d && d.filename !== filename);
-    if (filtered.length === drawings.length) return res.status(404).json({ error: 'Drawing not found' });
+    const remIdx = drawings.findIndex((d) => d && (d.filename === filename || d.fileName === filename));
+    if (remIdx < 0) return res.status(404).json({ error: 'Drawing not found' });
+    const removed = drawings[remIdx];
+    const filtered = drawings.filter((_, i) => i !== remIdx);
 
-    const projectNumber = project.project_number ?? project.projectNumber;
-    const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
-    const filePath = resolveDrawingFilePath(drawingsDir, filename);
-    if (filePath) fs.unlinkSync(filePath);
+    const storagePath = removed.storagePath ?? removed.storage_path;
+    if (storagePath && db.isSupabase() && drawingsStorage.drawingsUseSupabaseStorage()) {
+      const expectedPrefix = `${Number(tenantId)}/${Number(projectId)}/`;
+      if (!String(storagePath).startsWith(expectedPrefix)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      await drawingsStorage.removeDrawing(storagePath);
+    } else {
+      const projectNumber = project.project_number ?? project.projectNumber;
+      const drawingsDir = await getProjectDrawingsDir(projectNumber, tenantId);
+      const filePath = resolveDrawingFilePath(drawingsDir, filename);
+      if (filePath) fs.unlinkSync(filePath);
+    }
 
     const updatePayload = db.isSupabase() ? { drawings: filtered } : { drawings: JSON.stringify(filtered) };
     await db.update('projects', updatePayload, { id: projectId });
