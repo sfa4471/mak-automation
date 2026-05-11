@@ -62,16 +62,9 @@ export interface ConcreteSpecs {
   [structureType: string]: ConcreteSpecRow;
 }
 
-/**
- * Display label for a structure type in dropdowns and read-only specs.
- * When type is "Other" and otherDetails is set, shows "Other: …".
- */
-export function structureTypeDisplayLabel(
-  structureType: string,
-  otherDetails?: string | null
-): string {
-  if (!structureType) return '';
-  const base = structureType
+/** Title-case words for structure labels (handles keys like building_pad). */
+function formatStructureWords(str: string): string {
+  return str
     .replace(/^_+/, '')
     .replace(/_/g, ' ')
     .split(' ')
@@ -79,9 +72,21 @@ export function structureTypeDisplayLabel(
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ')
     .trim();
+}
+
+/**
+ * Display label for a structure type in dropdowns and read-only specs.
+ * When type is "Other" and otherDetails is set, shows only the custom text (e.g. "Highway"), not "Other" or "Other: …".
+ */
+export function structureTypeDisplayLabel(
+  structureType: string,
+  otherDetails?: string | null
+): string {
+  if (!structureType) return '';
+  const base = formatStructureWords(structureType);
   const detail = String(otherDetails ?? '').trim();
   if (structureType.trim().toLowerCase() === 'other' && detail) {
-    return `${base}: ${detail}`;
+    return formatStructureWords(detail);
   }
   return base;
 }

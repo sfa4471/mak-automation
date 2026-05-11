@@ -1,11 +1,8 @@
 'use strict';
 
-/**
- * Matches client `structureTypeDisplayLabel` in api/projects.ts — used for PDFs and server-rendered labels.
- */
-function structureTypeDisplayLabel(structureType, otherDetails) {
-  if (!structureType) return '';
-  const base = String(structureType)
+/** Title-case words for structure labels (handles keys like building_pad). */
+function formatStructureWords(str) {
+  return String(str)
     .replace(/^_+/, '')
     .replace(/_/g, ' ')
     .split(' ')
@@ -13,9 +10,18 @@ function structureTypeDisplayLabel(structureType, otherDetails) {
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ')
     .trim();
+}
+
+/**
+ * Matches client `structureTypeDisplayLabel` in api/projects.ts — used for PDFs and server-rendered labels.
+ * When type is "Other" and otherDetails is set, shows only the custom text (e.g. "Highway"), not "Other" or "Other: …".
+ */
+function structureTypeDisplayLabel(structureType, otherDetails) {
+  if (!structureType) return '';
+  const base = formatStructureWords(structureType);
   const detail = String(otherDetails ?? '').trim();
   if (String(structureType).trim().toLowerCase() === 'other' && detail) {
-    return `${base}: ${detail}`;
+    return formatStructureWords(detail);
   }
   return base;
 }
