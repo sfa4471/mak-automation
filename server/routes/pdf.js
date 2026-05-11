@@ -27,7 +27,8 @@ const { ensureRebarReportRow, getFirstRebarReportRow } = require('../utils/ensur
 const {
   structureTypeDisplayLabel,
   parseSpecsJson,
-  getSpecRow
+  getSpecRow,
+  getSpecRowOtherDetails
 } = require('../utils/structureTypeDisplayLabel');
 
 // Generate PDF for WP1 (supports both workPackageId and taskId)
@@ -311,7 +312,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     const wpStructureKey = wp1Data.structure || '';
     const concreteRowForStructure = getSpecRow(concreteSpecsForPdf, wpStructureKey);
     const wpStructurePdfLabel =
-      structureTypeDisplayLabel(wpStructureKey, concreteRowForStructure && concreteRowForStructure.otherDetails) ||
+      structureTypeDisplayLabel(wpStructureKey, getSpecRowOtherDetails(concreteRowForStructure)) ||
       toTitleCase(wpStructureKey);
     html = html.replace('{{STRUCTURE}}', escapeHtml(wpStructurePdfLabel));
     html = html.replace('{{SAMPLE_LOCATION}}', escapeHtml(wp1Data.sampleLocation || ''));
@@ -1017,7 +1018,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       const densityStructurePdfLabel =
         structureTypeDisplayLabel(
           densityStructureKey,
-          soilRowForStructure && soilRowForStructure.otherDetails
+          getSpecRowOtherDetails(soilRowForStructure)
         ) || toTitleCase(densityStructureKey);
       html = html.replace('{{STRUCTURE}}', escapeHtml(densityStructurePdfLabel));
 

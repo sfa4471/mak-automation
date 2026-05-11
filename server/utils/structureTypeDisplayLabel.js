@@ -53,8 +53,19 @@ function getSpecRow(specsObj, key) {
   return found ? specsObj[found] : null;
 }
 
+/**
+ * Free-text for structure type "Other" from a spec row.
+ * DB JSON uses snake_case (other_details) after keysToSnakeCase; API responses use camelCase (otherDetails).
+ */
+function getSpecRowOtherDetails(row) {
+  if (!row || typeof row !== 'object') return '';
+  const v = row.otherDetails ?? row.other_details;
+  return String(v ?? '').trim();
+}
+
 module.exports = {
   structureTypeDisplayLabel,
   parseSpecsJson,
-  getSpecRow
+  getSpecRow,
+  getSpecRowOtherDetails
 };
