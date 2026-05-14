@@ -34,27 +34,51 @@ export interface SoilSpecs {
   [structureType: string]: SoilSpecRow;
 }
 
+/** True if a non-empty soil density cell is valid (single % or a range like "93-98"). */
+export function isValidSoilDensityEntry(trimmed: string): boolean {
+  if (trimmed === '') return true;
+  if (trimmed.includes('-')) {
+    const m = trimmed.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/);
+    if (!m) return false;
+    const lo = parseFloat(m[1]);
+    const hi = parseFloat(m[2]);
+    return !isNaN(lo) && !isNaN(hi) && lo >= 0 && hi <= 1000 && lo <= hi;
+  }
+  const n = parseFloat(trimmed);
+  return !isNaN(n) && n >= 0 && n <= 1000;
+}
+
 /** Normalize a soil spec row to array form (densityPcts, moistureRanges). Legacy single values become one-element arrays. */
 export function normalizeSoilSpecRow(spec: SoilSpecRow | undefined): SoilSpecRow {
   if (!spec) return { densityPcts: [''], moistureRanges: [{ min: '', max: '' }] };
+  const raw = spec as SoilSpecRow & Record<string, unknown>;
+  const densityPctsFromDb = spec.densityPcts ?? (raw.density_pcts as string[] | undefined);
+  const legacyDensityPct = spec.densityPct ?? raw.density_pct;
+  const moistureRangesFromDb = spec.moistureRanges ?? (raw.moisture_ranges as MoistureRange[] | undefined);
+  const legacyMoisture = spec.moistureRange ?? (raw.moisture_range as MoistureRange | undefined);
+
   const densityPcts =
-    spec.densityPcts && spec.densityPcts.length > 0
-      ? [...spec.densityPcts]
-      : spec.densityPct !== undefined && spec.densityPct !== null && String(spec.densityPct).trim() !== ''
-        ? [String(spec.densityPct)]
+    Array.isArray(densityPctsFromDb) && densityPctsFromDb.length > 0
+      ? densityPctsFromDb.map((p) => (p == null ? '' : String(p)))
+      : legacyDensityPct !== undefined && legacyDensityPct !== null && String(legacyDensityPct).trim() !== ''
+        ? [String(legacyDensityPct)]
         : [''];
   const moistureRanges =
-    spec.moistureRanges && spec.moistureRanges.length > 0
-      ? spec.moistureRanges.map(r => ({ ...r }))
-      : spec.moistureRange && (spec.moistureRange.min !== undefined || spec.moistureRange.max !== undefined)
-        ? [{ min: spec.moistureRange.min ?? '', max: spec.moistureRange.max ?? '' }]
+    Array.isArray(moistureRangesFromDb) && moistureRangesFromDb.length > 0
+      ? moistureRangesFromDb.map((r) => ({ ...r }))
+      : legacyMoisture && (legacyMoisture.min !== undefined || legacyMoisture.max !== undefined)
+        ? [{ min: legacyMoisture.min ?? '', max: legacyMoisture.max ?? '' }]
         : [{ min: '', max: '' }];
   return {
     ...spec,
     densityPcts,
     moistureRanges,
     ...(spec.densityPct !== undefined && { densityPct: spec.densityPct }),
-    ...(spec.moistureRange && { moistureRange: spec.moistureRange })
+    ...(spec.densityPct === undefined &&
+      legacyDensityPct !== undefined &&
+      legacyDensityPct !== null && { densityPct: String(legacyDensityPct) }),
+    ...(spec.moistureRange && { moistureRange: spec.moistureRange }),
+    ...(spec.moistureRange === undefined && legacyMoisture && { moistureRange: legacyMoisture })
   };
 }
 

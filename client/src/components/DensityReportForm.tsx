@@ -20,6 +20,45 @@ import './DensityReportForm.css';
 // Note: We no longer use fallback structure types - only show structure types
 // that are actually defined in the project's Soil Specs section
 
+function hasMeaningfulDensityPercents(arr: unknown): boolean {
+  return Array.isArray(arr) && arr.some((p) => p != null && String(p).trim() !== '');
+}
+
+function hasMeaningfulMoistSpecRanges(arr: unknown): boolean {
+  return (
+    Array.isArray(arr) &&
+    arr.some((r) => {
+      if (!r || typeof r !== 'object') return false;
+      const o = r as { min?: unknown; max?: unknown };
+      return String(o.min ?? '').trim() !== '' || String(o.max ?? '').trim() !== '';
+    })
+  );
+}
+
+/** Prefer array fields; treat empty densSpecPercents as missing so legacy densSpecPercent still displays. */
+function effectiveDensitySpecPercents(data: DensityReport): string[] {
+  if (hasMeaningfulDensityPercents(data.densSpecPercents)) {
+    return (data.densSpecPercents as string[]).map((x) => (x == null ? '' : String(x)));
+  }
+  if (data.densSpecPercent != null && String(data.densSpecPercent).trim() !== '') {
+    return [String(data.densSpecPercent)];
+  }
+  return [];
+}
+
+function effectiveMoistSpecRanges(data: DensityReport): Array<{ min?: string; max?: string }> {
+  if (hasMeaningfulMoistSpecRanges(data.moistSpecRanges)) {
+    return (data.moistSpecRanges as Array<{ min?: string; max?: string }>).map((r) => ({
+      min: r?.min != null ? String(r.min) : '',
+      max: r?.max != null ? String(r.max) : ''
+    }));
+  }
+  const min = data.moistSpecMin != null ? String(data.moistSpecMin) : '';
+  const max = data.moistSpecMax != null ? String(data.moistSpecMax) : '';
+  if (min.trim() !== '' || max.trim() !== '') return [{ min, max }];
+  return [];
+}
+
 const DensityReportForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -273,35 +312,49 @@ const DensityReportForm: React.FC = () => {
           setMoistSpecRange('');
         }
         
-        // Auto-populate specs if structure type is already selected but specs are missing
+        // Auto-populate specs if structure is already selected but saved report has no spec values yet
         const structureType = reportData.structureType || reportData.structure;
-        if (structureType && reportData.projectSoilSpecs && 
-            typeof reportData.projectSoilSpecs === 'object' && 
-            !Array.isArray(reportData.projectSoilSpecs)) {
+        if (
+          structureType &&
+          reportData.projectSoilSpecs &&
+          typeof reportData.projectSoilSpecs === 'object' &&
+          !Array.isArray(reportData.projectSoilSpecs)
+        ) {
           const soilSpecs = reportData.projectSoilSpecs;
-          const selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType] as SoilSpecRow | undefined;
-          
-          // Only auto-populate if specs are missing but structure type is set
-          if (selectedSpec && (!reportData.densSpecPercent || !reportData.moistSpecMin)) {
-            // Handle both camelCase (densityPct) and snake_case (density_pct) formats
-            const densityPct = (selectedSpec as any).densityPct || (selectedSpec as any).density_pct;
-            // Handle both camelCase (moistureRange) and snake_case (moisture_range) formats
-            const moistureRange = (selectedSpec as any).moistureRange || (selectedSpec as any).moisture_range;
-            const specMin = moistureRange?.min || '';
-            const specMax = moistureRange?.max || '';
-            
-            // Update the initialized data with specs
-            if (densityPct && !reportData.densSpecPercent) {
-              initializedData.densSpecPercent = String(densityPct);
-              initializedData.specDensityPct = String(densityPct);
+          let selectedSpec: SoilSpecRow | undefined = soilSpecs[structureType] as SoilSpecRow | undefined;
+          if (!selectedSpec) {
+            const lower = structureType.trim().toLowerCase();
+            for (const key of Object.keys(soilSpecs)) {
+              if (key.trim().toLowerCase() === lower) {
+                selectedSpec = soilSpecs[key] as SoilSpecRow;
+                break;
+              }
             }
-            if ((specMin || specMax) && !reportData.moistSpecMin) {
-              initializedData.moistSpecMin = specMin;
-              initializedData.moistSpecMax = specMax;
-              if (specMin && specMax) {
-                setMoistSpecRange(`${specMin} to ${specMax}`);
-              } else if (specMin || specMax) {
-                setMoistSpecRange(specMin || specMax);
+          }
+          if (selectedSpec && typeof selectedSpec === 'object') {
+            const normalized = normalizeSoilSpecRow(selectedSpec);
+            const hasReportDensity = effectiveDensitySpecPercents(reportData).length > 0;
+            const hasReportMoist = effectiveMoistSpecRanges(reportData).some(
+              (r) => String(r.min ?? '').trim() !== '' || String(r.max ?? '').trim() !== ''
+            );
+            if (!hasReportDensity) {
+              const d = [...(normalized.densityPcts || [''])];
+              if (d.some((x) => x != null && String(x).trim() !== '')) {
+                initializedData.densSpecPercents = d;
+                initializedData.densSpecPercent = d[0] ?? '';
+                initializedData.specDensityPct = d[0] ?? '';
+              }
+            }
+            if (!hasReportMoist) {
+              const m = (normalized.moistureRanges || [{ min: '', max: '' }]).map((r) => ({ ...r }));
+              if (m.some((r) => String(r.min ?? '').trim() !== '' || String(r.max ?? '').trim() !== '')) {
+                initializedData.moistSpecRanges = m;
+                initializedData.moistSpecMin = String(m[0]?.min ?? '');
+                initializedData.moistSpecMax = String(m[0]?.max ?? '');
+                const sm = initializedData.moistSpecMin;
+                const sx = initializedData.moistSpecMax;
+                if (sm && sx) setMoistSpecRange(`${sm} to ${sx}`);
+                else if (sm || sx) setMoistSpecRange(sm || sx);
               }
             }
           }
@@ -671,8 +724,8 @@ const DensityReportForm: React.FC = () => {
         fromProject = Math.max(1, d, m);
       }
     }
-    const savedD = formData.densSpecPercents?.length ?? 0;
-    const savedM = formData.moistSpecRanges?.length ?? 0;
+    const savedD = effectiveDensitySpecPercents(formData).length;
+    const savedM = effectiveMoistSpecRanges(formData).length;
     const rawD = Array.isArray(formData.densSpecs) ? formData.densSpecs.length : 0;
     const rawM = Array.isArray(formData.moistSpecs) ? formData.moistSpecs.length : 0;
     return Math.max(fromProject, savedD, savedM, rawD, rawM, 1);
@@ -680,7 +733,7 @@ const DensityReportForm: React.FC = () => {
 
   const updateSpecDensity = (index: number, value: string) => {
     if (!formData) return;
-    const arr = [...(formData.densSpecPercents || [])];
+    const arr = [...effectiveDensitySpecPercents(formData)];
     while (arr.length <= index) arr.push('');
     arr[index] = value;
     const updatedData = {
@@ -696,7 +749,7 @@ const DensityReportForm: React.FC = () => {
 
   const updateSpecMoisture = (index: number, field: 'min' | 'max', value: string) => {
     if (!formData) return;
-    const arr = [...(formData.moistSpecRanges || [])];
+    const arr = [...effectiveMoistSpecRanges(formData)];
     while (arr.length <= index) arr.push({ min: '', max: '' });
     arr[index] = { ...(arr[index] || { min: '', max: '' }), [field]: value };
     const updatedData = {
@@ -1464,8 +1517,8 @@ const DensityReportForm: React.FC = () => {
                 {(() => {
                   const N = getSpecColumnCount();
                   const specLabel = (i: number) => (N > 1 ? `(${String.fromCharCode(97 + i)}) ` : '');
-                  const densArr = formData.densSpecPercents ?? (formData.densSpecPercent != null ? [formData.densSpecPercent] : []);
-                  const moistArr = formData.moistSpecRanges ?? (formData.moistSpecMin != null || formData.moistSpecMax != null ? [{ min: formData.moistSpecMin ?? '', max: formData.moistSpecMax ?? '' }] : []);
+                  const densArr = effectiveDensitySpecPercents(formData);
+                  const moistArr = effectiveMoistSpecRanges(formData);
                   const densPadded = [...densArr];
                   const moistPadded = [...moistArr];
                   while (densPadded.length < N) densPadded.push('');

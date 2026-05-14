@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useAppDialog } from '../../context/AppDialogContext';
-import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress, normalizeSoilSpecRow, PresetProctorRow } from '../../api/projects';
+import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress, normalizeSoilSpecRow, isValidSoilDensityEntry, PresetProctorRow } from '../../api/projects';
 import './ProjectDetails.css';
 
 const SOIL_STRUCTURE_TYPES = [
@@ -243,9 +243,9 @@ const ProjectDetails: React.FC = () => {
       densityPcts.forEach((pct, i) => {
         const trimmed = String(pct ?? '').trim();
         if (trimmed === '') return; // skip empty rows
-        const density = parseFloat(trimmed);
-        if (isNaN(density) || density < 0 || density > 1000) {
-          errors[`soil-${structureType}-densityPct-${i}`] = 'Density must be between 0 and 1000';
+        if (!isValidSoilDensityEntry(trimmed)) {
+          errors[`soil-${structureType}-densityPct-${i}`] =
+            'Density must be 0–1000, or a range like 93-98 (hyphen-separated)';
         }
       });
       
