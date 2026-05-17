@@ -15,6 +15,8 @@ import { getApiPathPrefix } from '../api/api';
 import { useAppDialog } from '../context/AppDialogContext';
 import ProjectHomeButton from './ProjectHomeButton';
 import RejectTaskModal from './RejectTaskModal';
+import UnapproveTaskModal from './UnapproveTaskModal';
+import { useUnapproveReport } from '../hooks/useUnapproveReport';
 import './DensityReportForm.css';
 
 // Note: We no longer use fallback structure types - only show structure types
@@ -421,6 +423,16 @@ const DensityReportForm: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const {
+    unapproveOpen,
+    alreadySentToClient,
+    unapproveLoading,
+    openUnapproveModal,
+    closeUnapproveModal,
+    submitUnapprove,
+    contextLine: unapproveContextLine
+  } = useUnapproveReport(task, loadData);
 
   // Calculate dry density: dryDensity = wetDensity / (1 + (fieldMoisture / 100))
   const calculateDryDensity = (wetDensity: string, fieldMoisture: string): string => {
@@ -1235,6 +1247,16 @@ const DensityReportForm: React.FC = () => {
               <button type="button" onClick={() => setRejectModalOpen(true)} className="reject-button">Reject</button>
             </>
           )}
+          {isStaffReviewer() && task.status === 'APPROVED' && (
+            <button
+              type="button"
+              onClick={() => void openUnapproveModal()}
+              disabled={unapproveLoading}
+              className="reject-button"
+            >
+              {unapproveLoading ? 'Loading…' : 'Unapprove'}
+            </button>
+          )}
           <button onClick={() => navigate(-1)} className="back-button">Back</button>
         </div>
       </header>
@@ -1733,6 +1755,16 @@ const DensityReportForm: React.FC = () => {
               <button type="button" onClick={() => setRejectModalOpen(true)} className="reject-button">Reject</button>
             </>
           )}
+          {isStaffReviewer() && task.status === 'APPROVED' && (
+            <button
+              type="button"
+              onClick={() => void openUnapproveModal()}
+              disabled={unapproveLoading}
+              className="reject-button"
+            >
+              {unapproveLoading ? 'Loading…' : 'Unapprove'}
+            </button>
+          )}
           <button onClick={handleDownloadPdf} className="pdf-button">Download PDF</button>
           <button onClick={() => navigate(-1)} className="back-button">Back</button>
         </div>
@@ -1758,6 +1790,8 @@ const DensityReportForm: React.FC = () => {
                   message = `${entry.actorName} submitted report for review`;
                 } else if (entry.actionType === 'APPROVED') {
                   message = `${entry.actorName} approved report`;
+                } else if (entry.actionType === 'UNAPPROVED') {
+                  message = `${entry.actorName} unapproved report${entry.note ? `: ${entry.note}` : ''}`;
                 } else if (entry.actionType === 'REJECTED') {
                   message = `${entry.actorName} rejected report${entry.note ? `: ${entry.note}` : ''}`;
                 } else if (entry.actionType === 'REASSIGNED') {
@@ -1791,6 +1825,13 @@ const DensityReportForm: React.FC = () => {
           await tasksAPI.reject(task.id, payload);
           await loadData();
         }}
+      />
+      <UnapproveTaskModal
+        isOpen={unapproveOpen}
+        contextLine={unapproveContextLine}
+        alreadySentToClient={alreadySentToClient}
+        onClose={closeUnapproveModal}
+        onSubmit={submitUnapprove}
       />
     </div>
   );

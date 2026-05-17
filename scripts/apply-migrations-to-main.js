@@ -29,6 +29,8 @@ const MIGRATION_ORDER = [
   '20250217100000_add_tenant_company_contact_name.sql',
   '20250218000000_add_project_drawings.sql',
   '20260110120000_project_drawings_storage_bucket.sql',
+  '20260513100000_enable_rls_public_tables.sql',
+  '20260517120000_task_history_unapproved.sql',
 ];
 
 function log(msg) {

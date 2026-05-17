@@ -96,6 +96,61 @@ function applyPmReviewCompleted(updateData, req, nowIso) {
  * Write APPROVED status + audit fields. Uses pm_review_* on Supabase when the columns exist;
  * if the project has not run 20260315000000_add_pm_review_fields.sql, retries without them.
  */
+const AUTO_SEND_APPROVED_KEY = 'auto_send_approved_reports_enabled';
+
+async function isAutoSendApprovedReportsEnabled(tenantId) {
+  if (!tenantId) return false;
+  const setting = await db.get('app_settings', { key: AUTO_SEND_APPROVED_KEY, tenantId });
+  return setting?.value === 'true' || setting?.value === true;
+}
+
+/** True only when nightly auto-send is on for the tenant and this task has a SENT delivery row. */
+async function taskWasSentToClientViaAutoSend(taskId, tenantId) {
+  if (!db.isSupabase() || !tenantId) return false;
+  const autoSendOn = await isAutoSendApprovedReportsEnabled(tenantId);
+  if (!autoSendOn) return false;
+  if (!isAvailable()) return false;
+  const { data, error } = await supabase
+    .from('report_deliveries')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('task_id', taskId)
+    .eq('status', 'SENT')
+    .limit(1);
+  if (error) {
+    console.error('taskWasSentToClientViaAutoSend:', taskId, error);
+    return false;
+  }
+  return Array.isArray(data) && data.length > 0;
+}
+
+function applyPmReviewReopened(updateData, req) {
+  if (db.isSupabase()) {
+    updateData.pmReviewStatus = 'REVIEWING';
+    updateData.pmReviewCompletedAt = null;
+    updateData.pmReviewerUserId = req.user.id;
+  }
+}
+
+async function updateTaskUnapprovedPersist(taskId, baseUpdate, req) {
+  if (!db.isSupabase()) {
+    await db.update('tasks', baseUpdate, { id: taskId });
+    return;
+  }
+  const withPm = { ...baseUpdate };
+  applyPmReviewReopened(withPm, req);
+  try {
+    await db.update('tasks', withPm, { id: taskId });
+  } catch (e) {
+    const msg = e && e.message ? String(e.message) : String(e);
+    if (/pm_review|schema cache/i.test(msg)) {
+      await db.update('tasks', baseUpdate, { id: taskId });
+      return;
+    }
+    throw e;
+  }
+}
+
 async function updateTaskApprovedPersist(taskId, baseUpdate, req, nowIso) {
   if (!db.isSupabase()) {
     await db.update('tasks', baseUpdate, { id: taskId });
@@ -1644,6 +1699,148 @@ router.post('/bulk-approve', authenticate, requireTenant, requireAdminOrPm, asyn
     });
   } catch (err) {
     console.error('Error bulk-approving tasks:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Unapprove context (Admin or PM) — whether client email warning applies
+router.get('/:id/unapprove-context', authenticate, requireTenant, requireAdminOrPm, async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const task = await db.get('tasks', { id: taskId });
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (mustEnforceTenantOnTasks(req.legacyDb)) {
+      const rowTenant = task.tenantId ?? task.tenant_id ?? null;
+      if (rowTenant != null && Number(rowTenant) !== Number(req.tenantId)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    const autoSendEnabled = await isAutoSendApprovedReportsEnabled(req.tenantId);
+    let alreadySentToClient = false;
+    if (autoSendEnabled) {
+      alreadySentToClient = await taskWasSentToClientViaAutoSend(taskId, req.tenantId);
+    }
+
+    res.json({
+      canUnapprove: task.status === 'APPROVED',
+      autoSendEnabled,
+      alreadySentToClient
+    });
+  } catch (err) {
+    console.error('Error fetching unapprove context:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Unapprove task (Admin or PM) — APPROVED → READY_FOR_REVIEW
+router.post('/:id/unapprove', authenticate, requireTenant, requireAdminOrPm, [
+  body('note').notEmpty().trim().withMessage('Reason for unapproving is required.')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      const arr = errors.array();
+      return res.status(400).json({
+        error: arr[0]?.msg || 'Invalid request',
+        errors: arr
+      });
+    }
+
+    const taskId = parseInt(req.params.id, 10);
+    const note = String(req.body.note).trim();
+
+    const task = await db.get('tasks', { id: taskId });
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (mustEnforceTenantOnTasks(req.legacyDb)) {
+      const rowTenant = task.tenantId ?? task.tenant_id ?? null;
+      if (rowTenant != null && Number(rowTenant) !== Number(req.tenantId)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    if (task.status !== 'APPROVED') {
+      return res.status(400).json({ error: 'Only approved reports can be unapproved.' });
+    }
+
+    const actorName = req.user.name || req.user.email || 'Admin';
+    const nowIso = new Date().toISOString();
+    const editorId = req.user.id != null ? Number(req.user.id) : null;
+
+    const updateData = {
+      status: 'READY_FOR_REVIEW',
+      lastEditedByUserId: editorId,
+      lastEditedByRole: req.user.role,
+      lastEditedAt: nowIso,
+      updatedAt: nowIso
+    };
+
+    await updateTaskUnapprovedPersist(taskId, updateData, req);
+    await logTaskHistory(taskId, req.tenantId, req.user.role, actorName, editorId, 'UNAPPROVED', note);
+
+    const assignedId = task.assignedTechnicianId ?? task.assigned_technician_id;
+    const projectId = task.projectId ?? task.project_id;
+    if (assignedId && projectId) {
+      try {
+        const project = await db.get('projects', { id: projectId });
+        if (project) {
+          const projectNumber =
+            project.projectNumber || project.project_number || project.project_name || project.projectName || '';
+          const message = `Approval was withdrawn for your report on Project ${projectNumber}. It is back in review.`;
+          await createNotification(assignedId, message, 'warning', null, projectId, taskId, req.tenantId ?? null);
+        }
+      } catch (notifyErr) {
+        console.error('Unapprove task: notification failed (task still unapproved)', taskId, notifyErr);
+      }
+    }
+
+    const autoSendEnabled = await isAutoSendApprovedReportsEnabled(req.tenantId);
+    let alreadySentToClient = false;
+    if (autoSendEnabled) {
+      alreadySentToClient = await taskWasSentToClientViaAutoSend(taskId, req.tenantId);
+    }
+
+    let updatedTask;
+    if (db.isSupabase()) {
+      const { data, error } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+      if (error) throw error;
+      updatedTask = keysToCamelCase(data);
+      const project = await db.get('projects', { id: updatedTask.projectId });
+      if (project) {
+        updatedTask.projectNumber = project.projectNumber ?? project.project_number ?? null;
+        updatedTask.projectName = project.projectName ?? project.project_name ?? null;
+      }
+    } else {
+      const sqliteDb = require('../database');
+      updatedTask = await new Promise((resolve, reject) => {
+        sqliteDb.get(
+          `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
+           p.projectNumber, p.projectName
+           FROM tasks t
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.id = ?`,
+          [taskId],
+          (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
+          }
+        );
+      });
+    }
+
+    res.json({
+      ...updatedTask,
+      unapproveMeta: { autoSendEnabled, alreadySentToClient }
+    });
+  } catch (err) {
+    console.error('Error unapproving task:', err);
     res.status(500).json({ error: 'Database error' });
   }
 });

@@ -8,6 +8,8 @@ import { getApiPathPrefix } from '../api/api';
 import { useAppDialog } from '../context/AppDialogContext';
 import ProjectHomeButton from './ProjectHomeButton';
 import RejectTaskModal from './RejectTaskModal';
+import UnapproveTaskModal from './UnapproveTaskModal';
+import { useUnapproveReport } from '../hooks/useUnapproveReport';
 import './RebarForm.css';
 
 const RebarForm: React.FC = () => {
@@ -90,6 +92,16 @@ const RebarForm: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const {
+    unapproveOpen,
+    alreadySentToClient,
+    unapproveLoading,
+    openUnapproveModal,
+    closeUnapproveModal,
+    submitUnapprove,
+    contextLine: unapproveContextLine
+  } = useUnapproveReport(task, loadData);
 
   // Check if there are unsaved changes
   const _checkUnsavedChanges = useCallback(() => {
@@ -438,6 +450,16 @@ const RebarForm: React.FC = () => {
               </button>
             </>
           )}
+          {task.status === 'APPROVED' && isStaffReviewer() && (
+            <button
+              type="button"
+              onClick={() => void openUnapproveModal()}
+              disabled={unapproveLoading}
+              className="btn-danger"
+            >
+              {unapproveLoading ? 'Loading…' : 'Unapprove'}
+            </button>
+          )}
           <button
             type="button"
             onClick={handleDownloadPdf}
@@ -629,6 +651,8 @@ const RebarForm: React.FC = () => {
                 message = `${entry.actorName} submitted report for review`;
               } else if (entry.actionType === 'APPROVED') {
                 message = `${entry.actorName} approved report`;
+              } else if (entry.actionType === 'UNAPPROVED') {
+                message = `${entry.actorName} unapproved report${entry.note ? `: ${entry.note}` : ''}`;
               } else if (entry.actionType === 'REJECTED') {
                 message = `${entry.actorName} rejected report${entry.note ? `: ${entry.note}` : ''}`;
               } else if (entry.actionType === 'REASSIGNED') {
@@ -661,6 +685,13 @@ const RebarForm: React.FC = () => {
           await tasksAPI.reject(task.id, payload);
           await loadData();
         }}
+      />
+      <UnapproveTaskModal
+        isOpen={unapproveOpen}
+        contextLine={unapproveContextLine}
+        alreadySentToClient={alreadySentToClient}
+        onClose={closeUnapproveModal}
+        onSubmit={submitUnapprove}
       />
     </div>
   );

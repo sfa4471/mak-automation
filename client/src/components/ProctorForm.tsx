@@ -8,6 +8,8 @@ import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
 import RejectTaskModal from './RejectTaskModal';
+import UnapproveTaskModal from './UnapproveTaskModal';
+import { useUnapproveReport } from '../hooks/useUnapproveReport';
 import './ProctorForm.css';
 
 const DEFAULT_SAMPLED_BY = 'MAK Lonestar Consulting, LLC';
@@ -678,6 +680,16 @@ const ProctorForm: React.FC = () => {
     }
   };
 
+  const {
+    unapproveOpen,
+    alreadySentToClient,
+    unapproveLoading,
+    openUnapproveModal,
+    closeUnapproveModal,
+    submitUnapprove,
+    contextLine: unapproveContextLine
+  } = useUnapproveReport(task, loadData);
+
   const handleApprove = async () => {
     if (!task) return;
     const ok = await showConfirm('Approve this Proctor report?', 'Approve report');
@@ -1245,6 +1257,16 @@ const ProctorForm: React.FC = () => {
                 </button>
               </>
             )}
+          {isTaskRoute && task.status === 'APPROVED' && isStaffReviewer() && (
+            <button
+              type="button"
+              onClick={() => void openUnapproveModal()}
+              disabled={unapproveLoading}
+              className="btn-danger"
+            >
+              {unapproveLoading ? 'Loading…' : 'Unapprove'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -2050,6 +2072,8 @@ const ProctorForm: React.FC = () => {
                   message = `${entry.actorName} submitted report for review`;
                 } else if (entry.actionType === 'APPROVED') {
                   message = `${entry.actorName} approved report`;
+                } else if (entry.actionType === 'UNAPPROVED') {
+                  message = `${entry.actorName} unapproved report${entry.note ? `: ${entry.note}` : ''}`;
                 } else if (entry.actionType === 'REJECTED') {
                   message = `${entry.actorName} rejected report${entry.note ? `: ${entry.note}` : ''}`;
                 } else if (entry.actionType === 'REASSIGNED') {
@@ -2086,6 +2110,13 @@ const ProctorForm: React.FC = () => {
         setRejectModalOpen(false);
         await loadData();
       }}
+    />
+    <UnapproveTaskModal
+      isOpen={unapproveOpen}
+      contextLine={unapproveContextLine}
+      alreadySentToClient={alreadySentToClient}
+      onClose={closeUnapproveModal}
+      onSubmit={submitUnapprove}
     />
     </>
   );

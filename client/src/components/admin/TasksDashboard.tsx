@@ -5,6 +5,7 @@ import { useAppDialog } from '../../context/AppDialogContext';
 import { tasksAPI, Task, taskTypeLabel, TaskType } from '../../api/tasks';
 import { settingsAPI } from '../../api/settings';
 import RejectTaskModal from '../RejectTaskModal';
+import UnapproveTaskModal from '../UnapproveTaskModal';
 import CompletedFieldJobsLog from '../CompletedFieldJobsLog';
 import './TasksDashboard.css';
 
@@ -34,6 +35,8 @@ const TasksDashboard: React.FC = () => {
   const [autoSendModalMode, setAutoSendModalMode] = useState<'enable' | 'edit'>('enable');
   const [autoSendDraftBody, setAutoSendDraftBody] = useState<string>('');
   const [rejectModalTask, setRejectModalTask] = useState<Task | null>(null);
+  const [unapproveTask, setUnapproveTask] = useState<Task | null>(null);
+  const [unapproveAlreadySent, setUnapproveAlreadySent] = useState(false);
   const [approveConfirm, setApproveConfirm] = useState<
     | null
     | { mode: 'single'; taskId: number }
@@ -414,6 +417,24 @@ const TasksDashboard: React.FC = () => {
     setRejectModalTask(task);
   };
 
+  const handleUnapproveClick = async (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const ctx = await tasksAPI.getUnapproveContext(task.id);
+      if (!ctx.canUnapprove) {
+        await showAlert('Only approved reports can be unapproved.', 'Cannot unapprove');
+        return;
+      }
+      setUnapproveAlreadySent(ctx.alreadySentToClient);
+      setUnapproveTask(task);
+    } catch (err: any) {
+      await showAlert(
+        err.response?.data?.error || 'Could not open unapprove. Please try again.',
+        'Error'
+      );
+    }
+  };
+
 
   const handleEditTask = (task: Task, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -502,6 +523,18 @@ const TasksDashboard: React.FC = () => {
             title="Reject Task"
           >
             Reject
+          </button>
+        );
+      }
+      if (task.status === 'APPROVED') {
+        actions.push(
+          <button
+            key="unapprove"
+            onClick={(e) => void handleUnapproveClick(task, e)}
+            className="action-button action-reject"
+            title="Unapprove report"
+          >
+            Unapprove
           </button>
         );
       }
@@ -797,6 +830,31 @@ const TasksDashboard: React.FC = () => {
           if (!rejectModalTask) return;
           await tasksAPI.reject(rejectModalTask.id, payload);
           loadData();
+        }}
+      />
+
+      <UnapproveTaskModal
+        isOpen={unapproveTask !== null}
+        contextLine={
+          unapproveTask
+            ? `${unapproveTask.projectNumber ?? '—'} · ${taskTypeLabel(unapproveTask)}`
+            : undefined
+        }
+        alreadySentToClient={unapproveAlreadySent}
+        onClose={() => {
+          setUnapproveTask(null);
+          setUnapproveAlreadySent(false);
+        }}
+        onSubmit={async (payload) => {
+          if (!unapproveTask) return;
+          await tasksAPI.unapprove(unapproveTask.id, payload);
+          setUnapproveTask(null);
+          setUnapproveAlreadySent(false);
+          setNotice({
+            variant: 'success',
+            message: 'The report has been unapproved and is back in review.'
+          });
+          await loadData();
         }}
       />
 

@@ -7,6 +7,8 @@ import { tenantsAPI, TenantMe } from '../api/tenants';
 import ProctorCurveChart, { ProctorPoint, ZAVPoint } from './ProctorCurveChart';
 import ProjectHomeButton from './ProjectHomeButton';
 import RejectTaskModal from './RejectTaskModal';
+import UnapproveTaskModal from './UnapproveTaskModal';
+import { useUnapproveReport } from '../hooks/useUnapproveReport';
 import { getBackendPublicFileUrl, getApiPathPrefix } from '../api/api';
 import { useAppDialog } from '../context/AppDialogContext';
 import './ProctorSummary.css';
@@ -349,6 +351,16 @@ const ProctorSummary: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const {
+    unapproveOpen,
+    alreadySentToClient,
+    unapproveLoading,
+    openUnapproveModal,
+    closeUnapproveModal,
+    submitUnapprove,
+    contextLine: unapproveContextLine
+  } = useUnapproveReport(task, loadData);
 
   // Check if there are unsaved changes
   const _checkUnsavedChanges = useCallback(() => {
@@ -899,6 +911,16 @@ const ProctorSummary: React.FC = () => {
                 </button>
               </>
             )}
+            {task.status === 'APPROVED' && isStaffReviewer() && (
+              <button
+                type="button"
+                onClick={() => void openUnapproveModal()}
+                disabled={unapproveLoading}
+                className="btn-danger"
+              >
+                {unapproveLoading ? 'Loading…' : 'Unapprove'}
+              </button>
+            )}
           </div>
           <div className="header-address">
             {formatTenantAddress(tenant).length > 0 ? (
@@ -1119,6 +1141,13 @@ const ProctorSummary: React.FC = () => {
         setRejectModalOpen(false);
         await loadData();
       }}
+    />
+    <UnapproveTaskModal
+      isOpen={unapproveOpen}
+      contextLine={unapproveContextLine}
+      alreadySentToClient={alreadySentToClient}
+      onClose={closeUnapproveModal}
+      onSubmit={submitUnapprove}
     />
     </>
   );

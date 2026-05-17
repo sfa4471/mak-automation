@@ -9,6 +9,8 @@ import { ConcreteSpecs, projectsAPI, structureTypeDisplayLabel } from '../api/pr
 import { getApiPathPrefix } from '../api/api';
 import { useAppDialog } from '../context/AppDialogContext';
 import ProjectHomeButton from './ProjectHomeButton';
+import UnapproveTaskModal from './UnapproveTaskModal';
+import { useUnapproveReport } from '../hooks/useUnapproveReport';
 import './WP1Form.css';
 
 const WP1Form: React.FC = () => {
@@ -439,6 +441,16 @@ const WP1Form: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const {
+    unapproveOpen,
+    alreadySentToClient,
+    unapproveLoading,
+    openUnapproveModal,
+    closeUnapproveModal,
+    submitUnapprove,
+    contextLine: unapproveContextLine
+  } = useUnapproveReport(isTaskRoute ? task : null, loadData);
 
   // Check if there are unsaved changes
   const _checkUnsavedChanges = useCallback(() => {
@@ -1072,6 +1084,17 @@ const WP1Form: React.FC = () => {
                 <div className="pdf-saved-confirmation" style={{ marginTop: '10px', padding: '10px', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px', color: '#155724' }}>
                   PDF saved.
                 </div>
+              )}
+              {isTaskRoute && task?.status === 'APPROVED' && isStaffReviewer() && (
+                <button
+                  type="button"
+                  onClick={() => void openUnapproveModal()}
+                  disabled={unapproveLoading}
+                  className="submit-button"
+                  style={{ background: '#c82333' }}
+                >
+                  {unapproveLoading ? 'Loading…' : 'Unapprove'}
+                </button>
               )}
             </>
           )}
@@ -1710,6 +1733,8 @@ const WP1Form: React.FC = () => {
                   message = `${entry.actorName} submitted report for review`;
                 } else if (entry.actionType === 'APPROVED') {
                   message = `${entry.actorName} approved report`;
+                } else if (entry.actionType === 'UNAPPROVED') {
+                  message = `${entry.actorName} unapproved report${entry.note ? `: ${entry.note}` : ''}`;
                 } else if (entry.actionType === 'REJECTED') {
                   message = `${entry.actorName} rejected report${entry.note ? `: ${entry.note}` : ''}`;
                 } else if (entry.actionType === 'REASSIGNED') {
@@ -1733,6 +1758,15 @@ const WP1Form: React.FC = () => {
           </div>
         )}
       </form>
+      {isTaskRoute && (
+        <UnapproveTaskModal
+          isOpen={unapproveOpen}
+          contextLine={unapproveContextLine}
+          alreadySentToClient={alreadySentToClient}
+          onClose={closeUnapproveModal}
+          onSubmit={submitUnapprove}
+        />
+      )}
     </div>
   );
 };

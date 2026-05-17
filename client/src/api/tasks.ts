@@ -106,7 +106,7 @@ export interface TaskHistoryEntry {
   actorRole: string;
   actorName: string;
   actorUserId?: number;
-  actionType: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'REASSIGNED' | 'STATUS_CHANGED';
+  actionType: 'SUBMITTED' | 'APPROVED' | 'UNAPPROVED' | 'REJECTED' | 'REASSIGNED' | 'STATUS_CHANGED';
   note?: string;
 }
 
@@ -180,6 +180,22 @@ export const tasksAPI = {
 
   approve: async (id: number): Promise<Task> => {
     const response = await api.post<Task>(`/tasks/${id}/approve`);
+    return response.data;
+  },
+
+  getUnapproveContext: async (
+    id: number
+  ): Promise<{
+    canUnapprove: boolean;
+    autoSendEnabled: boolean;
+    alreadySentToClient: boolean;
+  }> => {
+    const response = await api.get(`/tasks/${id}/unapprove-context`);
+    return response.data;
+  },
+
+  unapprove: async (id: number, data: { note: string }): Promise<Task> => {
+    const response = await api.post<Task>(`/tasks/${id}/unapprove`, data);
     return response.data;
   },
 

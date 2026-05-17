@@ -14,7 +14,7 @@ db.serialize(() => {
     actorRole TEXT NOT NULL,
     actorName TEXT NOT NULL,
     actorUserId INTEGER,
-    actionType TEXT NOT NULL CHECK(actionType IN ('SUBMITTED', 'APPROVED', 'REJECTED', 'REASSIGNED', 'STATUS_CHANGED')),
+    actionType TEXT NOT NULL CHECK(actionType IN ('SUBMITTED', 'APPROVED', 'UNAPPROVED', 'REJECTED', 'REASSIGNED', 'STATUS_CHANGED')),
     note TEXT,
     FOREIGN KEY (taskId) REFERENCES tasks(id),
     FOREIGN KEY (actorUserId) REFERENCES users(id)
