@@ -219,7 +219,15 @@ const CompletedFieldJobsLog: React.FC<CompletedFieldJobsLogProps> = ({
                                     <td>{formatCompletedAt(task.fieldCompletedAt)}</td>
                                     <td>{formatFieldDates(task)}</td>
                                     <td>{formatDate(task.dueDate)}</td>
-                                    <td>{getStatusLabel(task.status)}</td>
+                                    <td>
+                                      {getStatusLabel(
+                                        String(
+                                          task.status ??
+                                            (task as Task & { task_status?: string }).task_status ??
+                                            ''
+                                        )
+                                      )}
+                                    </td>
                                     <td>
                                       {variant === 'admin' && renderAdminActions ? (
                                         <div className="completed-jobs-actions">{renderAdminActions(task)}</div>

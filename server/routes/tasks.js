@@ -249,6 +249,102 @@ function normalizeSupabaseTaskRow(task) {
   };
 }
 
+const REPORT_TASK_TYPES = new Set([
+  'DENSITY_MEASUREMENT',
+  'PROCTOR',
+  'REBAR',
+  'COMPRESSIVE_STRENGTH'
+]);
+
+/** Latest APPROVED/UNAPPROVED action per task (history ordered newest first). */
+async function loadLatestApprovalActionByTaskIds(taskIds, tenantId, legacyDb) {
+  const map = new Map();
+  if (!taskIds.length) return map;
+
+  if (db.isSupabase()) {
+    let q = supabase
+      .from('task_history')
+      .select('task_id, action_type, timestamp')
+      .in('task_id', taskIds)
+      .in('action_type', ['APPROVED', 'UNAPPROVED'])
+      .order('timestamp', { ascending: false });
+    if (mustEnforceTenantOnTasks(legacyDb) && tenantId != null) {
+      q = q.eq('tenant_id', tenantId);
+    }
+    const { data, error } = await q;
+    if (error) throw error;
+    for (const row of data || []) {
+      const tid = row.task_id;
+      if (!map.has(tid)) map.set(tid, row.action_type);
+    }
+    return map;
+  }
+
+  const sqliteDb = require('../database');
+  const placeholders = taskIds.map(() => '?').join(',');
+  const params = [...taskIds];
+  let tenantSql = '';
+  if (!legacyDb && tenantId != null) {
+    tenantSql = ' AND tenantId = ?';
+    params.push(tenantId);
+  }
+  const rows = await new Promise((resolve, reject) => {
+    sqliteDb.all(
+      `SELECT taskId, actionType, timestamp FROM task_history
+       WHERE taskId IN (${placeholders})
+         AND actionType IN ('APPROVED', 'UNAPPROVED')${tenantSql}
+       ORDER BY timestamp DESC`,
+      params,
+      (err, r) => {
+        if (err) reject(err);
+        else resolve(r || []);
+      }
+    );
+  });
+  for (const row of rows) {
+    const tid = row.taskId;
+    if (!map.has(tid)) map.set(tid, row.actionType);
+  }
+  return map;
+}
+
+/** If audit trail shows approved but tasks.status drifted, restore APPROVED (existing records). */
+async function reconcileApprovalStatusFromHistory(tasks, req, tenantId, legacyDb) {
+  if (!Array.isArray(tasks) || tasks.length === 0) return tasks;
+
+  const candidates = tasks.filter((t) => {
+    const type = t.taskType ?? t.task_type;
+    return t.status !== 'APPROVED' && REPORT_TASK_TYPES.has(type);
+  });
+  if (candidates.length === 0) return tasks;
+
+  const latestByTask = await loadLatestApprovalActionByTaskIds(
+    candidates.map((t) => t.id),
+    tenantId,
+    legacyDb
+  );
+  const nowIso = new Date().toISOString();
+
+  for (const task of candidates) {
+    if (latestByTask.get(task.id) !== 'APPROVED') continue;
+    const updateData = {
+      status: 'APPROVED',
+      lastEditedByUserId: req.user.id,
+      lastEditedByRole: req.user.role,
+      lastEditedAt: nowIso,
+      updatedAt: nowIso
+    };
+    try {
+      await updateTaskApprovedPersist(task.id, updateData, req, nowIso);
+      task.status = 'APPROVED';
+      console.warn(`[tasks] Reconciled task ${task.id} to APPROVED from task_history`);
+    } catch (reconcileErr) {
+      console.error(`[tasks] Reconcile approval failed for task ${task.id}:`, reconcileErr);
+    }
+  }
+  return tasks;
+}
+
 async function deleteTaskSqliteCascade(taskId) {
   const sqliteDb = require('../database');
   const run = (sql, params = []) =>
@@ -677,6 +773,10 @@ router.get('/:id', authenticate, requireTenant, async (req, res) => {
     const assignedTechId = task.assigned_technician_id ?? task.assignedTechnicianId;
     if (req.user.role === 'TECHNICIAN' && assignedTechId !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
+    }
+
+    if (isStaffReviewer(req.user.role)) {
+      await reconcileApprovalStatusFromHistory([task], req, tenantId, req.legacyDb);
     }
 
     res.json(task);
@@ -1483,6 +1583,13 @@ router.put('/:id/status', authenticate, requireTenant, [
       if (status !== 'IN_PROGRESS_TECH' && status !== 'READY_FOR_REVIEW') {
         return res.status(403).json({ error: 'Technicians can only set status to IN_PROGRESS_TECH or READY_FOR_REVIEW' });
       }
+    }
+
+    const currentStatus = task.status;
+    if (currentStatus === 'APPROVED' && status !== 'APPROVED') {
+      return res.status(400).json({
+        error: 'This report is approved. Use Unapprove to send it back for review.'
+      });
     }
 
     // Build update data
@@ -3141,6 +3248,8 @@ router.get('/dashboard/completed-field-work', authenticate, requireTenant, requi
         );
       });
     }
+
+    await reconcileApprovalStatusFromHistory(rows || [], req, tenantId, legacyDb);
 
     res.json(rows || []);
   } catch (err) {

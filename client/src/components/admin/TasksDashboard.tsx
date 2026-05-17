@@ -16,6 +16,23 @@ function toPositiveTaskId(value: unknown): number | null {
   return n;
 }
 
+/** API rows may mix camelCase and snake_case depending on endpoint age. */
+function resolveTaskApiFields(task: Task): {
+  taskType: TaskType | undefined;
+  status: string;
+  fieldCompleted: boolean;
+} {
+  const raw = task as Task & {
+    task_type?: TaskType;
+    field_completed?: number | boolean;
+  };
+  const taskType = task.taskType ?? raw.task_type;
+  const status = String(task.status ?? '');
+  const fc = task.fieldCompleted ?? raw.field_completed;
+  const fieldCompleted = fc === 1 || fc === true;
+  return { taskType, status, fieldCompleted };
+}
+
 const TasksDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   const { showAlert, showConfirm } = useAppDialog();
@@ -457,8 +474,9 @@ const TasksDashboard: React.FC = () => {
 
   const getTaskActions = (task: Task): React.ReactNode => {
     const actions: React.ReactNode[] = [];
-    const isReport = isReportTask(task.taskType);
-    const isField = isFieldTask(task.taskType);
+    const { taskType, status } = resolveTaskApiFields(task);
+    const isReport = taskType != null && isReportTask(taskType);
+    const isField = taskType != null && isFieldTask(taskType);
 
     // Edit Task button (always available for Admin) - handles assignment/reassignment
     actions.push(
@@ -472,7 +490,7 @@ const TasksDashboard: React.FC = () => {
       </button>
     );
 
-    if (task.status !== 'APPROVED') {
+    if (status !== 'APPROVED') {
       actions.push(
         <button
           key="delete"
@@ -494,13 +512,13 @@ const TasksDashboard: React.FC = () => {
           className="action-button action-view"
           title="View Report"
         >
-          {task.taskType === 'PROCTOR' && task.status === 'READY_FOR_REVIEW'
+          {taskType === 'PROCTOR' && status === 'READY_FOR_REVIEW'
             ? 'Open summary'
             : 'View Report'}
         </button>
       );
 
-      if (task.status === 'READY_FOR_REVIEW') {
+      if (status === 'READY_FOR_REVIEW' || status === 'IN_PROGRESS_TECH') {
         actions.push(
           <button
             key="approve"
@@ -509,11 +527,13 @@ const TasksDashboard: React.FC = () => {
               if (tid != null) handleApproveClick(tid, e);
             }}
             className="action-button action-approve"
-            title="Approve Task"
+            title="Approve report"
           >
             Approve
           </button>
         );
+      }
+      if (status === 'READY_FOR_REVIEW') {
         actions.push(
           <button
             key="reject"
@@ -525,7 +545,7 @@ const TasksDashboard: React.FC = () => {
           </button>
         );
       }
-      if (task.status === 'APPROVED') {
+      if (status === 'APPROVED') {
         actions.push(
           <button
             key="unapprove"

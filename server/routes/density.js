@@ -555,18 +555,25 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       }
     }
 
-    // Update task status if provided
+    // Update task status if provided (never downgrade an approved report via save)
     if (updateStatus) {
-      const taskUpdate = {
-        status: updateStatus,
-        updatedAt: new Date().toISOString()
-      };
-      
-      if (updateStatus === 'READY_FOR_REVIEW') {
-        taskUpdate.reportSubmitted = 1;
+      const currentStatus = task.status ?? task.task_status;
+      if (currentStatus === 'APPROVED' && updateStatus !== 'APPROVED') {
+        console.warn(
+          `[density] Ignoring status change APPROVED → ${updateStatus} for task ${taskId} on save`
+        );
+      } else {
+        const taskUpdate = {
+          status: updateStatus,
+          updatedAt: new Date().toISOString()
+        };
+
+        if (updateStatus === 'READY_FOR_REVIEW') {
+          taskUpdate.reportSubmitted = 1;
+        }
+
+        await db.update('tasks', taskUpdate, { id: taskId });
       }
-      
-      await db.update('tasks', taskUpdate, { id: taskId });
     }
 
     // Update task assignment if technician changed (admin only)
