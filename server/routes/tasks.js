@@ -220,6 +220,7 @@ function normalizeSupabaseTaskRow(task) {
     assignedTechnicianId: task.assigned_technician_id ?? task.assignedTechnicianId,
     projectId: task.project_id ?? task.projectId,
     taskType: task.task_type ?? task.taskType,
+    status: task.status,
     dueDate: task.due_date ?? task.dueDate,
     scheduledStartDate: task.scheduled_start_date ?? task.scheduledStartDate,
     scheduledEndDate: task.scheduled_end_date ?? task.scheduledEndDate,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useAppDialog } from '../../context/AppDialogContext';
 import { tasksAPI, Task, taskTypeLabel, TaskType } from '../../api/tasks';
@@ -20,6 +20,7 @@ const TasksDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   const { showAlert, showConfirm } = useAppDialog();
   const navigate = useNavigate();
+  const location = useLocation();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeFilter, setActiveFilter] = useState<'today' | 'upcoming' | 'overdue' | 'activity'>('today');
   const [upcomingDays, setUpcomingDays] = useState<number>(7);
@@ -53,7 +54,7 @@ const TasksDashboard: React.FC = () => {
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter, upcomingDays]);
+  }, [activeFilter, upcomingDays, location.key]);
 
   useEffect(() => {
     // Load auto-send email settings once for this tenant.
@@ -485,21 +486,19 @@ const TasksDashboard: React.FC = () => {
     }
 
     if (isReport) {
-      // Report tasks: View Report, Approve, Reject based on status
-      if (task.status === 'READY_FOR_REVIEW' || task.status === 'APPROVED') {
-        actions.push(
-          <button
-            key="view"
-            onClick={(e) => handleViewReport(task, e)}
-            className="action-button action-view"
-            title="View Report"
-          >
-            {task.taskType === 'PROCTOR' && task.status === 'READY_FOR_REVIEW'
-              ? 'Open summary'
-              : 'View Report'}
-          </button>
-        );
-      }
+      // Report tasks: always allow opening the report (Activity Log includes field-complete rows still in progress)
+      actions.push(
+        <button
+          key="view"
+          onClick={(e) => handleViewReport(task, e)}
+          className="action-button action-view"
+          title="View Report"
+        >
+          {task.taskType === 'PROCTOR' && task.status === 'READY_FOR_REVIEW'
+            ? 'Open summary'
+            : 'View Report'}
+        </button>
+      );
 
       if (task.status === 'READY_FOR_REVIEW') {
         actions.push(

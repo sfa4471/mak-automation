@@ -9,6 +9,7 @@ import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
 import RejectTaskModal from './RejectTaskModal';
+import UnapproveTaskModal from './UnapproveTaskModal';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
@@ -25,6 +26,8 @@ const Dashboard: React.FC = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [loading, setLoading] = useState(true);
   const [rejectModalTask, setRejectModalTask] = useState<Task | null>(null);
+  const [unapproveTask, setUnapproveTask] = useState<Task | null>(null);
+  const [unapproveAlreadySent, setUnapproveAlreadySent] = useState(false);
 
   useEffect(() => {
     if (user && isTechnician()) {
@@ -159,6 +162,24 @@ const Dashboard: React.FC = () => {
   const handleRejectClick = (task: Task, e: React.MouseEvent) => {
     e.stopPropagation();
     setRejectModalTask(task);
+  };
+
+  const handleUnapproveClick = async (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const ctx = await tasksAPI.getUnapproveContext(task.id);
+      if (!ctx.canUnapprove) {
+        await showAlert('Only approved reports can be unapproved.', 'Cannot unapprove');
+        return;
+      }
+      setUnapproveAlreadySent(ctx.alreadySentToClient);
+      setUnapproveTask(task);
+    } catch (err: any) {
+      await showAlert(
+        err.response?.data?.error || 'Could not open unapprove. Please try again.',
+        'Error'
+      );
+    }
   };
 
   const handleDeleteTask = async (task: Task, e: React.MouseEvent) => {
@@ -538,6 +559,15 @@ const Dashboard: React.FC = () => {
                                       </button>
                                     </>
                                   )}
+                                  {task.status === 'APPROVED' && isReportTask(task) && (
+                                    <button
+                                      className="edit-task-button-secondary"
+                                      style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
+                                      onClick={(e) => void handleUnapproveClick(task, e)}
+                                    >
+                                      Unapprove
+                                    </button>
+                                  )}
                                 </>
                               )}
                             </div>
@@ -568,6 +598,26 @@ const Dashboard: React.FC = () => {
         onSubmit={async (payload) => {
           if (!rejectModalTask) return;
           await tasksAPI.reject(rejectModalTask.id, payload);
+          loadData();
+        }}
+      />
+      <UnapproveTaskModal
+        isOpen={unapproveTask !== null}
+        contextLine={
+          unapproveTask
+            ? `${unapproveTask.projectNumber ?? '—'} · ${taskTypeLabel(unapproveTask)}`
+            : undefined
+        }
+        alreadySentToClient={unapproveAlreadySent}
+        onClose={() => {
+          setUnapproveTask(null);
+          setUnapproveAlreadySent(false);
+        }}
+        onSubmit={async (payload) => {
+          if (!unapproveTask) return;
+          await tasksAPI.unapprove(unapproveTask.id, payload);
+          setUnapproveTask(null);
+          setUnapproveAlreadySent(false);
           loadData();
         }}
       />

@@ -143,8 +143,8 @@ const CompletedFieldJobsLog: React.FC<CompletedFieldJobsLogProps> = ({
   return (
     <div className="completed-jobs-log">
       <p className="completed-jobs-intro">
-        Field work marked complete ({totalJobs} {totalJobs === 1 ? 'job' : 'jobs'}). Expand a year, then a month, to
-        see details.
+        Field work marked complete ({totalJobs} {totalJobs === 1 ? 'job' : 'jobs'}). This is not the same as report
+        approval — use the Report status column below. Expand a year, then a month, to see details.
       </p>
       {grouped.map(({ year, months }) => {
         const yearOpen = expandedYears.has(String(year));
@@ -199,7 +199,7 @@ const CompletedFieldJobsLog: React.FC<CompletedFieldJobsLogProps> = ({
                                   <th>Field completed</th>
                                   <th>Field dates</th>
                                   <th>Report due</th>
-                                  <th>Status</th>
+                                  <th>Report status</th>
                                   <th>Actions</th>
                                 </tr>
                               </thead>
