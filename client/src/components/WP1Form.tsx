@@ -522,7 +522,7 @@ const WP1Form: React.FC = () => {
   // Handle structure selection - auto-populate specs from Concrete Specs
   const handleStructureChange = (structureType: string) => {
     const selectedSpec = concreteSpecs[structureType];
-    let updatedData = { ...formData, structure: structureType };
+    let updatedData = { ...formData, structure: structureType, structureDescription: '' };
     
     if (selectedSpec) {
       // Debug: Log the exact structure of selectedSpec
@@ -1251,6 +1251,18 @@ const WP1Form: React.FC = () => {
                 )}
               </select>
             </div>
+            {formData.structure && (
+              <div className="form-field">
+                <label>STRUCTURE DESCRIPTION:</label>
+                <input
+                  type="text"
+                  value={formData.structureDescription || ''}
+                  onChange={(e) => handleFieldChange('structureDescription', e.target.value)}
+                  placeholder="e.g. North Section 200' x 30'"
+                  style={{ width: '100%', padding: '8px' }}
+                />
+              </div>
+            )}
             <div className="form-field">
               <label>SAMPLE LOCATION:</label>
               <input

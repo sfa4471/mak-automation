@@ -168,7 +168,7 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
     const tenantId = task.tenant_id ?? task.tenantId ?? req.tenantId;
     const {
       technician, weather, placementDate, specStrength, specStrengthDays,
-      structure, sampleLocation, supplier, timeBatched, classMixId, timeSampled,
+      structure, structureDescription, sampleLocation, supplier, timeBatched, classMixId, timeSampled,
       yardsBatched, ambientTempMeasured, ambientTempSpecs, truckNo, ticketNo,
       concreteTempMeasured, concreteTempSpecs, plant, slumpMeasured, slumpSpecs,
       yardsPlaced, totalYards, airContentMeasured, airContentSpecs,
@@ -190,6 +190,7 @@ router.post('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       specStrength: specStrength || null,
       specStrengthDays: specStrengthDays || null,
       structure: structure || null,
+      structureDescription: structureDescription || null,
       sampleLocation: sampleLocation || null,
       supplier: supplier || null,
       timeBatched: timeBatched || null,

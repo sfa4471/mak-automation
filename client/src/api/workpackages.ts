@@ -50,6 +50,7 @@ export interface WP1Data {
   specStrength?: string;
   specStrengthDays?: number;
   structure?: string;
+  structureDescription?: string;
   sampleLocation?: string;
   supplier?: string;
   timeBatched?: string;

@@ -780,7 +780,7 @@ const DensityReportForm: React.FC = () => {
   const handleStructureChange = (structureType: string) => {
     if (!formData) return;
     
-    let updatedData = { ...formData, structureType, structure: structureType };
+    let updatedData = { ...formData, structureType, structure: structureType, structureDescription: '' };
     let densSpecPercents: string[] = [];
     let moistSpecRanges: Array<{ min?: string; max?: string }> = [];
     
@@ -1354,6 +1354,18 @@ const DensityReportForm: React.FC = () => {
                 </small>
               )}
             </div>
+            {(formData.structureType || formData.structure) && (
+              <div className="form-group">
+                <label>Structure Description</label>
+                <input
+                  type="text"
+                  value={formData.structureDescription || ''}
+                  onChange={(e) => updateField('structureDescription', e.target.value)}
+                  placeholder="e.g. North Section 200' x 30'"
+                  disabled={!canEdit}
+                />
+              </div>
+            )}
           </div>
         </div>
 

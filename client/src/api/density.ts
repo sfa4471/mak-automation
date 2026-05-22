@@ -31,6 +31,7 @@ export interface DensityReport {
   datePerformed: string;
   structure: string;
   structureType?: string;
+  structureDescription?: string;
   testRows: TestRow[];
   proctors: ProctorRow[];
   densSpecPercent: string;

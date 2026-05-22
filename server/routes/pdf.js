@@ -314,7 +314,11 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     const wpStructurePdfLabel =
       structureTypeDisplayLabel(wpStructureKey, getSpecRowOtherDetails(concreteRowForStructure)) ||
       toTitleCase(wpStructureKey);
-    html = html.replace('{{STRUCTURE}}', escapeHtml(wpStructurePdfLabel));
+    const wpStructureDescription = wp1Data.structureDescription || wp1Data.structure_description || '';
+    const wpStructureFull = wpStructureDescription
+      ? `${wpStructurePdfLabel} - ${wpStructureDescription}`
+      : wpStructurePdfLabel;
+    html = html.replace('{{STRUCTURE}}', escapeHtml(wpStructureFull));
     html = html.replace('{{SAMPLE_LOCATION}}', escapeHtml(wp1Data.sampleLocation || ''));
     html = html.replace('{{SUPPLIER}}', escapeHtml(wp1Data.supplier || ''));
     html = html.replace('{{TIME_BATCHED}}', escapeHtml(formatTime(wp1Data.timeBatched || '')));
@@ -1031,7 +1035,11 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
           densityStructureKey,
           getSpecRowOtherDetails(soilRowForStructure)
         ) || toTitleCase(densityStructureKey);
-      html = html.replace('{{STRUCTURE}}', escapeHtml(densityStructurePdfLabel));
+      const densityStructureDescription = data.structureDescription || data.structure_description || '';
+      const densityStructureFull = densityStructureDescription
+        ? `${densityStructurePdfLabel} - ${densityStructureDescription}`
+        : densityStructurePdfLabel;
+      html = html.replace('{{STRUCTURE}}', escapeHtml(densityStructureFull));
 
       // Generate test rows HTML
       let testRowsHtml = '';
