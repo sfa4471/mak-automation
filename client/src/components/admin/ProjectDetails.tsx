@@ -64,6 +64,8 @@ const ProjectDetails: React.FC = () => {
     { proctorNo: 1, description: '', optMoisture: '', maxDensity: '' }
   ]);
   const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
+  const [customSoilTypes, setCustomSoilTypes] = useState<{id: string; name: string}[]>([]);
+  const [customConcreteTypes, setCustomConcreteTypes] = useState<{id: string; name: string}[]>([]);
 
   useEffect(() => {
     loadProject();
@@ -136,7 +138,11 @@ const ProjectDetails: React.FC = () => {
         normalizedSoilSpecs[targetKey] = normalizeSoilSpecRow(loadedSoilSpecs[key]);
       });
       setSoilSpecs(normalizedSoilSpecs);
-      
+      const loadedCustomSoilKeys = Object.keys(normalizedSoilSpecs).filter(
+        key => !SOIL_STRUCTURE_TYPES.some(t => t.toLowerCase() === key.toLowerCase())
+      );
+      setCustomSoilTypes(loadedCustomSoilKeys.map(name => ({ id: name, name })));
+
       // Load concrete specs - normalize keys to match defined structure types
       let loadedConcreteSpecs = projectData.concreteSpecs || {};
       const normalizedConcreteSpecs: ConcreteSpecs = {};
@@ -154,6 +160,10 @@ const ProjectDetails: React.FC = () => {
         }
       });
       setConcreteSpecs(normalizedConcreteSpecs);
+      const loadedCustomConcreteKeys = Object.keys(normalizedConcreteSpecs).filter(
+        key => !CONCRETE_STRUCTURE_TYPES.some(t => t.toLowerCase() === key.toLowerCase())
+      );
+      setCustomConcreteTypes(loadedCustomConcreteKeys.map(name => ({ id: name, name })));
 
       setPresetProctorsDeclared(!!projectData.presetProctorsDeclared);
       const presetRows = projectData.presetProctorRows;
@@ -521,6 +531,32 @@ const ProjectDetails: React.FC = () => {
   };
 
 
+  const addCustomSoilType = () => {
+    const id = `__cs_${Date.now()}`;
+    setCustomSoilTypes(prev => [...prev, { id, name: '' }]);
+    setSoilSpecs(prev => ({ ...prev, [id]: { densityPcts: [''], moistureRanges: [{ min: '', max: '' }] } }));
+  };
+  const removeCustomSoilType = (id: string) => {
+    setCustomSoilTypes(prev => prev.filter(t => t.id !== id));
+    setSoilSpecs(prev => { const next = { ...prev }; delete next[id]; return next; });
+  };
+  const renameCustomSoilType = (id: string, name: string) => {
+    setCustomSoilTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+  };
+
+  const addCustomConcreteType = () => {
+    const id = `__cc_${Date.now()}`;
+    setCustomConcreteTypes(prev => [...prev, { id, name: '' }]);
+    setConcreteSpecs(prev => ({ ...prev, [id]: {} }));
+  };
+  const removeCustomConcreteType = (id: string) => {
+    setCustomConcreteTypes(prev => prev.filter(t => t.id !== id));
+    setConcreteSpecs(prev => { const next = { ...prev }; delete next[id]; return next; });
+  };
+  const renameCustomConcreteType = (id: string, name: string) => {
+    setCustomConcreteTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!project) return;
@@ -626,9 +662,11 @@ const ProjectDetails: React.FC = () => {
       
       // Build soil specs - normalize keys to use correct case from defined structure types
       const filteredSoilSpecs: SoilSpecs = {};
-      
-      // Process current state (user-entered values) - normalize keys and use array shape for save
+      const customSoilIds = new Set(customSoilTypes.map(t => t.id));
+
+      // 1. Predefined structure types (skip custom IDs — handled below)
       Object.keys(soilSpecs).forEach(key => {
+        if (customSoilIds.has(key)) return;
         const spec = normalizeSoilSpecRow(soilSpecs[key]);
         const matchingType = SOIL_STRUCTURE_TYPES.find(
           type => type.toLowerCase() === key.toLowerCase()
@@ -651,10 +689,33 @@ const ProjectDetails: React.FC = () => {
           };
         }
       });
-      
-      // Process existing saved specs - normalize keys and merge (support array and legacy shape)
+
+      // 2. Custom structure types — save under their display names
+      customSoilTypes.forEach(({ id, name }) => {
+        const trimmedName = name.trim();
+        if (!trimmedName) return;
+        const spec = normalizeSoilSpecRow(soilSpecs[id] || {});
+        const densityPcts = spec.densityPcts || [];
+        const moistureRanges = spec.moistureRanges || [];
+        const hasDensity = densityPcts.some(p => p != null && String(p).trim() !== '');
+        const hasMoisture = moistureRanges.some(
+          r => (r.min != null && String(r.min).trim() !== '') || (r.max != null && String(r.max).trim() !== '')
+        );
+        if (hasDensity || hasMoisture) {
+          filteredSoilSpecs[trimmedName] = {
+            densityPcts: densityPcts.length ? densityPcts : undefined,
+            moistureRanges: moistureRanges.length ? moistureRanges : undefined,
+            ...(densityPcts.length > 0 && densityPcts[0] != null && String(densityPcts[0]).trim() !== '' && { densityPct: String(densityPcts[0]) }),
+            ...(moistureRanges.length > 0 && moistureRanges[0] && { moistureRange: moistureRanges[0] }),
+          };
+        }
+      });
+
+      // 3. Merge predefined types from saved project (preserve unchanged specs; skip custom keys)
       if (project.soilSpecs) {
         Object.keys(project.soilSpecs).forEach(key => {
+          const isPredefined = SOIL_STRUCTURE_TYPES.some(t => t.toLowerCase() === key.toLowerCase());
+          if (!isPredefined) return; // custom types fully managed by customSoilTypes above
           const matchingType = SOIL_STRUCTURE_TYPES.find(
             type => type.toLowerCase() === key.toLowerCase()
           ) || key;
@@ -681,18 +742,18 @@ const ProjectDetails: React.FC = () => {
       
       // Build concrete specs - normalize keys to use correct case from defined structure types
       const filteredConcreteSpecs: ConcreteSpecs = {};
-      
-      // Process current state (user-entered values) - normalize keys
+      const customConcreteIds = new Set(customConcreteTypes.map(t => t.id));
+
+      // 1. Predefined concrete types (skip custom IDs — handled below)
       Object.keys(concreteSpecs).forEach(key => {
+        if (customConcreteIds.has(key)) return;
         const spec = concreteSpecs[key];
         if (spec) {
           // Find matching structure type (case-insensitive)
           const matchingType = CONCRETE_STRUCTURE_TYPES.find(
             type => type.toLowerCase() === key.toLowerCase()
           ) || key; // Use original if no match
-          
-          // Check if it has at least one non-empty value
-          // If a value is in state, it means the user interacted with it, so save it (even if it's "35-95" or "45-95")
+
           const otherDetails = String(spec.otherDetails ?? '').trim();
           const hasOtherNote = matchingType.toLowerCase() === 'other' && otherDetails !== '';
           const hasValue =
@@ -702,7 +763,7 @@ const ProjectDetails: React.FC = () => {
             (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
             (spec.slump && String(spec.slump).trim() !== '') ||
             (spec.airContent && String(spec.airContent).trim() !== '');
-          
+
           if (hasValue) {
             filteredConcreteSpecs[matchingType] = {
               ...spec,
@@ -711,16 +772,32 @@ const ProjectDetails: React.FC = () => {
           }
         }
       });
-      
-      // Process existing saved specs - normalize keys and merge
+
+      // 2. Custom concrete types — save under their display names
+      customConcreteTypes.forEach(({ id, name }) => {
+        const trimmedName = name.trim();
+        if (!trimmedName) return;
+        const spec = concreteSpecs[id] || {};
+        const hasValue =
+          (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') ||
+          (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') ||
+          (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
+          (spec.slump && String(spec.slump).trim() !== '') ||
+          (spec.airContent && String(spec.airContent).trim() !== '');
+        if (hasValue) {
+          filteredConcreteSpecs[trimmedName] = { ...spec };
+        }
+      });
+
+      // 3. Merge predefined types from saved project (skip custom keys)
       if (project.concreteSpecs) {
         Object.keys(project.concreteSpecs).forEach(key => {
-          // Find matching structure type (case-insensitive)
+          const isPredefined = CONCRETE_STRUCTURE_TYPES.some(t => t.toLowerCase() === key.toLowerCase());
+          if (!isPredefined) return; // custom types fully managed by customConcreteTypes above
           const matchingType = CONCRETE_STRUCTURE_TYPES.find(
             type => type.toLowerCase() === key.toLowerCase()
-          ) || key; // Use original if no match
-          
-          // Only preserve if it wasn't already included from current state
+          ) || key;
+
           if (!filteredConcreteSpecs[matchingType]) {
             const existingSpec = project.concreteSpecs![key];
             if (!existingSpec) return;
@@ -1234,7 +1311,19 @@ const ProjectDetails: React.FC = () => {
                       return (
                         <tr key={structureType}>
                             <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>
-                              <div>{structureType}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>{structureType}</span>
+                                {structureType === 'Other' && (
+                                  <button
+                                    type="button"
+                                    onClick={addCustomConcreteType}
+                                    title="Add custom structure type"
+                                    style={{ padding: '1px 7px', fontWeight: 'bold', fontSize: '15px', lineHeight: '1.3', borderRadius: '3px', cursor: 'pointer' }}
+                                  >
+                                    +
+                                  </button>
+                                )}
+                              </div>
                               {structureType === 'Other' && (
                                 <textarea
                                   value={spec.otherDetails ?? ''}
@@ -1315,6 +1404,48 @@ const ProjectDetails: React.FC = () => {
                         </tr>
                       );
                     })}
+                    {customConcreteTypes.map(({ id, name }) => {
+                      const spec = concreteSpecs[id] || {};
+                      return (
+                        <tr key={id} style={{ background: '#f0f8ff' }}>
+                          <td style={{ padding: '10px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <input
+                                type="text"
+                                value={name}
+                                onChange={(e) => renameCustomConcreteType(id, e.target.value)}
+                                placeholder="Type name…"
+                                className="form-input"
+                                style={{ flex: 1, minWidth: '100px', padding: '4px 6px', fontWeight: '500' }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeCustomConcreteType(id)}
+                                title="Remove this structure type"
+                                style={{ padding: '2px 7px', color: '#c00', fontWeight: 'bold', fontSize: '15px', cursor: 'pointer' }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                            <input type="text" value={spec.specStrengthPsi || ''} onChange={(e) => updateConcreteSpec(id, 'specStrengthPsi', e.target.value)} className="form-input" style={{ width: '100%', padding: '5px' }} />
+                          </td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                            <input type="text" value={spec.ambientTempF || '35-95'} onChange={(e) => updateConcreteSpec(id, 'ambientTempF', e.target.value)} className="form-input" style={{ width: '100%', padding: '5px' }} />
+                          </td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                            <input type="text" value={spec.concreteTempF || '45-95'} onChange={(e) => updateConcreteSpec(id, 'concreteTempF', e.target.value)} className="form-input" style={{ width: '100%', padding: '5px' }} />
+                          </td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                            <input type="text" value={spec.slump || ''} onChange={(e) => updateConcreteSpec(id, 'slump', e.target.value)} className="form-input" style={{ width: '100%', padding: '5px' }} />
+                          </td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                            <input type="text" value={spec.airContent || ''} onChange={(e) => updateConcreteSpec(id, 'airContent', e.target.value)} className="form-input" style={{ width: '100%', padding: '5px' }} />
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1340,7 +1471,19 @@ const ProjectDetails: React.FC = () => {
                       return (
                         <tr key={structureType}>
                           <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>
-                            <div>{structureType}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span>{structureType}</span>
+                              {structureType === 'Other' && (
+                                <button
+                                  type="button"
+                                  onClick={addCustomSoilType}
+                                  title="Add custom structure type"
+                                  style={{ padding: '1px 7px', fontWeight: 'bold', fontSize: '15px', lineHeight: '1.3', borderRadius: '3px', cursor: 'pointer' }}
+                                >
+                                  +
+                                </button>
+                              )}
+                            </div>
                             {structureType === 'Other' && (
                               <textarea
                                 value={spec.otherDetails ?? ''}
@@ -1438,6 +1581,63 @@ const ProjectDetails: React.FC = () => {
                               >
                                 +
                               </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {customSoilTypes.map(({ id, name }) => {
+                      const spec = normalizeSoilSpecRow(soilSpecs[id] || {});
+                      const densityPcts = spec.densityPcts || [''];
+                      const moistureRanges = spec.moistureRanges || [{ min: '', max: '' }];
+                      return (
+                        <tr key={id} style={{ background: '#f0f8ff' }}>
+                          <td style={{ padding: '10px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <input
+                                type="text"
+                                value={name}
+                                onChange={(e) => renameCustomSoilType(id, e.target.value)}
+                                placeholder="Type name…"
+                                className="form-input"
+                                style={{ flex: 1, minWidth: '100px', padding: '4px 6px', fontWeight: '500' }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeCustomSoilType(id)}
+                                title="Remove this structure type"
+                                style={{ padding: '2px 7px', color: '#c00', fontWeight: 'bold', fontSize: '15px', cursor: 'pointer' }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {densityPcts.map((pct, rowIndex) => (
+                                <div key={`d-${rowIndex}`} style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <input type="text" value={pct} onChange={(e) => updateSoilSpec(id, 'densityPcts', e.target.value, rowIndex)} className="form-input" style={{ width: '80px', padding: '5px' }} />
+                                  {densityPcts.length > 1 && (
+                                    <button type="button" onClick={() => removeDensityRow(id, rowIndex)} style={{ padding: '4px 8px', minWidth: '28px' }}>−</button>
+                                  )}
+                                </div>
+                              ))}
+                              <button type="button" onClick={() => addDensityRow(id)} style={{ alignSelf: 'flex-start', padding: '4px 8px', minWidth: '28px', fontWeight: 'bold' }}>+</button>
+                            </div>
+                          </td>
+                          <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {moistureRanges.map((range, rowIndex) => (
+                                <div key={`m-${rowIndex}`} style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <input type="text" value={range.min ?? ''} onChange={(e) => updateSoilSpec(id, 'moistureRanges', e.target.value, rowIndex, 'min')} placeholder="Min" className="form-input" style={{ width: '60px', padding: '5px' }} />
+                                  <span>-</span>
+                                  <input type="text" value={range.max ?? ''} onChange={(e) => updateSoilSpec(id, 'moistureRanges', e.target.value, rowIndex, 'max')} placeholder="Max" className="form-input" style={{ width: '60px', padding: '5px' }} />
+                                  {moistureRanges.length > 1 && (
+                                    <button type="button" onClick={() => removeMoistureRow(id, rowIndex)} style={{ padding: '4px 8px', minWidth: '28px' }}>−</button>
+                                  )}
+                                </div>
+                              ))}
+                              <button type="button" onClick={() => addMoistureRow(id)} style={{ alignSelf: 'flex-start', padding: '4px 8px', minWidth: '28px', fontWeight: 'bold' }}>+</button>
                             </div>
                           </td>
                         </tr>

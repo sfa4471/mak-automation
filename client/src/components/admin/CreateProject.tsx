@@ -56,6 +56,8 @@ const CreateProject: React.FC = () => {
   const [customerDetails, setCustomerDetails] = useState<CustomerDetails>({});
   const [soilSpecs, setSoilSpecs] = useState<SoilSpecs>({});
   const [concreteSpecs, setConcreteSpecs] = useState<ConcreteSpecs>({});
+  const [customSoilTypes, setCustomSoilTypes] = useState<{id: string; name: string}[]>([]);
+  const [customConcreteTypes, setCustomConcreteTypes] = useState<{id: string; name: string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [logoError, setLogoError] = useState(false);
@@ -181,6 +183,31 @@ const CreateProject: React.FC = () => {
     }));
   };
 
+  const addCustomSoilType = () => {
+    const id = `__cs_${Date.now()}`;
+    setCustomSoilTypes(prev => [...prev, { id, name: '' }]);
+    setSoilSpecs(prev => ({ ...prev, [id]: { densityPcts: [''], moistureRanges: [{ min: '', max: '' }] } }));
+  };
+  const removeCustomSoilType = (id: string) => {
+    setCustomSoilTypes(prev => prev.filter(t => t.id !== id));
+    setSoilSpecs(prev => { const next = { ...prev }; delete next[id]; return next; });
+  };
+  const renameCustomSoilType = (id: string, name: string) => {
+    setCustomSoilTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+  };
+
+  const addCustomConcreteType = () => {
+    const id = `__cc_${Date.now()}`;
+    setCustomConcreteTypes(prev => [...prev, { id, name: '' }]);
+    setConcreteSpecs(prev => ({ ...prev, [id]: {} }));
+  };
+  const removeCustomConcreteType = (id: string) => {
+    setCustomConcreteTypes(prev => prev.filter(t => t.id !== id));
+    setConcreteSpecs(prev => { const next = { ...prev }; delete next[id]; return next; });
+  };
+  const renameCustomConcreteType = (id: string, name: string) => {
+    setCustomConcreteTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -253,9 +280,14 @@ const CreateProject: React.FC = () => {
     setLoading(true);
 
     try {
+      const customSoilIds = new Set(customSoilTypes.map(t => t.id));
+      const customConcreteIds = new Set(customConcreteTypes.map(t => t.id));
+
       let payloadSoilSpecs: SoilSpecs | undefined;
       const filteredSoil: SoilSpecs = {};
+      // Predefined types (skip custom IDs)
       Object.keys(soilSpecs).forEach((key) => {
+        if (customSoilIds.has(key)) return;
         const spec = normalizeSoilSpecRow(soilSpecs[key]);
         const densityPcts = spec.densityPcts || [];
         const moistureRanges = spec.moistureRanges || [];
@@ -279,10 +311,32 @@ const CreateProject: React.FC = () => {
           };
         }
       });
+      // Custom soil types — save under their display names
+      customSoilTypes.forEach(({ id, name }) => {
+        const trimmedName = name.trim();
+        if (!trimmedName) return;
+        const spec = normalizeSoilSpecRow(soilSpecs[id] || {});
+        const densityPcts = spec.densityPcts || [];
+        const moistureRanges = spec.moistureRanges || [];
+        const hasDensity = densityPcts.some((p) => p != null && String(p).trim() !== '');
+        const hasMoisture = moistureRanges.some(
+          (r) => (r.min != null && String(r.min).trim() !== '') || (r.max != null && String(r.max).trim() !== '')
+        );
+        if (hasDensity || hasMoisture) {
+          filteredSoil[trimmedName] = {
+            densityPcts: densityPcts.length ? densityPcts : undefined,
+            moistureRanges: moistureRanges.length ? moistureRanges : undefined,
+            ...(densityPcts[0] != null && String(densityPcts[0]).trim() !== '' && { densityPct: String(densityPcts[0]) }),
+            ...(moistureRanges[0] && { moistureRange: moistureRanges[0] }),
+          };
+        }
+      });
       payloadSoilSpecs = Object.keys(filteredSoil).length > 0 ? filteredSoil : undefined;
 
       const filteredConcrete: ConcreteSpecs = {};
+      // Predefined types (skip custom IDs)
       Object.keys(concreteSpecs).forEach((key) => {
+        if (customConcreteIds.has(key)) return;
         const spec = concreteSpecs[key];
         if (!spec) return;
         const otherDetails = String(spec.otherDetails ?? '').trim();
@@ -296,6 +350,21 @@ const CreateProject: React.FC = () => {
           (spec.airContent && String(spec.airContent).trim() !== '');
         if (hasValue) {
           filteredConcrete[key] = { ...spec, ...(otherDetails ? { otherDetails } : {}) };
+        }
+      });
+      // Custom concrete types — save under their display names
+      customConcreteTypes.forEach(({ id, name }) => {
+        const trimmedName = name.trim();
+        if (!trimmedName) return;
+        const spec = concreteSpecs[id] || {};
+        const hasValue =
+          (spec.specStrengthPsi && String(spec.specStrengthPsi).trim() !== '') ||
+          (spec.ambientTempF && String(spec.ambientTempF).trim() !== '') ||
+          (spec.concreteTempF && String(spec.concreteTempF).trim() !== '') ||
+          (spec.slump && String(spec.slump).trim() !== '') ||
+          (spec.airContent && String(spec.airContent).trim() !== '');
+        if (hasValue) {
+          filteredConcrete[trimmedName] = { ...spec };
         }
       });
       const payloadConcreteSpecs =
@@ -709,7 +778,19 @@ const CreateProject: React.FC = () => {
                         return (
                           <tr key={structureType}>
                             <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>
-                              <div>{structureType}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>{structureType}</span>
+                                {structureType === 'Other' && (
+                                  <button
+                                    type="button"
+                                    onClick={addCustomSoilType}
+                                    title="Add custom structure type"
+                                    style={{ padding: '1px 7px', fontWeight: 'bold', fontSize: '15px', lineHeight: '1.3', borderRadius: '3px', cursor: 'pointer' }}
+                                  >
+                                    +
+                                  </button>
+                                )}
+                              </div>
                               {structureType === 'Other' && (
                                 <textarea
                                   id={`soil-other-details`}
@@ -806,6 +887,62 @@ const CreateProject: React.FC = () => {
                           </tr>
                         );
                       })}
+                      {customSoilTypes.map(({ id, name }) => {
+                        const spec = normalizeSoilSpecRow(soilSpecs[id] || {});
+                        const densityPcts = spec.densityPcts || [''];
+                        const moistureRanges = spec.moistureRanges || [{ min: '', max: '' }];
+                        return (
+                          <tr key={id} style={{ background: '#f0f8ff' }}>
+                            <td style={{ padding: '10px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <input
+                                  type="text"
+                                  value={name}
+                                  onChange={(e) => renameCustomSoilType(id, e.target.value)}
+                                  placeholder="Type name…"
+                                  style={{ flex: 1, minWidth: '100px', padding: '4px 6px', fontWeight: '500', border: '1px solid #ccc', borderRadius: '3px', fontSize: '13px' }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeCustomSoilType(id)}
+                                  title="Remove this structure type"
+                                  style={{ padding: '2px 7px', color: '#c00', fontWeight: 'bold', fontSize: '15px', cursor: 'pointer' }}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {densityPcts.map((pct, rowIndex) => (
+                                  <div key={`d-${rowIndex}`} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                    <input type="text" value={pct} onChange={(e) => updateSoilSpec(id, 'densityPcts', e.target.value, rowIndex)} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }} />
+                                    {densityPcts.length > 1 && (
+                                      <button type="button" onClick={() => removeDensityRow(id, rowIndex)} style={{ padding: '4px 8px', minWidth: '28px' }}>−</button>
+                                    )}
+                                  </div>
+                                ))}
+                                <button type="button" onClick={() => addDensityRow(id)} style={{ alignSelf: 'flex-start', padding: '4px 8px', minWidth: '28px', fontWeight: 'bold' }}>+</button>
+                              </div>
+                            </td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {moistureRanges.map((range, rowIndex) => (
+                                  <div key={`m-${rowIndex}`} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                    <input type="text" value={range.min ?? ''} onChange={(e) => updateSoilSpec(id, 'moistureRanges', e.target.value, rowIndex, 'min')} placeholder="Min" style={{ width: '60px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }} />
+                                    <span>-</span>
+                                    <input type="text" value={range.max ?? ''} onChange={(e) => updateSoilSpec(id, 'moistureRanges', e.target.value, rowIndex, 'max')} placeholder="Max" style={{ width: '60px', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }} />
+                                    {moistureRanges.length > 1 && (
+                                      <button type="button" onClick={() => removeMoistureRow(id, rowIndex)} style={{ padding: '4px 8px', minWidth: '28px' }}>−</button>
+                                    )}
+                                  </div>
+                                ))}
+                                <button type="button" onClick={() => addMoistureRow(id)} style={{ alignSelf: 'flex-start', padding: '4px 8px', minWidth: '28px', fontWeight: 'bold' }}>+</button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -831,7 +968,19 @@ const CreateProject: React.FC = () => {
                         return (
                           <tr key={structureType}>
                             <td style={{ padding: '10px', border: '1px solid #dee2e6', fontWeight: '500', verticalAlign: 'top' }}>
-                              <div>{structureType}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>{structureType}</span>
+                                {structureType === 'Other' && (
+                                  <button
+                                    type="button"
+                                    onClick={addCustomConcreteType}
+                                    title="Add custom structure type"
+                                    style={{ padding: '1px 7px', fontWeight: 'bold', fontSize: '15px', lineHeight: '1.3', borderRadius: '3px', cursor: 'pointer' }}
+                                  >
+                                    +
+                                  </button>
+                                )}
+                              </div>
                               {structureType === 'Other' && (
                                 <textarea
                                   id={`concrete-other-details`}
@@ -903,6 +1052,47 @@ const CreateProject: React.FC = () => {
                                 onChange={(e) => updateConcreteSpec(structureType, 'airContent', e.target.value)}
                                 style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }}
                               />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {customConcreteTypes.map(({ id, name }) => {
+                        const spec = concreteSpecs[id] || {};
+                        return (
+                          <tr key={id} style={{ background: '#f0f8ff' }}>
+                            <td style={{ padding: '10px', border: '1px solid #dee2e6', verticalAlign: 'top' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <input
+                                  type="text"
+                                  value={name}
+                                  onChange={(e) => renameCustomConcreteType(id, e.target.value)}
+                                  placeholder="Type name…"
+                                  style={{ flex: 1, minWidth: '100px', padding: '4px 6px', fontWeight: '500', border: '1px solid #ccc', borderRadius: '3px', fontSize: '13px' }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeCustomConcreteType(id)}
+                                  title="Remove this structure type"
+                                  style={{ padding: '2px 7px', color: '#c00', fontWeight: 'bold', fontSize: '15px', cursor: 'pointer' }}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                              <input type="text" value={spec.specStrengthPsi || ''} onChange={(e) => updateConcreteSpec(id, 'specStrengthPsi', e.target.value)} style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }} />
+                            </td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                              <input type="text" value={spec.ambientTempF || '35-95'} onChange={(e) => updateConcreteSpec(id, 'ambientTempF', e.target.value)} style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }} />
+                            </td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                              <input type="text" value={spec.concreteTempF || '45-95'} onChange={(e) => updateConcreteSpec(id, 'concreteTempF', e.target.value)} style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }} />
+                            </td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                              <input type="text" value={spec.slump || ''} onChange={(e) => updateConcreteSpec(id, 'slump', e.target.value)} style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }} />
+                            </td>
+                            <td style={{ padding: '5px', border: '1px solid #dee2e6' }}>
+                              <input type="text" value={spec.airContent || ''} onChange={(e) => updateConcreteSpec(id, 'airContent', e.target.value)} style={{ width: '100%', padding: '5px', border: '1px solid #ccc', borderRadius: '3px' }} />
                             </td>
                           </tr>
                         );
