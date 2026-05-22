@@ -712,6 +712,14 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const taskTenantId = task.tenant_id ?? task.tenantId ?? null;
+    const taskTenant = await getTenant(taskTenantId);
+    const taskCompanyName = taskTenant ? (taskTenant.name ?? taskTenant.companyName ?? '') || 'MAK Lonestar Consulting, LLC' : 'MAK Lonestar Consulting, LLC';
+    const taskCompanyAddress = getTenantAddress(taskTenant) || '940 N Beltline Road, Suite 107\nIrving, TX 75061';
+    const taskCompanyPhone = (taskTenant?.company_phone ?? taskTenant?.companyPhone)
+      ? `Tel ${String(taskTenant.company_phone || taskTenant.companyPhone).trim()}`
+      : 'Tel (214) 718-1250';
+
       try {
         // Set headers
         res.setHeader('Content-Type', 'application/pdf');
@@ -735,12 +743,15 @@ router.get('/task/:taskId', authenticate, async (req, res) => {
         const margin = 50;
         const usableWidth = pageWidth - (margin * 2); // 512 points
 
-        // Header
-        doc.fontSize(10)
-           .text('MAK Lonestar Consulting, LLC', 50, 50)
-           .text('940 N Beltline Road, Suite 107', 50, 65)
-           .text('Irving, TX 75061', 50, 80)
-           .text('Tel (214) 718-1250', 50, 95);
+        // Header — tenant-branded
+        let headerY = 50;
+        doc.fontSize(10).text(taskCompanyName, 50, headerY);
+        headerY += 15;
+        for (const line of taskCompanyAddress.split('\n')) {
+          doc.text(line, 50, headerY);
+          headerY += 15;
+        }
+        doc.text(taskCompanyPhone, 50, headerY);
 
         // Title
         doc.fontSize(14)
