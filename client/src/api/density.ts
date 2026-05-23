@@ -6,6 +6,8 @@ export interface TestRow {
   type?: 'data' | 'section';
   /** Only on section rows — the structure type for rows that follow */
   sectionStructureType?: string;
+  /** Only on section rows — free-text location/area description (e.g. "Station 2+00 to 4+50") */
+  sectionDescription?: string;
   testNo: number;
   testLocation: string;
   depthLiftType: 'DEPTH' | 'LIFT';

@@ -1067,10 +1067,11 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
           const sectLabel = sectKey
             ? (structureTypeDisplayLabel(sectKey, getSpecRowOtherDetails(getSpecRow(soilSpecsForPdf, sectKey))) || toTitleCase(sectKey))
             : '';
+          const sectDesc = row.sectionDescription ? ` — ${row.sectionDescription}` : '';
           testRowsHtml += `
             <tr>
               <td colspan="8" style="background:#2c5282;color:#fff;padding:5px 8px;font-weight:bold;font-size:8pt;text-align:left;border-color:#1a3a5c;">
-                STRUCTURE: ${escapeHtml(sectLabel)}
+                STRUCTURE: ${escapeHtml(sectLabel)}<span style="font-weight:400;font-style:italic;opacity:0.9;">${escapeHtml(sectDesc)}</span>
               </td>
             </tr>
           `;

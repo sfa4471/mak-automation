@@ -3,6 +3,11 @@
   background: #f5f5f5;
 }
 
+.section-desc-input::placeholder {
+  color: rgba(255, 255, 255, 0.55);
+  font-style: italic;
+}
+
 /* Hide history section when printing */
 @media print {
   .no-print {

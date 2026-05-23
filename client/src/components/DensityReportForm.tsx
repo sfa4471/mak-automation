@@ -821,6 +821,16 @@ const DensityReportForm: React.FC = () => {
     debouncedSave(updated);
   };
 
+  const updateSectionDescription = (index: number, description: string) => {
+    if (!formData) return;
+    const newRows = formData.testRows.map((r, i) =>
+      i === index ? { ...r, sectionDescription: description } : r
+    );
+    const updated = { ...formData, testRows: newRows };
+    setFormData(updated);
+    debouncedSave(updated);
+  };
+
   // ─────────────────────────────────────────────────────────────────────────
 
   const updateField = (field: keyof DensityReport, value: any) => {
@@ -1522,8 +1532,8 @@ const DensityReportForm: React.FC = () => {
                               background: '#2c5282', color: '#fff',
                               padding: '6px 10px', fontWeight: 600, borderColor: '#1a3a5c'
                             }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <span style={{ fontSize: '11px', opacity: 0.8, letterSpacing: '0.5px', textTransform: 'uppercase' }}>Structure</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '11px', opacity: 0.8, letterSpacing: '0.5px', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Structure</span>
                                 {canEdit ? (
                                   <select
                                     value={row.sectionStructureType || ''}
@@ -1533,7 +1543,7 @@ const DensityReportForm: React.FC = () => {
                                       border: '1px solid rgba(255,255,255,0.5)',
                                       borderRadius: '3px', padding: '2px 8px',
                                       fontSize: '13px', cursor: 'pointer',
-                                      minWidth: '160px', maxWidth: '280px'
+                                      minWidth: '160px', maxWidth: '240px'
                                     }}
                                   >
                                     <option value="" style={{ background: '#2c5282' }}>Select structure type...</option>
@@ -1552,6 +1562,28 @@ const DensityReportForm: React.FC = () => {
                                       ? structureTypeDisplayLabel(row.sectionStructureType, (formData.projectSoilSpecs?.[row.sectionStructureType] as SoilSpecRow | undefined)?.otherDetails)
                                       : '—'}
                                   </span>
+                                )}
+                                <span style={{ opacity: 0.5, fontSize: '13px' }}>|</span>
+                                {canEdit ? (
+                                  <input
+                                    type="text"
+                                    value={row.sectionDescription || ''}
+                                    onChange={(e) => updateSectionDescription(index, e.target.value)}
+                                    placeholder="Location / description (e.g. Station 2+00 to 4+50)"
+                                    className="section-desc-input"
+                                    style={{
+                                      background: 'rgba(255,255,255,0.12)', color: '#fff',
+                                      border: '1px solid rgba(255,255,255,0.35)',
+                                      borderRadius: '3px', padding: '2px 8px',
+                                      fontSize: '12px', flex: 1, minWidth: '180px'
+                                    }}
+                                  />
+                                ) : (
+                                  row.sectionDescription && (
+                                    <span style={{ fontSize: '13px', fontWeight: 400, opacity: 0.85, fontStyle: 'italic' }}>
+                                      {row.sectionDescription}
+                                    </span>
+                                  )
                                 )}
                                 {canEdit && (
                                   <button type="button" onClick={() => removeRow(index)}
