@@ -245,11 +245,17 @@ const DensityReportForm: React.FC = () => {
     try {
       setLoading(true);
       const taskId = parseInt(id!);
-      const [taskData, reportData] = await Promise.all([
-        tasksAPI.get(taskId),
-        densityAPI.getByTask(taskId)
-      ]);
+      // Load task first (need projectId for parallel proctor fetch)
+      const taskData = await tasksAPI.get(taskId);
       setTask(taskData);
+      // Load report data and proctor tasks in parallel
+      const [reportData, proctorTasksList] = await Promise.all([
+        densityAPI.getByTask(taskId),
+        taskData?.projectId
+          ? tasksAPI.getProctorsForProject(taskData.projectId).catch(() => [] as ProctorTask[])
+          : Promise.resolve([] as ProctorTask[])
+      ]);
+      setProctorTasks(proctorTasksList);
       projectPresetDeclaredRef.current = !!(reportData && reportData.projectPresetProctorsDeclared);
       projectPresetRowsRef.current = reportData?.projectPresetProctorRows
         ? [...reportData.projectPresetProctorRows]
@@ -362,6 +368,19 @@ const DensityReportForm: React.FC = () => {
           }
         }
         
+        // Expand proctor rows to cover any proctor tasks not already present
+        if (proctorTasksList.length > 0 && initializedData.proctors) {
+          const existingNos = new Set(initializedData.proctors.map(p => p.proctorNo));
+          const missingNos = proctorTasksList.map(pt => pt.proctorNo).filter(no => !existingNos.has(no));
+          if (missingNos.length > 0) {
+            const extraRows = missingNos.map(no => ({ proctorNo: no, description: '', optMoisture: '', maxDensity: '' }));
+            initializedData = {
+              ...initializedData,
+              proctors: [...initializedData.proctors, ...extraRows].sort((a, b) => a.proctorNo - b.proctorNo)
+            };
+          }
+        }
+
         setFormData(initializedData);
         lastSavedDataRef.current = JSON.stringify(initializedData);
       } else {
@@ -407,15 +426,6 @@ const DensityReportForm: React.FC = () => {
         console.error('Error loading task history:', err);
       }
 
-      // Load Proctor tasks for this project (for dropdown)
-      if (taskData?.projectId) {
-        try {
-          const proctors = await tasksAPI.getProctorsForProject(taskData.projectId);
-          setProctorTasks(proctors);
-        } catch (err) {
-          console.error('Error loading proctor tasks:', err);
-        }
-      }
     } catch (err: any) {
       console.error('Error loading data:', err);
       setError(err.response?.data?.error || 'Failed to load report data.');
@@ -695,6 +705,24 @@ const DensityReportForm: React.FC = () => {
     
     setFormData({ ...formData, proctors: newProctors, testRows: newRows });
     debouncedSave({ ...formData, proctors: newProctors, testRows: newRows });
+  };
+
+  const addProctorRow = () => {
+    if (!formData) return;
+    const maxNo = formData.proctors.reduce((m, p) => Math.max(m, p.proctorNo || 0), 0);
+    const newProctors = [...formData.proctors, { proctorNo: maxNo + 1, description: '', optMoisture: '', maxDensity: '' }];
+    const updated = { ...formData, proctors: newProctors };
+    setFormData(updated);
+    debouncedSave(updated);
+  };
+
+  const removeProctorRow = (index: number) => {
+    if (!formData || formData.proctors.length <= 1) return;
+    const newProctors = formData.proctors.filter((_, i) => i !== index);
+    const newRows = formData.testRows.map(row => ({ ...row }));
+    const updated = { ...formData, proctors: newProctors, testRows: newRows };
+    setFormData(updated);
+    debouncedSave(updated);
   };
 
   const updateField = (field: keyof DensityReport, value: any) => {
@@ -1262,11 +1290,6 @@ const DensityReportForm: React.FC = () => {
       </header>
 
       <div className="density-form-content">
-        <datalist id="density-proctor-nos">
-          {proctorTasks.map((pt) => (
-            <option key={pt.id} value={String(pt.proctorNo)} />
-          ))}
-        </datalist>
         {/* Header Section */}
         <div className="form-section header-section">
           <h2>Report Header</h2>
@@ -1452,7 +1475,6 @@ const DensityReportForm: React.FC = () => {
                         max={99}
                         step={1}
                         className="proctor-no-input"
-                        list="density-proctor-nos"
                         value={row.proctorNo === '' || row.proctorNo == null ? '' : row.proctorNo}
                         onChange={(e) => updateTestRow(index, 'proctorNo', e.target.value)}
                         disabled={!canEdit}
@@ -1476,36 +1498,68 @@ const DensityReportForm: React.FC = () => {
           </div>
         </div>
 
-        {/* Proctor Summary Table - 6 rows */}
+        {/* Proctor Summary */}
         <div className="form-section">
           <h2>Proctor Summary</h2>
           <div className="proctor-table-container">
             <table className="proctor-table">
               <thead>
                 <tr>
-                  <th>Proctor No.</th>
+                  <th style={{ minWidth: '160px' }}>Proctor No.</th>
                   <th>Description</th>
-                  <th>Opt. Moisture</th>
-                  <th>Max Density</th>
+                  <th>Opt. Moisture (%)</th>
+                  <th>Max Density (pcf)</th>
+                  {canEdit && <th style={{ width: '32px' }}></th>}
                 </tr>
               </thead>
               <tbody>
                 {formData.proctors.map((proctor, index) => (
                   <tr key={index}>
                     <td>
-                      <input
-                        type="number"
-                        min={1}
-                        max={99}
-                        step={1}
-                        className="proctor-no-input"
-                        list="density-proctor-nos"
-                        value={proctor.proctorNo != null && proctor.proctorNo > 0 ? proctor.proctorNo : ''}
-                        onChange={(e) => void updateProctor(index, 'proctorNo', e.target.value)}
-                        disabled={!canEdit}
-                        placeholder="No."
-                        title="Enter Proctor number. If a Proctor workflow exists for this project, values below fill automatically; otherwise enter Description, Opt. Moisture, and Max Density manually."
-                      />
+                      {proctorTasks.length > 0 ? (
+                        // Combo: dropdown for known task numbers + number input for custom
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                          <select
+                            value={proctorTasks.some(pt => pt.proctorNo === proctor.proctorNo) ? String(proctor.proctorNo) : ''}
+                            onChange={(e) => { if (e.target.value) void updateProctor(index, 'proctorNo', e.target.value); }}
+                            disabled={!canEdit}
+                            style={{ flex: '1', minWidth: '90px', padding: '4px 2px' }}
+                            title="Select from available Proctor workflow tests — auto-fills description and values"
+                          >
+                            <option value="">Pick...</option>
+                            {proctorTasks.map(pt => (
+                              <option key={pt.id} value={String(pt.proctorNo)}>
+                                Proctor {pt.proctorNo}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="number"
+                            min={1}
+                            max={99}
+                            step={1}
+                            value={proctor.proctorNo != null && proctor.proctorNo > 0 ? proctor.proctorNo : ''}
+                            onChange={(e) => void updateProctor(index, 'proctorNo', e.target.value)}
+                            disabled={!canEdit}
+                            placeholder="#"
+                            style={{ width: '44px', padding: '4px', textAlign: 'center' }}
+                            title="Or type a custom Proctor number"
+                          />
+                        </div>
+                      ) : (
+                        <input
+                          type="number"
+                          min={1}
+                          max={99}
+                          step={1}
+                          className="proctor-no-input"
+                          value={proctor.proctorNo != null && proctor.proctorNo > 0 ? proctor.proctorNo : ''}
+                          onChange={(e) => void updateProctor(index, 'proctorNo', e.target.value)}
+                          disabled={!canEdit}
+                          placeholder="No."
+                          title="Enter Proctor number"
+                        />
+                      )}
                     </td>
                     <td>
                       <input
@@ -1514,7 +1568,7 @@ const DensityReportForm: React.FC = () => {
                         onChange={(e) => void updateProctor(index, 'description', e.target.value)}
                         readOnly={!canEdit}
                         className={!canEdit ? 'readonly' : ''}
-                        title="Filled from Proctor workflow when available; you may edit when entering manual Proctor data."
+                        title="Auto-filled from Proctor workflow when available; editable for manual entry"
                       />
                     </td>
                     <td>
@@ -1535,11 +1589,50 @@ const DensityReportForm: React.FC = () => {
                         disabled={!canEdit}
                       />
                     </td>
+                    {canEdit && (
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => removeProctorRow(index)}
+                          disabled={formData.proctors.length <= 1}
+                          title="Remove this proctor row"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: formData.proctors.length <= 1 ? '#ccc' : '#dc3545',
+                            cursor: formData.proctors.length <= 1 ? 'default' : 'pointer',
+                            fontSize: '16px',
+                            lineHeight: '1',
+                            padding: '2px 4px'
+                          }}
+                        >
+                          ×
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={addProctorRow}
+              style={{
+                marginTop: '8px',
+                padding: '4px 14px',
+                fontSize: '13px',
+                cursor: 'pointer',
+                borderRadius: '3px',
+                border: '1px solid #6c757d',
+                background: '#f8f9fa',
+                color: '#495057'
+              }}
+            >
+              + Add Proctor Row
+            </button>
+          )}
         </div>
 
         {/* Specs + Instrument + Methods */}

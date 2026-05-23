@@ -290,8 +290,34 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       });
 
       const { declared: presetDeclaredNew, rows: presetRowsNew } = projectPresetFlagsFromTask(task);
-      let defaultProctors = Array(6).fill(null).map((_, i) => ({
-        proctorNo: i + 1,
+
+      // Determine initial row structure from proctor tasks so rows match real data
+      let proctorTaskNos = [];
+      try {
+        const projectIdForProctors = task.project_id ?? task.projectId;
+        if (projectIdForProctors && db.isSupabase()) {
+          const { data: ptData } = await supabase
+            .from('tasks')
+            .select('proctor_no')
+            .eq('project_id', projectIdForProctors)
+            .eq('task_type', 'PROCTOR')
+            .not('proctor_no', 'is', null)
+            .order('proctor_no', { ascending: true });
+          proctorTaskNos = (ptData || []).map(t => t.proctor_no).filter(n => n != null && n > 0);
+        }
+      } catch (_) { /* non-fatal — fall back to preset/default */ }
+
+      const validPresetCount = presetRowsNew.filter(r => {
+        const opt = String(r.optMoisture ?? r.opt_moisture ?? '').trim();
+        const maxd = String(r.maxDensity ?? r.max_density ?? '').trim();
+        return opt !== '' || maxd !== '';
+      }).length;
+      const rowNos = proctorTaskNos.length > 0
+        ? proctorTaskNos
+        : Array.from({ length: Math.max(validPresetCount, 1) }, (_, i) => i + 1);
+
+      let defaultProctors = rowNos.map(no => ({
+        proctorNo: no,
         description: '',
         optMoisture: '',
         maxDensity: ''
