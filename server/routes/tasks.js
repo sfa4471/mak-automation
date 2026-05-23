@@ -931,9 +931,9 @@ router.put('/:id', authenticate, [
           projectId,
           projectNumber: project ? (project.project_number || project.projectNumber) : null,
           projectName: project ? (project.project_name || project.projectName) : null,
-          dueDate: task.due_date || task.dueDate || null,
           scheduledStartDate: task.scheduled_start_date || task.scheduledStartDate || null,
           locationName: task.location_name || task.locationName || null,
+          engagementNotes: task.engagement_notes || task.engagementNotes || null,
           assignedByName: adminName,
         });
       }
@@ -1183,9 +1183,9 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
           projectId,
           projectNumber: project.project_number || project.projectNumber || null,
           projectName: project.project_name || project.projectName || null,
-          dueDate: normalizedDueDate,
           scheduledStartDate: normalizedScheduledStartDate,
           locationName: locationName || null,
+          engagementNotes: engagementNotes || null,
           assignedByName: adminName,
         });
       }
@@ -1456,9 +1456,9 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
           projectId,
           projectNumber: oldTask.projectNumber || null,
           projectName: oldTask.projectName || null,
-          dueDate: oldTask.dueDate || (updateData.dueDate ?? null),
           scheduledStartDate: oldTask.scheduledStartDate || (updateData.scheduledStartDate ?? null),
           locationName: oldTask.locationName || (updateData.locationName ?? null),
+          engagementNotes: oldTask.engagementNotes || (updateData.engagementNotes ?? null),
           assignedByName: adminName,
         });
       }

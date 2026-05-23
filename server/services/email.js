@@ -123,9 +123,9 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
     text += `PROJECT: ${proj.number || ''} — ${proj.name || ''}\n`;
     for (const t of proj.rows) {
       const parts = [`  • ${t.task_label}`];
-      if (t.due_date) parts.push(`Due: ${t.due_date}`);
       if (t.scheduled_start_date) parts.push(`Field Date: ${t.scheduled_start_date}`);
       if (t.location_name) parts.push(`Location: ${t.location_name}`);
+      if (t.engagement_notes) parts.push(`Task Details: ${t.engagement_notes}`);
       text += parts.join(' | ') + '\n';
     }
     text += '\n';
@@ -144,9 +144,9 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
         <thead>
           <tr style="background:#edf2f7;color:#4a5568;">
             <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Task</th>
-            <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Due Date</th>
             <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Field Date</th>
             <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Location</th>
+            <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Task Details</th>
           </tr>
         </thead>
         <tbody>`;
@@ -154,9 +154,9 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
       projectHtml += `
           <tr style="border-bottom:1px solid #e2e8f0;">
             <td style="padding:6px 8px;">${escHtml(t.task_label)}</td>
-            <td style="padding:6px 8px;">${escHtml(t.due_date || '—')}</td>
             <td style="padding:6px 8px;">${escHtml(t.scheduled_start_date || '—')}</td>
             <td style="padding:6px 8px;">${escHtml(t.location_name || '—')}</td>
+            <td style="padding:6px 8px;">${escHtml(t.engagement_notes || '—')}</td>
           </tr>`;
     }
     projectHtml += `

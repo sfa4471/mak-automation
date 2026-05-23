@@ -22,9 +22,9 @@ async function queueAssignmentNotification({
   projectId,
   projectNumber,
   projectName,
-  dueDate,
   scheduledStartDate,
   locationName,
+  engagementNotes,
   assignedByName,
 }) {
   if (!isAvailable() || !technicianEmail) return;
@@ -39,9 +39,9 @@ async function queueAssignmentNotification({
       project_id: projectId,
       project_number: projectNumber || null,
       project_name: projectName || null,
-      due_date: dueDate || null,
       scheduled_start_date: scheduledStartDate || null,
       location_name: locationName || null,
+      engagement_notes: engagementNotes || null,
       assigned_by_name: assignedByName || null,
     });
     if (error) throw error;
