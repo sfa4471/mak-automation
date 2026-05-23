@@ -970,12 +970,16 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         }
       }
 
-      // Ensure we have 19 test rows and at least 1 proctor row
-      while (data.testRows.length < 19) {
-        data.testRows.push({});
-      }
+      // Ensure at least 1 proctor row
       if (data.proctors.length === 0) {
         data.proctors.push({});
+      }
+      // For single-structure, pad test rows to 18 for consistent layout; multi-structure flows naturally
+      const isMultiStructure = data.testRows.some(r => r.type === 'section');
+      if (!isMultiStructure) {
+        while (data.testRows.length < 18) {
+          data.testRows.push({});
+        }
       }
 
       // Read HTML template
@@ -1028,25 +1032,54 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         return s.trim().replace(/\b\w/g, (c) => c.toUpperCase());
       };
       const soilSpecsForPdf = parseSpecsJson(task.soilSpecs ?? task.soil_specs);
-      const densityStructureKey = data.structureType || data.structure || '';
-      const soilRowForStructure = getSpecRow(soilSpecsForPdf, densityStructureKey);
-      const densityStructurePdfLabel =
-        structureTypeDisplayLabel(
-          densityStructureKey,
-          getSpecRowOtherDetails(soilRowForStructure)
-        ) || toTitleCase(densityStructureKey);
-      const densityStructureDescription = data.structureDescription || data.structure_description || '';
-      const densityStructureFull = densityStructureDescription
-        ? `${densityStructurePdfLabel} - ${densityStructureDescription}`
-        : densityStructurePdfLabel;
+
+      // Build structure label — multi-structure lists all used types; single uses the saved structure
+      let densityStructureFull;
+      if (isMultiStructure) {
+        const uniqueSectionTypes = [...new Set(
+          data.testRows
+            .filter(r => r.type === 'section' && r.sectionStructureType)
+            .map(r => r.sectionStructureType)
+        )];
+        densityStructureFull = uniqueSectionTypes.length > 0
+          ? uniqueSectionTypes.map(t => structureTypeDisplayLabel(t, getSpecRowOtherDetails(getSpecRow(soilSpecsForPdf, t))) || toTitleCase(t)).join(' / ')
+          : 'Multi-Structure';
+      } else {
+        const densityStructureKey = data.structureType || data.structure || '';
+        const soilRowForStructure = getSpecRow(soilSpecsForPdf, densityStructureKey);
+        const densityStructurePdfLabel =
+          structureTypeDisplayLabel(densityStructureKey, getSpecRowOtherDetails(soilRowForStructure)) || toTitleCase(densityStructureKey);
+        const densityStructureDescription = data.structureDescription || data.structure_description || '';
+        densityStructureFull = densityStructureDescription
+          ? `${densityStructurePdfLabel} - ${densityStructureDescription}`
+          : densityStructurePdfLabel;
+      }
       html = html.replace('{{STRUCTURE}}', escapeHtml(densityStructureFull));
 
-      // Generate test rows HTML
+      // Generate test rows HTML — section rows become colored dividers
       let testRowsHtml = '';
-      for (let i = 0; i < 19; i++) {
+      let pdfRowNumber = 1;
+      for (let i = 0; i < data.testRows.length; i++) {
         const row = data.testRows[i] || {};
-        
-        // Calculate dry density
+
+        if (row.type === 'section') {
+          const sectKey = row.sectionStructureType || '';
+          const sectLabel = sectKey
+            ? (structureTypeDisplayLabel(sectKey, getSpecRowOtherDetails(getSpecRow(soilSpecsForPdf, sectKey))) || toTitleCase(sectKey))
+            : '';
+          testRowsHtml += `
+            <tr>
+              <td colspan="8" style="background:#2c5282;color:#fff;padding:5px 8px;font-weight:bold;font-size:8pt;text-align:left;border-color:#1a3a5c;">
+                STRUCTURE: ${escapeHtml(sectLabel)}
+              </td>
+            </tr>
+          `;
+          continue;
+        }
+
+        const displayRowNo = row.testNo || pdfRowNumber;
+        pdfRowNumber++;
+
         let dryDensity = row.dryDensity || '';
         if (!dryDensity && row.wetDensity && row.fieldMoisture) {
           const wet = parseFloat(row.wetDensity);
@@ -1055,8 +1088,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
             dryDensity = (wet / (1 + (moisture / 100))).toFixed(1);
           }
         }
-        
-        // Calculate percent proctor
+
         let percentProctor = row.percentProctorDensity || '';
         if (!percentProctor && dryDensity && row.proctorNo) {
           const dry = parseFloat(dryDensity);
@@ -1073,22 +1105,17 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
           }
         }
 
-        // Format Dept/Lift display
-        let depthLiftDisplay = '';
-        if (row.depthLiftValue) {
-          depthLiftDisplay = escapeHtml(row.depthLiftValue);
-        }
-
+        const depthLiftDisplay = row.depthLiftValue ? escapeHtml(row.depthLiftValue) : '';
         testRowsHtml += `
           <tr>
-            <td>${i + 1}</td>
+            <td>${displayRowNo}</td>
             <td>${escapeHtml(row.testLocation || '')}</td>
             <td>${depthLiftDisplay || '&nbsp;'}</td>
             <td>${escapeHtml(row.wetDensity || '')}</td>
             <td>${escapeHtml(row.fieldMoisture || '')}</td>
             <td>${dryDensity || '&nbsp;'}</td>
             <td>${escapeHtml(row.proctorNo || '')}</td>
-            <td>${percentProctor ? percentProctor : '&nbsp;'}</td>
+            <td>${percentProctor || '&nbsp;'}</td>
           </tr>
         `;
       }
@@ -1112,42 +1139,73 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       }
       html = html.replace('{{PROCTOR_ROWS}}', proctorRowsHtml);
 
-      // Build dynamic spec columns (N columns from densSpecs / moistSpecs in DB, or legacy single)
-      const densArr = (Array.isArray(data.densSpecs) && data.densSpecs.length > 0)
-        ? data.densSpecs
-        : (data.densSpecPercent != null && String(data.densSpecPercent).trim() !== '' ? [String(data.densSpecPercent)] : []);
-      const moistArr = (Array.isArray(data.moistSpecs) && data.moistSpecs.length > 0)
-        ? data.moistSpecs
-        : (data.moistSpecMin != null || data.moistSpecMax != null
-          ? [{ min: data.moistSpecMin || '', max: data.moistSpecMax || '' }]
-          : []);
-      const specN = Math.max(1, densArr.length, moistArr.length);
-      const densPadded = [...densArr];
-      const moistPadded = moistArr.map(r => ({ min: r.min ?? '', max: r.max ?? '' }));
-      while (densPadded.length < specN) densPadded.push('');
-      while (moistPadded.length < specN) moistPadded.push({ min: '', max: '' });
-      const specLetter = (i) => (specN > 1 ? `(${String.fromCharCode(97 + i)}) ` : '');
+      // Build spec rows — per-structure in multi-structure mode, single table otherwise
+      let specRowsHtml = '';
       const specCellStyle = 'padding:4px 6px; border:1px solid #ddd; text-align:center;';
-      let specRowsHtml = '<table class="spec-dynamic-table" style="width:100%; border-collapse:collapse;">';
-      specRowsHtml += '<tr>';
-      for (let i = 0; i < specN; i++) {
-        specRowsHtml += `<th style="${specCellStyle} font-size:10px;">${specLetter(i)}Dens. (%)</th>`;
+      if (isMultiStructure) {
+        const uniqueSectionTypes = [...new Set(
+          data.testRows.filter(r => r.type === 'section' && r.sectionStructureType).map(r => r.sectionStructureType)
+        )];
+        if (uniqueSectionTypes.length === 0) {
+          specRowsHtml = '<div style="color:#666;font-style:italic;font-size:8pt;">No structures selected</div>';
+        } else {
+          specRowsHtml = uniqueSectionTypes.map(structureType => {
+            const specRow = getSpecRow(soilSpecsForPdf, structureType);
+            const label = structureTypeDisplayLabel(structureType, getSpecRowOtherDetails(specRow)) || toTitleCase(structureType);
+            // Normalize density pcts and moisture ranges
+            let densSpecPcts = [];
+            let moistSpecRanges = [];
+            if (specRow && typeof specRow === 'object') {
+              const dp = specRow.densityPcts || specRow.density_pcts;
+              if (Array.isArray(dp) && dp.length > 0) densSpecPcts = dp;
+              else if (specRow.densityPct) densSpecPcts = [specRow.densityPct];
+              const mr = specRow.moistureRanges || specRow.moisture_ranges;
+              if (Array.isArray(mr) && mr.length > 0) moistSpecRanges = mr;
+              else if (specRow.moistureRange) moistSpecRanges = [specRow.moistureRange];
+            }
+            const N = Math.max(1, densSpecPcts.length, moistSpecRanges.length);
+            const specLetter = (i) => (N > 1 ? `(${String.fromCharCode(97 + i)}) ` : '');
+            let out = `<div style="margin-bottom:5px;border-left:3px solid #2c5282;padding-left:5px;">`;
+            out += `<div style="font-weight:bold;font-size:7.5pt;color:#2c5282;margin-bottom:2px;">${escapeHtml(label)}</div>`;
+            for (let i = 0; i < N; i++) {
+              const d = densSpecPcts[i] || '';
+              const m = moistSpecRanges[i] || {};
+              const mStr = (m.min && m.max) ? `${m.min} to ${m.max}` : (m.min || m.max || '');
+              out += `<div style="font-size:7pt;">${specLetter(i)}Dens: ${escapeHtml(String(d || '—'))}% | Moist: ${escapeHtml(mStr || '—')}%</div>`;
+            }
+            out += '</div>';
+            return out;
+          }).join('');
+        }
+      } else {
+        const densArr = (Array.isArray(data.densSpecs) && data.densSpecs.length > 0)
+          ? data.densSpecs
+          : (data.densSpecPercent != null && String(data.densSpecPercent).trim() !== '' ? [String(data.densSpecPercent)] : []);
+        const moistArr = (Array.isArray(data.moistSpecs) && data.moistSpecs.length > 0)
+          ? data.moistSpecs
+          : (data.moistSpecMin != null || data.moistSpecMax != null
+            ? [{ min: data.moistSpecMin || '', max: data.moistSpecMax || '' }]
+            : []);
+        const specN = Math.max(1, densArr.length, moistArr.length);
+        const densPadded = [...densArr];
+        const moistPadded = moistArr.map(r => ({ min: r.min ?? '', max: r.max ?? '' }));
+        while (densPadded.length < specN) densPadded.push('');
+        while (moistPadded.length < specN) moistPadded.push({ min: '', max: '' });
+        const specLetter = (i) => (specN > 1 ? `(${String.fromCharCode(97 + i)}) ` : '');
+        specRowsHtml = `<table class="spec-dynamic-table" style="width:100%;border-collapse:collapse;"><tr>`;
+        for (let i = 0; i < specN; i++) specRowsHtml += `<th style="${specCellStyle}font-size:10px;">${specLetter(i)}Dens. (%)</th>`;
+        specRowsHtml += '</tr><tr>';
+        for (let i = 0; i < specN; i++) specRowsHtml += `<td style="${specCellStyle}">${escapeHtml(densPadded[i] || '')}</td>`;
+        specRowsHtml += '</tr><tr>';
+        for (let i = 0; i < specN; i++) specRowsHtml += `<th style="${specCellStyle}font-size:10px;">${specLetter(i)}Moist. (%)</th>`;
+        specRowsHtml += '</tr><tr>';
+        for (let i = 0; i < specN; i++) {
+          const r = moistPadded[i] || {};
+          const moistStr = (r.min && r.max) ? `${r.min} to ${r.max}` : (r.min || r.max || '');
+          specRowsHtml += `<td style="${specCellStyle}">${escapeHtml(moistStr)}</td>`;
+        }
+        specRowsHtml += '</tr></table>';
       }
-      specRowsHtml += '</tr><tr>';
-      for (let i = 0; i < specN; i++) {
-        specRowsHtml += `<td style="${specCellStyle}">${escapeHtml(densPadded[i] || '')}</td>`;
-      }
-      specRowsHtml += '</tr><tr>';
-      for (let i = 0; i < specN; i++) {
-        specRowsHtml += `<th style="${specCellStyle} font-size:10px;">${specLetter(i)}Moist. (%)</th>`;
-      }
-      specRowsHtml += '</tr><tr>';
-      for (let i = 0; i < specN; i++) {
-        const r = moistPadded[i] || {};
-        const moistStr = (r.min && r.max) ? `${r.min} to ${r.max}` : (r.min || r.max || '');
-        specRowsHtml += `<td style="${specCellStyle}">${escapeHtml(moistStr)}</td>`;
-      }
-      specRowsHtml += '</tr></table>';
       html = html.replace('{{SPEC_ROWS}}', specRowsHtml);
       html = html.replace('{{STD_DENSITY_COUNT}}', escapeHtml(data.stdDensityCount || ''));
       html = html.replace('{{STD_MOIST_COUNT}}', escapeHtml(data.stdMoistCount || ''));

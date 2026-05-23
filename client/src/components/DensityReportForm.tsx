@@ -725,6 +725,118 @@ const DensityReportForm: React.FC = () => {
     debouncedSave(updated);
   };
 
+  // ── Dynamic test-row helpers ──────────────────────────────────────────────
+
+  const renumberRows = (rows: TestRow[]) => {
+    let n = 1;
+    return rows.map(r => r.type === 'section' ? r : { ...r, testNo: n++ });
+  };
+
+  const addDataRow = () => {
+    if (!formData) return;
+    const dataCount = formData.testRows.filter(r => r.type !== 'section').length;
+    const newRow = {
+      type: 'data' as const,
+      testNo: dataCount + 1,
+      testLocation: '',
+      depthLiftType: 'DEPTH' as const,
+      depthLiftValue: '',
+      wetDensity: '',
+      fieldMoisture: '',
+      dryDensity: '',
+      proctorNo: '',
+      percentProctorDensity: ''
+    };
+    const updated = { ...formData, testRows: [...formData.testRows, newRow] };
+    setFormData(updated);
+    debouncedSave(updated);
+  };
+
+  const removeRow = (index: number) => {
+    if (!formData) return;
+    const dataRows = formData.testRows.filter(r => r.type !== 'section');
+    if (dataRows.length <= 1 && formData.testRows[index]?.type !== 'section') return;
+    const newRows = renumberRows(formData.testRows.filter((_, i) => i !== index));
+    const updated = { ...formData, testRows: newRows };
+    setFormData(updated);
+    debouncedSave(updated);
+  };
+
+  const addSectionRow = () => {
+    if (!formData) return;
+    const sectionRow = {
+      type: 'section' as const,
+      sectionStructureType: '',
+      testNo: 0, testLocation: '', depthLiftType: 'DEPTH' as const,
+      depthLiftValue: '', wetDensity: '', fieldMoisture: '',
+      dryDensity: '', proctorNo: '', percentProctorDensity: ''
+    };
+    const updated = { ...formData, testRows: [...formData.testRows, sectionRow] };
+    setFormData(updated);
+    debouncedSave(updated);
+  };
+
+  const switchToMultiStructure = () => {
+    if (!formData) return;
+    const firstSection = {
+      type: 'section' as const,
+      sectionStructureType: formData.structureType || formData.structure || '',
+      testNo: 0, testLocation: '', depthLiftType: 'DEPTH' as const,
+      depthLiftValue: '', wetDensity: '', fieldMoisture: '',
+      dryDensity: '', proctorNo: '', percentProctorDensity: ''
+    };
+    const updated = { ...formData, testRows: [firstSection, ...formData.testRows] };
+    setFormData(updated);
+    debouncedSave(updated);
+  };
+
+  const switchToSingleStructure = () => {
+    if (!formData) return;
+    const dataOnly = renumberRows(formData.testRows.filter(r => r.type !== 'section'));
+    const updated = { ...formData, testRows: dataOnly };
+    setFormData(updated);
+    debouncedSave(updated);
+  };
+
+  const handleAddStructureSection = () => {
+    if (!formData) return;
+    const isMulti = formData.testRows.some(r => r.type === 'section');
+    const newSection: TestRow = {
+      type: 'section', sectionStructureType: '',
+      testNo: 0, testLocation: '', depthLiftType: 'DEPTH',
+      depthLiftValue: '', wetDensity: '', fieldMoisture: '',
+      dryDensity: '', proctorNo: '', percentProctorDensity: ''
+    };
+    if (!isMulti) {
+      const firstSection: TestRow = {
+        type: 'section',
+        sectionStructureType: formData.structureType || formData.structure || '',
+        testNo: 0, testLocation: '', depthLiftType: 'DEPTH',
+        depthLiftValue: '', wetDensity: '', fieldMoisture: '',
+        dryDensity: '', proctorNo: '', percentProctorDensity: ''
+      };
+      const updated = { ...formData, testRows: [firstSection, ...formData.testRows, newSection] };
+      setFormData(updated);
+      debouncedSave(updated);
+    } else {
+      const updated = { ...formData, testRows: [...formData.testRows, newSection] };
+      setFormData(updated);
+      debouncedSave(updated);
+    }
+  };
+
+  const updateSectionStructureType = (index: number, structureType: string) => {
+    if (!formData) return;
+    const newRows = formData.testRows.map((r, i) =>
+      i === index ? { ...r, sectionStructureType: structureType } : r
+    );
+    const updated = { ...formData, testRows: newRows };
+    setFormData(updated);
+    debouncedSave(updated);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   const updateField = (field: keyof DensityReport, value: any) => {
     if (!formData) return;
     const updatedData = { ...formData, [field]: value };
@@ -1320,183 +1432,243 @@ const DensityReportForm: React.FC = () => {
                 disabled={!canEdit}
               />
             </div>
-            <div className="form-group">
-              <label>Structure</label>
-              <select
-                value={formData.structureType || formData.structure || ''}
-                onChange={(e) => handleStructureChange(e.target.value)}
-                disabled={!canEdit}
-              >
-                <option value="">Select Structure...</option>
-                {(() => {
-                  // For Density Measurement reports, ONLY use soil specs (not concrete specs)
-                  // Structure types are ONLY the keys that exist in the soilSpecs object from Project Details
-                  let structureTypes: string[] = [];
-                  
-                  // Use soil specs ONLY - these are the structure types defined in the Soil Specs section
-                  // of the Project Details page
-                  if (formData.projectSoilSpecs && 
-                      typeof formData.projectSoilSpecs === 'object' && 
-                      formData.projectSoilSpecs !== null &&
-                      !Array.isArray(formData.projectSoilSpecs)) {
-                    const soilSpecKeys = Object.keys(formData.projectSoilSpecs);
-                    if (soilSpecKeys.length > 0) {
-                      structureTypes = soilSpecKeys;
-                      console.log('✅ Using structure types from Soil Specs (Project Details):', structureTypes);
-                    } else {
-                      console.warn('⚠️ No soil specs defined in Project Details. Please add soil specs in the Project Details page.');
-                    }
-                  } else {
-                    console.warn('⚠️ projectSoilSpecs missing or invalid. Please ensure soil specs are defined in Project Details.');
-                  }
-                  
-                  // Do NOT use fallback - only show structure types that are actually defined in Project Details
-                  // This ensures the dropdown only shows what's configured in the Soil Specs section
-                  
-                  if (structureTypes.length === 0) {
-                    return (
-                      <option value="" disabled>
-                        No soil specs defined - Please configure in Project Details
-                      </option>
-                    );
-                  }
-                  
-                  return structureTypes.map((type) => {
-                    const soilRow = formData.projectSoilSpecs?.[type] as SoilSpecRow | undefined;
-                    return (
-                      <option key={type} value={type}>
-                        {structureTypeDisplayLabel(type, soilRow?.otherDetails)}
-                      </option>
-                    );
-                  });
-                })()}
-              </select>
-              {formData.structureType && formData.projectSoilSpecs && !formData.projectSoilSpecs[formData.structureType] && (
-                <small style={{ color: '#dc3545', display: 'block', marginTop: '4px' }}>
-                  No soil specs set for this structure in project setup.
-                </small>
-              )}
-            </div>
-            {(formData.structureType || formData.structure) && (
-              <div className="form-group">
-                <label>Structure Description</label>
-                <input
-                  type="text"
-                  value={formData.structureDescription || ''}
-                  onChange={(e) => updateField('structureDescription', e.target.value)}
-                  placeholder="e.g. North Section 200' x 30'"
-                  disabled={!canEdit}
-                />
-              </div>
-            )}
+            {/* Structure field — single mode only */}
+            {(() => {
+              const isMultiStructure = formData.testRows.some(r => r.type === 'section');
+              const soilSpecOptions = formData.projectSoilSpecs && typeof formData.projectSoilSpecs === 'object' && !Array.isArray(formData.projectSoilSpecs)
+                ? Object.keys(formData.projectSoilSpecs)
+                : [];
+              return isMultiStructure ? (
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ background: '#2c5282', color: '#fff', borderRadius: '4px', padding: '2px 8px', fontSize: '12px' }}>
+                      Multi-Structure Mode
+                    </span>
+                    {canEdit && (
+                      <button type="button" onClick={switchToSingleStructure}
+                        style={{ fontSize: '12px', padding: '2px 8px', cursor: 'pointer', borderRadius: '3px', border: '1px solid #6c757d', background: '#f8f9fa' }}>
+                        ↩ Switch to Single Structure
+                      </button>
+                    )}
+                  </label>
+                </div>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>Structure</span>
+                      {canEdit && (
+                        <button type="button" onClick={switchToMultiStructure}
+                          style={{ fontSize: '11px', padding: '1px 6px', cursor: 'pointer', borderRadius: '3px', border: '1px solid #2c5282', background: '#ebf4ff', color: '#2c5282' }}>
+                          + Multi-Structure
+                        </button>
+                      )}
+                    </label>
+                    <select
+                      value={formData.structureType || formData.structure || ''}
+                      onChange={(e) => handleStructureChange(e.target.value)}
+                      disabled={!canEdit}
+                    >
+                      <option value="">Select Structure...</option>
+                      {soilSpecOptions.length === 0
+                        ? <option value="" disabled>No soil specs defined — configure in Project Details</option>
+                        : soilSpecOptions.map(type => {
+                            const soilRow = formData.projectSoilSpecs?.[type] as SoilSpecRow | undefined;
+                            return <option key={type} value={type}>{structureTypeDisplayLabel(type, soilRow?.otherDetails)}</option>;
+                          })
+                      }
+                    </select>
+                    {formData.structureType && formData.projectSoilSpecs && !formData.projectSoilSpecs[formData.structureType] && (
+                      <small style={{ color: '#dc3545', display: 'block', marginTop: '4px' }}>
+                        No soil specs set for this structure in project setup.
+                      </small>
+                    )}
+                  </div>
+                  {(formData.structureType || formData.structure) && (
+                    <div className="form-group">
+                      <label>Structure Description</label>
+                      <input
+                        type="text"
+                        value={formData.structureDescription || ''}
+                        onChange={(e) => updateField('structureDescription', e.target.value)}
+                        placeholder="e.g. North Section 200' x 30'"
+                        disabled={!canEdit}
+                      />
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
 
-        {/* Main Test Table - 19 rows */}
-        <div className="form-section">
-          <h2>Test Results</h2>
-          <div className="test-table-container">
-            <table className="test-table">
-              <thead>
-                <tr>
-                  <th>Test No.</th>
-                  <th>Test Location</th>
-                  <th>Depth/Lift</th>
-                  <th>Wet Density (pcf)</th>
-                  <th>Field Moisture (%)</th>
-                  <th>Dry Density (pcf)</th>
-                  <th>Proctor No.</th>
-                  <th>% Proctor Density</th>
-                </tr>
-              </thead>
-              <tbody>
-                {formData.testRows.map((row, index) => (
-                  <tr key={index}>
-                    <td>{row.testNo}</td>
-                    <td>
-                      <input
-                        type="text"
-                        value={row.testLocation}
-                        onChange={(e) => updateTestRow(index, 'testLocation', e.target.value)}
-                        disabled={!canEdit}
-                      />
-                    </td>
-                    <td>
-                      <div className="depth-lift-group">
-                        <select
-                          value={row.depthLiftType}
-                          onChange={(e) => updateTestRow(index, 'depthLiftType', e.target.value as 'DEPTH' | 'LIFT')}
-                          disabled={!canEdit}
-                        >
-                          <option value="DEPTH">Depth</option>
-                          <option value="LIFT">Lift</option>
-                        </select>
-                        <input
-                          type="text"
-                          value={row.depthLiftValue}
-                          onChange={(e) => updateTestRow(index, 'depthLiftValue', e.target.value)}
-                          placeholder="e.g., FG"
-                          disabled={!canEdit}
-                          style={{ width: '60px', marginLeft: '5px' }}
-                        />
-                      </div>
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={row.wetDensity}
-                        onChange={(e) => updateTestRow(index, 'wetDensity', e.target.value)}
-                        disabled={!canEdit}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={row.fieldMoisture}
-                        onChange={(e) => updateTestRow(index, 'fieldMoisture', e.target.value)}
-                        disabled={!canEdit}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="text"
-                        value={row.dryDensity}
-                        readOnly
-                        className="calculated"
-                        title="Auto-calculated: Wet Density / (1 + Field Moisture / 100)"
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min={1}
-                        max={99}
-                        step={1}
-                        className="proctor-no-input"
-                        value={row.proctorNo === '' || row.proctorNo == null ? '' : row.proctorNo}
-                        onChange={(e) => updateTestRow(index, 'proctorNo', e.target.value)}
-                        disabled={!canEdit}
-                        placeholder="No."
-                        title="Enter a Proctor number. Pick from the list if a workflow Proctor exists, or type any number and enter values in Proctor Summary."
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="text"
-                        value={row.percentProctorDensity}
-                        readOnly
-                        className="calculated"
-                        title="Auto-calculated: (Dry Density / Max Density) * 100"
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        {/* Test Results Table — dynamic rows, supports multi-structure sections */}
+        {(() => {
+          const isMultiStructure = formData.testRows.some(r => r.type === 'section');
+          const soilSpecOptions = formData.projectSoilSpecs && typeof formData.projectSoilSpecs === 'object' && !Array.isArray(formData.projectSoilSpecs)
+            ? Object.keys(formData.projectSoilSpecs)
+            : [];
+          const dataRowCount = formData.testRows.filter(r => r.type !== 'section').length;
+          return (
+            <div className="form-section">
+              <h2>Test Results</h2>
+              <div className="test-table-container">
+                <table className="test-table">
+                  <thead>
+                    <tr>
+                      <th>Test No.</th>
+                      <th>Test Location</th>
+                      <th>Depth/Lift</th>
+                      <th>Wet Density (pcf)</th>
+                      <th>Field Moisture (%)</th>
+                      <th>Dry Density (pcf)</th>
+                      <th>Proctor No.</th>
+                      <th>% Proctor Density</th>
+                      {canEdit && <th style={{ width: '32px' }}></th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {formData.testRows.map((row, index) => {
+                      if (row.type === 'section') {
+                        return (
+                          <tr key={`section-${index}`}>
+                            <td colSpan={canEdit ? 9 : 8} style={{
+                              background: '#2c5282', color: '#fff',
+                              padding: '6px 10px', fontWeight: 600, borderColor: '#1a3a5c'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <span style={{ fontSize: '11px', opacity: 0.8, letterSpacing: '0.5px', textTransform: 'uppercase' }}>Structure</span>
+                                {canEdit ? (
+                                  <select
+                                    value={row.sectionStructureType || ''}
+                                    onChange={(e) => updateSectionStructureType(index, e.target.value)}
+                                    style={{
+                                      background: 'rgba(255,255,255,0.15)', color: '#fff',
+                                      border: '1px solid rgba(255,255,255,0.5)',
+                                      borderRadius: '3px', padding: '2px 8px',
+                                      fontSize: '13px', cursor: 'pointer',
+                                      minWidth: '160px', maxWidth: '280px'
+                                    }}
+                                  >
+                                    <option value="" style={{ background: '#2c5282' }}>Select structure type...</option>
+                                    {soilSpecOptions.map(type => {
+                                      const soilRow = formData.projectSoilSpecs?.[type] as SoilSpecRow | undefined;
+                                      return (
+                                        <option key={type} value={type} style={{ background: '#2c5282' }}>
+                                          {structureTypeDisplayLabel(type, soilRow?.otherDetails)}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+                                ) : (
+                                  <span style={{ fontSize: '14px', fontWeight: 700 }}>
+                                    {row.sectionStructureType
+                                      ? structureTypeDisplayLabel(row.sectionStructureType, (formData.projectSoilSpecs?.[row.sectionStructureType] as SoilSpecRow | undefined)?.otherDetails)
+                                      : '—'}
+                                  </span>
+                                )}
+                                {canEdit && (
+                                  <button type="button" onClick={() => removeRow(index)}
+                                    title="Remove this structure section"
+                                    style={{
+                                      marginLeft: 'auto', background: 'rgba(255,255,255,0.15)',
+                                      border: '1px solid rgba(255,255,255,0.5)', color: '#fff',
+                                      borderRadius: '3px', padding: '1px 8px',
+                                      cursor: 'pointer', fontSize: '15px', lineHeight: '1'
+                                    }}>×</button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return (
+                        <tr key={`row-${index}`}>
+                          <td style={{ textAlign: 'center', width: '46px' }}>{row.testNo}</td>
+                          <td>
+                            <input type="text" value={row.testLocation}
+                              onChange={(e) => updateTestRow(index, 'testLocation', e.target.value)}
+                              disabled={!canEdit} />
+                          </td>
+                          <td>
+                            <div className="depth-lift-group">
+                              <select value={row.depthLiftType}
+                                onChange={(e) => updateTestRow(index, 'depthLiftType', e.target.value as 'DEPTH' | 'LIFT')}
+                                disabled={!canEdit}>
+                                <option value="DEPTH">Depth</option>
+                                <option value="LIFT">Lift</option>
+                              </select>
+                              <input type="text" value={row.depthLiftValue}
+                                onChange={(e) => updateTestRow(index, 'depthLiftValue', e.target.value)}
+                                placeholder="e.g., FG" disabled={!canEdit}
+                                style={{ width: '60px', marginLeft: '5px' }} />
+                            </div>
+                          </td>
+                          <td>
+                            <input type="number" step="0.1" value={row.wetDensity}
+                              onChange={(e) => updateTestRow(index, 'wetDensity', e.target.value)}
+                              disabled={!canEdit} />
+                          </td>
+                          <td>
+                            <input type="number" step="0.1" value={row.fieldMoisture}
+                              onChange={(e) => updateTestRow(index, 'fieldMoisture', e.target.value)}
+                              disabled={!canEdit} />
+                          </td>
+                          <td>
+                            <input type="text" value={row.dryDensity} readOnly className="calculated"
+                              title="Auto-calculated: Wet Density / (1 + Field Moisture / 100)" />
+                          </td>
+                          <td>
+                            <input type="number" min={1} max={99} step={1} className="proctor-no-input"
+                              value={row.proctorNo === '' || row.proctorNo == null ? '' : row.proctorNo}
+                              onChange={(e) => updateTestRow(index, 'proctorNo', e.target.value)}
+                              disabled={!canEdit} placeholder="No."
+                              title="Enter a Proctor number." />
+                          </td>
+                          <td>
+                            <input type="text" value={row.percentProctorDensity} readOnly className="calculated"
+                              title="Auto-calculated: (Dry Density / Max Density) * 100" />
+                          </td>
+                          {canEdit && (
+                            <td>
+                              <button type="button" onClick={() => removeRow(index)}
+                                disabled={dataRowCount <= 1}
+                                title="Remove row"
+                                style={{
+                                  background: 'none', border: 'none',
+                                  color: dataRowCount <= 1 ? '#ccc' : '#dc3545',
+                                  cursor: dataRowCount <= 1 ? 'default' : 'pointer',
+                                  fontSize: '16px', lineHeight: '1', padding: '2px 4px'
+                                }}>×</button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {canEdit && (
+                <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                  <button type="button" onClick={addDataRow}
+                    style={{
+                      padding: '5px 14px', fontSize: '13px', cursor: 'pointer',
+                      borderRadius: '3px', border: '1px solid #6c757d',
+                      background: '#f8f9fa', color: '#495057'
+                    }}>+ Add Row</button>
+                  <button type="button" onClick={handleAddStructureSection}
+                    style={{
+                      padding: '5px 14px', fontSize: '13px', cursor: 'pointer',
+                      borderRadius: '3px', border: '1px solid #2c5282',
+                      background: isMultiStructure ? '#2c5282' : '#ebf4ff',
+                      color: isMultiStructure ? '#fff' : '#2c5282',
+                      fontWeight: 600
+                    }}>ST+ Add Structure</button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Proctor Summary */}
         <div className="form-section">
@@ -1640,60 +1812,104 @@ const DensityReportForm: React.FC = () => {
           <div className="specs-methods-grid">
             <div className="specs-box">
               <h3>Specs</h3>
-              <div className="specs-dynamic-columns">
-                {(() => {
-                  const N = getSpecColumnCount();
-                  const specLabel = (i: number) => (N > 1 ? `(${String.fromCharCode(97 + i)}) ` : '');
-                  const densArr = effectiveDensitySpecPercents(formData);
-                  const moistArr = effectiveMoistSpecRanges(formData);
-                  const densPadded = [...densArr];
-                  const moistPadded = [...moistArr];
-                  while (densPadded.length < N) densPadded.push('');
-                  while (moistPadded.length < N) moistPadded.push({ min: '', max: '' });
+              {(() => {
+                const isMultiStructure = formData.testRows.some(r => r.type === 'section');
+                if (isMultiStructure) {
+                  const sectionTypes = Array.from(new Set(
+                    formData.testRows
+                      .filter(r => r.type === 'section' && r.sectionStructureType)
+                      .map(r => r.sectionStructureType!)
+                  ));
                   return (
-                    <>
-                      <div className="specs-row specs-density-row">
-                        {Array.from({ length: N }, (_, i) => (
-                          <div key={`d-${i}`} className="form-group specs-col">
-                            <label>{specLabel(i)}Dens. (%)</label>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              value={densPadded[i] ?? ''}
-                              onChange={(e) => updateSpecDensity(i, e.target.value)}
-                              disabled={!canEdit}
-                            />
+                    <div style={{ fontSize: '12px' }}>
+                      {sectionTypes.length === 0 ? (
+                        <p style={{ color: '#6c757d', fontStyle: 'italic', fontSize: '12px' }}>
+                          Select structure types in section headers above to see specs.
+                        </p>
+                      ) : sectionTypes.map(structureType => {
+                        let spec: SoilSpecRow | undefined;
+                        if (formData.projectSoilSpecs && typeof formData.projectSoilSpecs === 'object') {
+                          spec = formData.projectSoilSpecs[structureType] as SoilSpecRow | undefined;
+                          if (!spec) {
+                            const lower = structureType.trim().toLowerCase();
+                            for (const key of Object.keys(formData.projectSoilSpecs)) {
+                              if (key.trim().toLowerCase() === lower) {
+                                spec = formData.projectSoilSpecs[key] as SoilSpecRow;
+                                break;
+                              }
+                            }
+                          }
+                        }
+                        const normalized = normalizeSoilSpecRow(spec);
+                        const densArr = normalized.densityPcts || [''];
+                        const moistArr = normalized.moistureRanges || [{ min: '', max: '' }];
+                        const N = Math.max(densArr.length, moistArr.length, 1);
+                        const label = structureTypeDisplayLabel(structureType, spec?.otherDetails);
+                        return (
+                          <div key={structureType} style={{ marginBottom: '8px', borderLeft: '3px solid #2c5282', paddingLeft: '8px' }}>
+                            <div style={{ fontWeight: 700, color: '#2c5282', marginBottom: '3px', fontSize: '12px' }}>{label}</div>
+                            {Array.from({ length: N }, (_, i) => {
+                              const d = densArr[i] || '—';
+                              const m = moistArr[i] || {};
+                              const mStr = (m.min && m.max) ? `${m.min} – ${m.max}` : (m.min || m.max || '—');
+                              return (
+                                <div key={i} style={{ color: '#333', lineHeight: '1.6', fontSize: '11px' }}>
+                                  {N > 1 ? `(${String.fromCharCode(97 + i)}) ` : ''}Dens: {d}% | Moist: {mStr}%
+                                </div>
+                              );
+                            })}
                           </div>
-                        ))}
-                      </div>
-                      <div className="specs-row specs-moisture-row">
-                        {Array.from({ length: N }, (_, i) => (
-                          <div key={`m-${i}`} className="form-group specs-col specs-moisture-col">
-                            <label>{specLabel(i)}Moist. (%) Range</label>
-                            <div className="moisture-minmax">
-                              <input
-                                type="text"
-                                placeholder="Min"
-                                value={moistPadded[i]?.min ?? ''}
-                                onChange={(e) => updateSpecMoisture(i, 'min', e.target.value)}
-                                disabled={!canEdit}
-                              />
-                              <span>-</span>
-                              <input
-                                type="text"
-                                placeholder="Max"
-                                value={moistPadded[i]?.max ?? ''}
-                                onChange={(e) => updateSpecMoisture(i, 'max', e.target.value)}
-                                disabled={!canEdit}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
+                        );
+                      })}
+                    </div>
                   );
-                })()}
-              </div>
+                }
+                // Single-structure mode — editable
+                const N = getSpecColumnCount();
+                const specLabel = (i: number) => (N > 1 ? `(${String.fromCharCode(97 + i)}) ` : '');
+                const densArr = effectiveDensitySpecPercents(formData);
+                const moistArr = effectiveMoistSpecRanges(formData);
+                const densPadded = [...densArr];
+                const moistPadded = [...moistArr];
+                while (densPadded.length < N) densPadded.push('');
+                while (moistPadded.length < N) moistPadded.push({ min: '', max: '' });
+                return (
+                  <div className="specs-dynamic-columns">
+                    <div className="specs-row specs-density-row">
+                      {Array.from({ length: N }, (_, i) => (
+                        <div key={`d-${i}`} className="form-group specs-col">
+                          <label>{specLabel(i)}Dens. (%)</label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={densPadded[i] ?? ''}
+                            onChange={(e) => updateSpecDensity(i, e.target.value)}
+                            disabled={!canEdit}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="specs-row specs-moisture-row">
+                      {Array.from({ length: N }, (_, i) => (
+                        <div key={`m-${i}`} className="form-group specs-col specs-moisture-col">
+                          <label>{specLabel(i)}Moist. (%) Range</label>
+                          <div className="moisture-minmax">
+                            <input type="text" placeholder="Min"
+                              value={moistPadded[i]?.min ?? ''}
+                              onChange={(e) => updateSpecMoisture(i, 'min', e.target.value)}
+                              disabled={!canEdit} />
+                            <span>-</span>
+                            <input type="text" placeholder="Max"
+                              value={moistPadded[i]?.max ?? ''}
+                              onChange={(e) => updateSpecMoisture(i, 'max', e.target.value)}
+                              disabled={!canEdit} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="instrument-box">
