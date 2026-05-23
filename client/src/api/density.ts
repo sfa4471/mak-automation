@@ -2,15 +2,19 @@ import api from './api';
 import { ConcreteSpecs, SoilSpecs, PresetProctorRow } from './projects';
 
 export interface TestRow {
+  /** 'section' = structure-break header row; omitted/'data' = regular test row */
+  type?: 'data' | 'section';
+  /** Only on section rows — the structure type for rows that follow */
+  sectionStructureType?: string;
   testNo: number;
   testLocation: string;
   depthLiftType: 'DEPTH' | 'LIFT';
   depthLiftValue: string;
   wetDensity: string;
   fieldMoisture: string;
-  dryDensity: string; // Auto-calculated
+  dryDensity: string;
   proctorNo: string;
-  percentProctorDensity: string; // Auto-calculated
+  percentProctorDensity: string;
 }
 
 export interface ProctorRow {

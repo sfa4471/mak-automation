@@ -334,7 +334,7 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
         datePerformed: new Date().toISOString().split('T')[0],
         structure: '',
         structureType: '',
-        testRows: Array(19).fill(null).map((_, i) => ({
+        testRows: Array(18).fill(null).map((_, i) => ({
           testNo: i + 1,
           testLocation: '',
           depthLiftType: 'DEPTH',

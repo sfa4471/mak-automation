@@ -762,20 +762,6 @@ const DensityReportForm: React.FC = () => {
     debouncedSave(updated);
   };
 
-  const addSectionRow = () => {
-    if (!formData) return;
-    const sectionRow = {
-      type: 'section' as const,
-      sectionStructureType: '',
-      testNo: 0, testLocation: '', depthLiftType: 'DEPTH' as const,
-      depthLiftValue: '', wetDensity: '', fieldMoisture: '',
-      dryDensity: '', proctorNo: '', percentProctorDensity: ''
-    };
-    const updated = { ...formData, testRows: [...formData.testRows, sectionRow] };
-    setFormData(updated);
-    debouncedSave(updated);
-  };
-
   const switchToMultiStructure = () => {
     if (!formData) return;
     const firstSection = {
