@@ -136,7 +136,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
                   )}
                   {task.engagementNotes && (
                     <div className="instruction-block">
-                      <div className="instruction-label">Engagement Notes:</div>
+                      <div className="instruction-label">Task Details:</div>
                       <div className="instruction-content">{task.engagementNotes}</div>
                     </div>
                   )}

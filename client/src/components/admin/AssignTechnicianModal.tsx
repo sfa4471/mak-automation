@@ -155,7 +155,7 @@ const AssignTechnicianModal: React.FC<AssignTechnicianModalProps> = ({ task, onC
           </div>
 
           <div className="form-group">
-            <label htmlFor="engagementNotes">Engagement Notes</label>
+            <label htmlFor="engagementNotes">Task Details</label>
             <textarea
               id="engagementNotes"
               value={engagementNotes}
