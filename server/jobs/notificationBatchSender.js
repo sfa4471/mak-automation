@@ -55,11 +55,18 @@ async function processPendingNotifications() {
   const now = Date.now();
 
   for (const [techId, group] of byTech) {
+    const ageMs = now - group.maxCreatedAt;
+    const remainMs = debounceMs - ageMs;
+
     // Skip if admin is still actively assigning (last assignment < debounce window)
-    if (now - group.maxCreatedAt < debounceMs) continue;
+    if (remainMs > 0) {
+      console.log(`[notificationBatch] Tech ${techId}: debouncing, ${Math.ceil(remainMs / 1000)}s left (last row age: ${Math.floor(ageMs / 1000)}s, maxCreatedAt: ${new Date(group.maxCreatedAt).toISOString()})`);
+      continue;
+    }
 
     const email = group.rows[0].technician_email;
     const ids = group.rows.map((r) => r.id);
+    console.log(`[notificationBatch] Tech ${techId}: ready, sending ${ids.length} task(s) to ${email}`);
 
     try {
       await emailService.sendTaskAssignmentBatchEmail(email, group.rows);
