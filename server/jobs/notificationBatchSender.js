@@ -17,7 +17,10 @@ const emailService = require('../services/email');
 const DEBOUNCE_MINUTES = 3;
 const POLL_INTERVAL_MS = 2 * 60 * 1000;
 
+let _sending = false;
+
 async function processPendingNotifications() {
+  if (_sending) { console.log('[notificationBatch] Send in progress, skipping poll'); return; }
   if (!isAvailable()) return;
   if (!emailService.isConfigured()) return;
 
@@ -68,6 +71,7 @@ async function processPendingNotifications() {
     const ids = group.rows.map((r) => r.id);
     console.log(`[notificationBatch] Tech ${techId}: ready, sending ${ids.length} task(s) to ${email}`);
 
+    _sending = true;
     try {
       await emailService.sendTaskAssignmentBatchEmail(email, group.rows);
 
@@ -82,7 +86,11 @@ async function processPendingNotifications() {
         console.log(`[notificationBatch] Sent batch (${ids.length} tasks) to ${email}`);
       }
     } catch (err) {
-      console.error(`[notificationBatch] Email send failed for ${email}:`, err.message);
+      const code = err.responseCode || err.code || '';
+      const detail = err.response || err.message;
+      console.error(`[notificationBatch] Email send failed for ${email} (${code}): ${detail}`);
+    } finally {
+      _sending = false;
     }
   }
 }

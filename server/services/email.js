@@ -23,6 +23,9 @@ function createTransport() {
       user: 'apikey',
       pass: SENDGRID_API_KEY,
     },
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 30000,
   });
 }
 
