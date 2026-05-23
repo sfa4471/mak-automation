@@ -36,6 +36,7 @@ export interface Task {
   assignedTechnicianEmail?: string;
   dueDate?: string;
   scheduledStartDate?: string;
+  scheduledStartTime?: string;
   scheduledEndDate?: string;
   locationName?: string;
   locationNotes?: string;
@@ -77,6 +78,7 @@ export interface CreateTaskRequest {
   assignedTechnicianId?: number;
   dueDate?: string;
   scheduledStartDate?: string;
+  scheduledStartTime?: string;
   scheduledEndDate?: string;
   locationName?: string;
   locationNotes?: string;
@@ -87,6 +89,7 @@ export interface UpdateTaskRequest {
   assignedTechnicianId?: number;
   dueDate?: string;
   scheduledStartDate?: string;
+  scheduledStartTime?: string;
   scheduledEndDate?: string;
   locationName?: string;
   locationNotes?: string;
