@@ -95,37 +95,11 @@ async function processPendingNotifications() {
   }
 }
 
-async function verifySmtpConnectivity() {
-  const nodemailer = require('nodemailer');
-  const key = process.env.SENDGRID_API_KEY;
-  if (!key) {
-    console.warn('[notificationBatch] SENDGRID_API_KEY not set — email delivery disabled');
-    return;
-  }
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.sendgrid.net',
-    port: 587,
-    secure: false,
-    auth: { user: 'apikey', pass: key },
-  });
-  try {
-    await transporter.verify();
-    const from = process.env.SENDGRID_FROM_EMAIL || '(not set)';
-    console.log(`[notificationBatch] SMTP OK — connected to SendGrid (FROM: ${from})`);
-  } catch (err) {
-    const code = err.responseCode || err.code || '';
-    const detail = err.response || err.message;
-    console.error(`[notificationBatch] SMTP FAILED (${code}): ${detail}`);
-    console.error('[notificationBatch] Emails will NOT send until SMTP is fixed. Check SENDGRID_API_KEY on Render.');
-  }
-}
-
 function startNotificationBatchSender() {
   if (global.__notificationBatchSenderStarted) return;
   global.__notificationBatchSenderStarted = true;
 
   console.log('[notificationBatch] Batch sender started (poll every 2 min, debounce 3 min)');
-  verifySmtpConnectivity();
 
   const tick = async () => {
     try {

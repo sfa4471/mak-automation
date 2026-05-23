@@ -1,9 +1,10 @@
 /**
- * Email service — uses nodemailer with SendGrid SMTP.
+ * Email service — uses SendGrid HTTP API (v3/mail/send).
  * Requires SENDGRID_API_KEY and SENDGRID_FROM_EMAIL in env.
+ * Uses Node.js built-in https — no extra packages needed.
  */
 
-const nodemailer = require('nodemailer');
+const https = require('https');
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || 'admin@sendgrid.app';
@@ -14,18 +15,38 @@ function isConfigured() {
   return Boolean(SENDGRID_API_KEY && FROM_EMAIL);
 }
 
-function createTransport() {
-  return nodemailer.createTransport({
-    host: 'smtp.sendgrid.net',
-    port: 2525,
-    secure: false,
-    auth: {
-      user: 'apikey',
-      pass: SENDGRID_API_KEY,
-    },
-    connectionTimeout: 15000,
-    greetingTimeout: 10000,
-    socketTimeout: 30000,
+function sendGridRequest(body) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const options = {
+      hostname: 'api.sendgrid.com',
+      path: '/v3/mail/send',
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${SENDGRID_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve();
+        } else {
+          reject(new Error(`SendGrid API ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.setTimeout(15000, () => {
+      req.destroy(new Error('SendGrid API request timed out'));
+    });
+    req.write(payload);
+    req.end();
   });
 }
 
@@ -39,22 +60,25 @@ async function sendPasswordResetEmail(to, resetLink) {
   }
 
   try {
-    const transporter = createTransport();
-    await transporter.sendMail({
-      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
-      replyTo: REPLY_TO || undefined,
-      to,
+    await sendGridRequest({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: FROM_EMAIL, name: FROM_NAME },
+      ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
       subject: 'Reset your password',
-      text: `You requested a password reset. Open this link to set a new password (valid for 1 hour):\n\n${resetLink}\n\nIf you didn't request this, you can ignore this email.`,
-      html: `
-        <p>You requested a password reset.</p>
-        <p><a href="${resetLink}">Click here to set a new password</a> (link valid for 1 hour).</p>
-        <p>If you didn't request this, you can ignore this email.</p>
-      `.trim(),
+      content: [
+        {
+          type: 'text/plain',
+          value: `You requested a password reset. Open this link to set a new password (valid for 1 hour):\n\n${resetLink}\n\nIf you didn't request this, you can ignore this email.`,
+        },
+        {
+          type: 'text/html',
+          value: `<p>You requested a password reset.</p><p><a href="${resetLink}">Click here to set a new password</a> (link valid for 1 hour).</p><p>If you didn't request this, you can ignore this email.</p>`,
+        },
+      ],
     });
     console.log('[email] Password reset email sent successfully to', to);
   } catch (err) {
-    console.error('[email] SendGrid SMTP error:', err.message);
+    console.error('[email] SendGrid API error:', err.message);
     throw err;
   }
 }
@@ -169,20 +193,19 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
     </div>`.trim();
 
   try {
-    const transporter = createTransport();
-    await transporter.sendMail({
-      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
-      replyTo: REPLY_TO || undefined,
-      to,
+    await sendGridRequest({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: FROM_EMAIL, name: FROM_NAME },
+      ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
       subject,
-      text,
-      html,
+      content: [
+        { type: 'text/plain', value: text },
+        { type: 'text/html', value: html },
+      ],
     });
     console.log(`[email] Assignment batch (${n} tasks) sent to ${to}`);
   } catch (err) {
-    const code = err.responseCode || err.code || '';
-    const detail = err.response || err.message;
-    console.error(`[email] SendGrid SMTP error sending assignment batch (${code}):`, detail);
+    console.error('[email] SendGrid API error sending assignment batch:', err.message);
     throw err;
   }
 }
