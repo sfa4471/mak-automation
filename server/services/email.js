@@ -1,7 +1,9 @@
 /**
- * Email service (SendGrid). Used for forgot-password and admin invite (branch DB only).
+ * Email service — uses nodemailer with SendGrid SMTP.
  * Requires SENDGRID_API_KEY and SENDGRID_FROM_EMAIL in env.
  */
+
+const nodemailer = require('nodemailer');
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || 'admin@sendgrid.app';
@@ -12,11 +14,20 @@ function isConfigured() {
   return Boolean(SENDGRID_API_KEY && FROM_EMAIL);
 }
 
+function createTransport() {
+  return nodemailer.createTransport({
+    host: 'smtp.sendgrid.net',
+    port: 587,
+    secure: false,
+    auth: {
+      user: 'apikey',
+      pass: SENDGRID_API_KEY,
+    },
+  });
+}
+
 /**
  * Send password reset email.
- * @param {string} to - Recipient email
- * @param {string} resetLink - Full URL to reset password page with token
- * @returns {Promise<void>}
  */
 async function sendPasswordResetEmail(to, resetLink) {
   if (!isConfigured()) {
@@ -25,13 +36,11 @@ async function sendPasswordResetEmail(to, resetLink) {
   }
 
   try {
-    const sgMail = require('@sendgrid/mail');
-    sgMail.setApiKey(SENDGRID_API_KEY);
-
-    const msg = {
-      to,
-      from: { email: FROM_EMAIL, name: FROM_NAME },
+    const transporter = createTransport();
+    await transporter.sendMail({
+      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
       replyTo: REPLY_TO || undefined,
+      to,
       subject: 'Reset your password',
       text: `You requested a password reset. Open this link to set a new password (valid for 1 hour):\n\n${resetLink}\n\nIf you didn't request this, you can ignore this email.`,
       html: `
@@ -39,17 +48,10 @@ async function sendPasswordResetEmail(to, resetLink) {
         <p><a href="${resetLink}">Click here to set a new password</a> (link valid for 1 hour).</p>
         <p>If you didn't request this, you can ignore this email.</p>
       `.trim(),
-    };
-
-    console.log('[email] Sending password reset to', to, 'from', FROM_EMAIL);
-    await sgMail.send(msg);
+    });
     console.log('[email] Password reset email sent successfully to', to);
   } catch (err) {
-    console.error('[email] SendGrid error:', err.message);
-    if (err.response) {
-      console.error('[email] SendGrid status:', err.response.statusCode);
-      console.error('[email] SendGrid body:', err.response.body ? JSON.stringify(err.response.body, null, 2) : 'none');
-    }
+    console.error('[email] SendGrid SMTP error:', err.message);
     throw err;
   }
 }
@@ -58,7 +60,6 @@ async function sendPasswordResetEmail(to, resetLink) {
  * Send a consolidated task-assignment email to a technician.
  * @param {string} to - Recipient email
  * @param {Array} tasks - Array of pending_notifications rows (unsent, all for this tech)
- * @returns {Promise<void>}
  */
 async function sendTaskAssignmentBatchEmail(to, tasks) {
   if (!isConfigured()) {
@@ -89,7 +90,7 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
       : `${projectCount} Projects`;
   const subject = `New Task Assignment${n > 1 ? 's' : ''} — ${subjectProject}`.trim();
 
-  // Build plain text
+  // Plain text body
   let text = `Hello,\n\n${assignedBy} has assigned you ${n} new task${n > 1 ? 's' : ''}:\n\n`;
   for (const [, proj] of projectMap) {
     text += `PROJECT: ${proj.number || ''} — ${proj.name || ''}\n`;
@@ -105,7 +106,7 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
   if (dashboardLink) text += `View your dashboard: ${dashboardLink}\n\n`;
   text += 'This is an automated notification from CrestField.';
 
-  // Build HTML
+  // HTML body
   let projectHtml = '';
   for (const [, proj] of projectMap) {
     projectHtml += `
@@ -165,22 +166,18 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
     </div>`.trim();
 
   try {
-    const sgMail = require('@sendgrid/mail');
-    sgMail.setApiKey(SENDGRID_API_KEY);
-    await sgMail.send({
-      to,
-      from: { email: FROM_EMAIL, name: FROM_NAME },
+    const transporter = createTransport();
+    await transporter.sendMail({
+      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
       replyTo: REPLY_TO || undefined,
+      to,
       subject,
       text,
       html,
     });
     console.log(`[email] Assignment batch (${n} tasks) sent to ${to}`);
   } catch (err) {
-    console.error('[email] SendGrid error sending assignment batch:', err.message);
-    if (err.response) {
-      console.error('[email] SendGrid status:', err.response.statusCode);
-    }
+    console.error('[email] SendGrid SMTP error sending assignment batch:', err.message);
     throw err;
   }
 }
