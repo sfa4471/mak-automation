@@ -15,6 +15,7 @@ const CreateTask: React.FC = () => {
   const [assignedTechnicianId, setAssignedTechnicianId] = useState<number | undefined>();
   const [dueDate, setDueDate] = useState('');
   const [scheduledStartDate, setScheduledStartDate] = useState('');
+  const [scheduledStartTime, setScheduledStartTime] = useState('');
   const [scheduledEndDate, setScheduledEndDate] = useState('');
   const [isDateRange, setIsDateRange] = useState(false);
   const [locationName, setLocationName] = useState('');
@@ -49,6 +50,7 @@ const CreateTask: React.FC = () => {
         setAssignedTechnicianId(taskData.assignedTechnicianId);
         setDueDate(taskData.dueDate || '');
         setScheduledStartDate(taskData.scheduledStartDate || '');
+        setScheduledStartTime(taskData.scheduledStartTime || '');
         setScheduledEndDate(taskData.scheduledEndDate || '');
         setIsDateRange(!!taskData.scheduledEndDate);
         setLocationName(taskData.locationName || '');
@@ -77,6 +79,7 @@ const CreateTask: React.FC = () => {
           assignedTechnicianId: assignedTechnicianId || undefined,
           dueDate: dueDate ? dueDate.trim() : undefined,
           scheduledStartDate: scheduledStartDate ? scheduledStartDate.trim() : undefined,
+          scheduledStartTime: scheduledStartTime || undefined,
           scheduledEndDate: isDateRange && scheduledEndDate ? scheduledEndDate.trim() : undefined,
           locationName: locationName || undefined,
           locationNotes: locationNotes || undefined,
@@ -96,6 +99,7 @@ const CreateTask: React.FC = () => {
           assignedTechnicianId: assignedTechnicianId || undefined,
           dueDate: dueDate ? dueDate.trim() : undefined,
           scheduledStartDate: scheduledStartDate ? scheduledStartDate.trim() : undefined,
+          scheduledStartTime: scheduledStartTime || undefined,
           scheduledEndDate: isDateRange && scheduledEndDate ? scheduledEndDate.trim() : undefined,
           locationName: locationName || undefined,
           locationNotes: locationNotes || undefined,
@@ -204,6 +208,19 @@ const CreateTask: React.FC = () => {
             />
             <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>
               When the task is scheduled to begin (optional)
+            </small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="scheduledStartTime">Arrival Time</label>
+            <input
+              type="time"
+              id="scheduledStartTime"
+              value={scheduledStartTime}
+              onChange={(e) => setScheduledStartTime(e.target.value)}
+            />
+            <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>
+              Time the technician needs to be on site (optional)
             </small>
           </div>
 

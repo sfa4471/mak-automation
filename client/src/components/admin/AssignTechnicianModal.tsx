@@ -15,6 +15,7 @@ const AssignTechnicianModal: React.FC<AssignTechnicianModalProps> = ({ task, onC
   const [technicians, setTechnicians] = useState<User[]>([]);
   const [selectedTechnicianId, setSelectedTechnicianId] = useState<number | ''>(task.assignedTechnicianId || '');
   const [scheduledStartDate, setScheduledStartDate] = useState<string>(task.scheduledStartDate || '');
+  const [scheduledStartTime, setScheduledStartTime] = useState<string>(task.scheduledStartTime || '');
   const [scheduledEndDate, setScheduledEndDate] = useState<string>(task.scheduledEndDate || '');
   const [dueDate, setDueDate] = useState<string>(task.dueDate || '');
   const [engagementNotes, setEngagementNotes] = useState<string>(task.engagementNotes || '');
@@ -62,6 +63,7 @@ const AssignTechnicianModal: React.FC<AssignTechnicianModalProps> = ({ task, onC
       const updateData: any = {
         assignedTechnicianId: selectedTechnicianId,
         scheduledStartDate: scheduledStartDate || null,
+        scheduledStartTime: scheduledStartTime || null,
         scheduledEndDate: isDateRange ? (scheduledEndDate || null) : null,
         dueDate: dueDate || null,
         engagementNotes: engagementNotes || null
@@ -115,6 +117,17 @@ const AssignTechnicianModal: React.FC<AssignTechnicianModalProps> = ({ task, onC
               onChange={(e) => setScheduledStartDate(e.target.value)}
             />
             <small>When the task is scheduled to begin (optional)</small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="scheduledStartTime">Arrival Time</label>
+            <input
+              type="time"
+              id="scheduledStartTime"
+              value={scheduledStartTime}
+              onChange={(e) => setScheduledStartTime(e.target.value)}
+            />
+            <small>Time the technician needs to be on site (optional)</small>
           </div>
 
           <div className="form-group checkbox-group">

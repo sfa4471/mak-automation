@@ -224,6 +224,7 @@ function normalizeSupabaseTaskRow(task) {
     status: task.status,
     dueDate: task.due_date ?? task.dueDate,
     scheduledStartDate: task.scheduled_start_date ?? task.scheduledStartDate,
+    scheduledStartTime: task.scheduled_start_time ?? task.scheduledStartTime ?? null,
     scheduledEndDate: task.scheduled_end_date ?? task.scheduledEndDate,
     locationName: task.location_name ?? task.locationName,
     locationNotes: task.location_notes ?? task.locationNotes,
@@ -794,6 +795,7 @@ router.put('/:id', authenticate, [
   body('assignedTechnicianId').optional().isInt(),
   body('dueDate').optional(),
   body('scheduledStartDate').optional(),
+  body('scheduledStartTime').optional(),
   body('scheduledEndDate').optional(),
   body('locationName').optional(),
   body('locationNotes').optional(),
@@ -810,6 +812,7 @@ router.put('/:id', authenticate, [
       assignedTechnicianId,
       dueDate,
       scheduledStartDate,
+      scheduledStartTime,
       scheduledEndDate,
       locationName,
       locationNotes,
@@ -876,6 +879,7 @@ router.put('/:id', authenticate, [
     }
     if (dueDate !== undefined) updateData.dueDate = dueDate || null;
     if (scheduledStartDate !== undefined) updateData.scheduledStartDate = scheduledStartDate || null;
+    if (scheduledStartTime !== undefined) updateData.scheduledStartTime = scheduledStartTime || null;
     if (scheduledEndDate !== undefined) updateData.scheduledEndDate = scheduledEndDate || null;
     if (locationName !== undefined) updateData.locationName = locationName || null;
     if (locationNotes !== undefined) updateData.locationNotes = locationNotes || null;
@@ -932,6 +936,7 @@ router.put('/:id', authenticate, [
           projectNumber: project ? (project.project_number || project.projectNumber) : null,
           projectName: project ? (project.project_name || project.projectName) : null,
           scheduledStartDate: task.scheduled_start_date || task.scheduledStartDate || null,
+          scheduledStartTime: task.scheduled_start_time || task.scheduledStartTime || null,
           locationName: task.location_name || task.locationName || null,
           engagementNotes: task.engagement_notes || task.engagementNotes || null,
           assignedByName: adminName,
@@ -996,6 +1001,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
   body('assignedTechnicianId').optional().isInt(),
   body('dueDate').optional(),
   body('scheduledStartDate').optional(),
+  body('scheduledStartTime').optional(),
   body('scheduledEndDate').optional(),
   body('locationName').optional(),
   body('locationNotes').optional(),
@@ -1013,6 +1019,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       assignedTechnicianId,
       dueDate,
       scheduledStartDate,
+      scheduledStartTime,
       scheduledEndDate,
       locationName,
       locationNotes,
@@ -1113,6 +1120,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       locationNotes: locationNotes || null,
       engagementNotes: engagementNotes || null,
       scheduledStartDate: normalizedScheduledStartDate,
+      scheduledStartTime: scheduledStartTime || null,
       scheduledEndDate: normalizedScheduledEndDate,
       proctorNo
     };
@@ -1184,6 +1192,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
           projectNumber: project.project_number || project.projectNumber || null,
           projectName: project.project_name || project.projectName || null,
           scheduledStartDate: normalizedScheduledStartDate,
+          scheduledStartTime: scheduledStartTime || null,
           locationName: locationName || null,
           engagementNotes: engagementNotes || null,
           assignedByName: adminName,
@@ -1391,6 +1400,11 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       changes.push(`location notes updated`);
     }
 
+    if (scheduledStartTime !== undefined && scheduledStartTime !== oldTask.scheduledStartTime) {
+      updateData.scheduledStartTime = scheduledStartTime || null;
+      changes.push(`scheduled time updated`);
+    }
+
     if (engagementNotes !== undefined && engagementNotes !== oldTask.engagementNotes) {
       updateData.engagementNotes = engagementNotes || null;
       changes.push(`engagement notes updated`);
@@ -1457,6 +1471,7 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
           projectNumber: oldTask.projectNumber || null,
           projectName: oldTask.projectName || null,
           scheduledStartDate: oldTask.scheduledStartDate || (updateData.scheduledStartDate ?? null),
+          scheduledStartTime: oldTask.scheduledStartTime || (updateData.scheduledStartTime ?? null),
           locationName: oldTask.locationName || (updateData.locationName ?? null),
           engagementNotes: oldTask.engagementNotes || (updateData.engagementNotes ?? null),
           assignedByName: adminName,

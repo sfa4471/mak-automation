@@ -124,6 +124,7 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
     for (const t of proj.rows) {
       const parts = [`  • ${t.task_label}`];
       if (t.scheduled_start_date) parts.push(`Field Date: ${t.scheduled_start_date}`);
+      if (t.scheduled_start_time) parts.push(`Time: ${formatTime(t.scheduled_start_time)}`);
       if (t.location_name) parts.push(`Location: ${t.location_name}`);
       if (t.engagement_notes) parts.push(`Task Details: ${t.engagement_notes}`);
       text += parts.join(' | ') + '\n';
@@ -145,6 +146,7 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
           <tr style="background:#edf2f7;color:#4a5568;">
             <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Task</th>
             <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Field Date</th>
+            <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Time</th>
             <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Location</th>
             <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Task Details</th>
           </tr>
@@ -155,6 +157,7 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
           <tr style="border-bottom:1px solid #e2e8f0;">
             <td style="padding:6px 8px;">${escHtml(t.task_label)}</td>
             <td style="padding:6px 8px;">${escHtml(t.scheduled_start_date || '—')}</td>
+            <td style="padding:6px 8px;">${escHtml(t.scheduled_start_time ? formatTime(t.scheduled_start_time) : '—')}</td>
             <td style="padding:6px 8px;">${escHtml(t.location_name || '—')}</td>
             <td style="padding:6px 8px;">${escHtml(t.engagement_notes || '—')}</td>
           </tr>`;
@@ -208,6 +211,16 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
     console.error('[email] SendGrid API error sending assignment batch:', err.message);
     throw err;
   }
+}
+
+// "14:30" → "2:30 PM"
+function formatTime(hhmm) {
+  if (!hhmm) return '';
+  const [h, m] = hhmm.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return hhmm;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour = h % 12 || 12;
+  return `${hour}:${String(m).padStart(2, '0')} ${period}`;
 }
 
 function escHtml(str) {

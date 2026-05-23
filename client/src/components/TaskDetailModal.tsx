@@ -120,8 +120,14 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
           {hasAdminInstructions && (
             <div className="admin-instructions-section">
               <h3>📋 Admin Instructions</h3>
-              {(task.locationName || task.locationNotes || task.engagementNotes) && (
+              {(task.locationName || task.locationNotes || task.engagementNotes || task.scheduledStartTime) && (
                 <>
+                  {task.scheduledStartTime && (
+                    <div className="instruction-block">
+                      <div className="instruction-label">Arrival Time:</div>
+                      <div className="instruction-content">{task.scheduledStartTime}</div>
+                    </div>
+                  )}
                   {task.locationName && (
                     <div className="instruction-block">
                       <div className="instruction-label">Location Name:</div>
