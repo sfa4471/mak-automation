@@ -177,7 +177,9 @@ async function sendTaskAssignmentBatchEmail(to, tasks) {
     });
     console.log(`[email] Assignment batch (${n} tasks) sent to ${to}`);
   } catch (err) {
-    console.error('[email] SendGrid SMTP error sending assignment batch:', err.message);
+    const code = err.responseCode || err.code || '';
+    const detail = err.response || err.message;
+    console.error(`[email] SendGrid SMTP error sending assignment batch (${code}):`, detail);
     throw err;
   }
 }
