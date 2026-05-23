@@ -198,5 +198,15 @@ app.listen(PORT, HOST, () => {
       console.error('Failed to start auto-send scheduler:', err);
     }
   }
+
+  // Debounced batch email notifications for task assignment (every 2 min, 3-min debounce).
+  if (process.env.ENABLE_NOTIFICATION_BATCH_SENDER !== 'false') {
+    try {
+      const { startNotificationBatchSender } = require('./jobs/notificationBatchSender');
+      startNotificationBatchSender();
+    } catch (err) {
+      console.error('Failed to start notification batch sender:', err);
+    }
+  }
 });
 

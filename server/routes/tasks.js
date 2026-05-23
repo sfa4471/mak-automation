@@ -11,6 +11,7 @@ const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 const { createNotification } = require('./notifications');
 const { generateAndSaveReportPdfForTask } = require('../jobs/sendApprovedReports');
+const { queueAssignmentNotification } = require('../utils/notificationQueue');
 
 const router = express.Router();
 
@@ -919,6 +920,23 @@ router.put('/:id', authenticate, [
         const message = `Admin ${oldAssignedId ? 'reassigned' : 'assigned'} ${taskLabel} for Project ${project.projectNumber}`;
         await createNotification(assignedTechnicianId, message, 'info', null, projectId, taskId, req.tenantId ?? null);
       }
+      if (newTech && newTech.email) {
+        const adminName = req.user.name || req.user.email || 'Admin';
+        queueAssignmentNotification({
+          tenantId: req.tenantId,
+          technicianId: assignedTechnicianId,
+          technicianEmail: newTech.email,
+          taskId,
+          taskType,
+          projectId,
+          projectNumber: project ? (project.project_number || project.projectNumber) : null,
+          projectName: project ? (project.project_name || project.projectName) : null,
+          dueDate: task.due_date || task.dueDate || null,
+          scheduledStartDate: task.scheduled_start_date || task.scheduledStartDate || null,
+          locationName: task.location_name || task.locationName || null,
+          assignedByName: adminName,
+        });
+      }
     }
 
     // Return updated task
@@ -1011,11 +1029,12 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    let assignedTech = null;
     if (assignedTechnicianId) {
-      const tech = mustEnforceTenantOnTasks(req.legacyDb)
+      assignedTech = mustEnforceTenantOnTasks(req.legacyDb)
         ? await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN', tenant_id: tenantId })
         : await db.get('users', { id: assignedTechnicianId, role: 'TECHNICIAN' });
-      if (!tech) {
+      if (!assignedTech) {
         return res.status(404).json({ error: 'Technician not found' });
       }
     }
@@ -1153,6 +1172,23 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       const taskLabel = taskTypeLabels[taskType] || taskType;
       const message = `Admin assigned ${taskLabel} for Project ${project.projectNumber}`;
       createNotification(assignedTechnicianId, message, 'info', null, projectId, taskId, tenantId).catch(console.error);
+      if (assignedTech && assignedTech.email) {
+        const adminName = req.user.name || req.user.email || 'Admin';
+        queueAssignmentNotification({
+          tenantId,
+          technicianId: assignedTechnicianId,
+          technicianEmail: assignedTech.email,
+          taskId,
+          taskType,
+          projectId,
+          projectNumber: project.project_number || project.projectNumber || null,
+          projectName: project.project_name || project.projectName || null,
+          dueDate: normalizedDueDate,
+          scheduledStartDate: normalizedScheduledStartDate,
+          locationName: locationName || null,
+          assignedByName: adminName,
+        });
+      }
     }
 
     // Return created task with joins
@@ -1378,6 +1414,7 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       if (newTech) {
         const newTechName = newTech.name || newTech.email;
         changes.push(`reassigned from ${assignmentChange.oldTechName} to ${newTechName}`);
+        assignmentChange.newTechEmail = newTech.email || null;
       } else {
         changes.push(`reassigned to technician ID ${assignmentChange.newTechId}`);
       }
@@ -1409,6 +1446,22 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       const projectId = db.isSupabase() ? oldTask.project_id : oldTask.projectId;
       const message = `Admin assigned ${taskLabel} for Project ${oldTask.projectNumber}`;
       await createNotification(assignmentChange.newTechId, message, 'info', null, projectId, taskId, req.tenantId ?? null);
+      if (assignmentChange.newTechEmail) {
+        queueAssignmentNotification({
+          tenantId: req.tenantId,
+          technicianId: assignmentChange.newTechId,
+          technicianEmail: assignmentChange.newTechEmail,
+          taskId,
+          taskType,
+          projectId,
+          projectNumber: oldTask.projectNumber || null,
+          projectName: oldTask.projectName || null,
+          dueDate: oldTask.dueDate || (updateData.dueDate ?? null),
+          scheduledStartDate: oldTask.scheduledStartDate || (updateData.scheduledStartDate ?? null),
+          locationName: oldTask.locationName || (updateData.locationName ?? null),
+          assignedByName: adminName,
+        });
+      }
     }
 
     // Return updated task
