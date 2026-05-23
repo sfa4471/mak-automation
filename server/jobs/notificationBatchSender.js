@@ -36,6 +36,7 @@ async function processPendingNotifications() {
     return;
   }
 
+  console.log(`[notificationBatch] Poll: ${pending.length} unsent row(s) found`);
   if (pending.length === 0) return;
 
   // Group by technician_id; track max created_at per group
