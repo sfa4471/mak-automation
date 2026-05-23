@@ -17,7 +17,7 @@ function isConfigured() {
 function createTransport() {
   return nodemailer.createTransport({
     host: 'smtp.sendgrid.net',
-    port: 587,
+    port: 2525,
     secure: false,
     auth: {
       user: 'apikey',
