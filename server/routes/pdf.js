@@ -970,11 +970,11 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         }
       }
 
-      // Ensure we have 19 test rows and 6 proctor rows
+      // Ensure we have 19 test rows and at least 1 proctor row
       while (data.testRows.length < 19) {
         data.testRows.push({});
       }
-      while (data.proctors.length < 6) {
+      if (data.proctors.length === 0) {
         data.proctors.push({});
       }
 
@@ -1061,8 +1061,9 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         if (!percentProctor && dryDensity && row.proctorNo) {
           const dry = parseFloat(dryDensity);
           const proctorNum = parseInt(row.proctorNo);
-          if (!isNaN(dry) && !isNaN(proctorNum) && proctorNum >= 1 && proctorNum <= 6) {
-            const proctor = data.proctors[proctorNum - 1];
+          if (!isNaN(dry) && !isNaN(proctorNum) && proctorNum >= 1) {
+            const proctor = data.proctors.find(p => Number(p.proctorNo) === proctorNum)
+              || data.proctors[proctorNum - 1];
             if (proctor && proctor.maxDensity) {
               const maxDensity = parseFloat(proctor.maxDensity);
               if (!isNaN(maxDensity) && maxDensity > 0) {
@@ -1093,13 +1094,16 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       }
       html = html.replace('{{TEST_ROWS}}', testRowsHtml);
 
-      // Generate proctor rows HTML
+      // Generate proctor rows HTML (dynamic — matches saved proctor rows)
       let proctorRowsHtml = '';
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < data.proctors.length; i++) {
         const proctor = data.proctors[i] || {};
+        const proctorNoLabel = proctor.proctorNo != null && proctor.proctorNo > 0
+          ? proctor.proctorNo
+          : i + 1;
         proctorRowsHtml += `
           <tr>
-            <td>${i + 1}</td>
+            <td>${proctorNoLabel}</td>
             <td>${escapeHtml(proctor.description || '')}</td>
             <td>${escapeHtml(proctor.optMoisture || '')}</td>
             <td>${escapeHtml(proctor.maxDensity || '')}</td>
