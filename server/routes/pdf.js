@@ -976,7 +976,10 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       }
       // For single-structure, pad test rows to 18 for consistent layout; multi-structure flows naturally
       const isMultiStructure = data.testRows.some(r => r.type === 'section');
-      if (!isMultiStructure) {
+      // Count actual data rows (before any padding) to decide if page 2 is needed
+      const actualDataRowCount = data.testRows.filter(r => r.type !== 'section').length;
+      const needsSecondPage = actualDataRowCount > 18;
+      if (!isMultiStructure && !needsSecondPage) {
         while (data.testRows.length < 18) {
           data.testRows.push({});
         }
@@ -1057,10 +1060,16 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       html = html.replace('{{STRUCTURE}}', escapeHtml(densityStructureFull));
 
       // Generate test rows HTML — section rows become colored dividers
-      let testRowsHtml = '';
+      // Rows are split at 18 data rows when needsSecondPage is true
+      let page1TestRowsHtml = '';
+      let page2TestRowsHtml = '';
       let pdfRowNumber = 1;
+      let dataRowsOnPage1 = 0;
+
       for (let i = 0; i < data.testRows.length; i++) {
         const row = data.testRows[i] || {};
+        // Once 18 data rows are on page 1, all remaining rows (including section headers) go to page 2
+        const isPage2Row = needsSecondPage && dataRowsOnPage1 >= 18;
 
         if (row.type === 'section') {
           const sectKey = row.sectionStructureType || '';
@@ -1068,15 +1077,20 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
             ? (structureTypeDisplayLabel(sectKey, getSpecRowOtherDetails(getSpecRow(soilSpecsForPdf, sectKey))) || toTitleCase(sectKey))
             : '';
           const sectDesc = row.sectionDescription ? ` — ${row.sectionDescription}` : '';
-          testRowsHtml += `
+          const sectionHtml = `
             <tr>
               <td colspan="8" style="background:#2c5282;color:#fff;padding:5px 8px;font-weight:bold;font-size:8pt;text-align:left;border-color:#1a3a5c;">
                 STRUCTURE: ${escapeHtml(sectLabel)}<span style="font-weight:400;font-style:italic;opacity:0.9;">${escapeHtml(sectDesc)}</span>
               </td>
             </tr>
           `;
+          if (isPage2Row) page2TestRowsHtml += sectionHtml;
+          else page1TestRowsHtml += sectionHtml;
           continue;
         }
+
+        // Data row — increment page 1 counter only when row goes to page 1
+        if (!isPage2Row) dataRowsOnPage1++;
 
         const displayRowNo = row.testNo || pdfRowNumber;
         pdfRowNumber++;
@@ -1107,7 +1121,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         }
 
         const depthLiftDisplay = row.depthLiftValue ? escapeHtml(row.depthLiftValue) : '';
-        testRowsHtml += `
+        const rowHtml = `
           <tr>
             <td>${displayRowNo}</td>
             <td>${escapeHtml(row.testLocation || '')}</td>
@@ -1119,8 +1133,10 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
             <td>${percentProctor || '&nbsp;'}</td>
           </tr>
         `;
+        if (isPage2Row) page2TestRowsHtml += rowHtml;
+        else page1TestRowsHtml += rowHtml;
       }
-      html = html.replace('{{TEST_ROWS}}', testRowsHtml);
+      html = html.replace('{{TEST_ROWS}}', page1TestRowsHtml);
 
       // Generate proctor rows HTML (dynamic — matches saved proctor rows)
       let proctorRowsHtml = '';
@@ -1226,10 +1242,141 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       }
       if (!technicianName) technicianName = data.techName;
 
-      // Replace footer placeholders
-      html = html.replace('{{REMARKS}}', escapeHtml(data.remarks || ''));
-      html = html.replace('{{TECH_NAME}}', escapeHtml(technicianName || ''));
-      html = html.replace('{{TIME}}', escapeHtml(data.timeStr || ''));
+      // Build footer HTML (remarks, tech, time, disclaimer) — shown on last page only
+      const densityFooterHtml = `
+        <div class="footer-section">
+          <div class="remarks-box">
+            <strong>Remarks:</strong> ${escapeHtml(data.remarks || '')}
+          </div>
+          <div class="tech-time">
+            <div><strong>Tech:</strong> ${escapeHtml(technicianName || '')}</div>
+            <div><strong>Time:</strong> ${escapeHtml(data.timeStr || '')}</div>
+          </div>
+        </div>
+        <div class="disclaimer">
+          The results shown on this report are for the exclusive use of the client for whom they were obtained and apply only to the samples tested and/or inspected. They are not intended to be indicative of the qualities of apparently identical products. The use of our name must receive prior written approval. Reports must be reproduced in their entirety.
+        </div>
+      `;
+
+      // Page 1: show footer only for single-page reports
+      html = html.replace('{{FOOTER_HTML}}', needsSecondPage ? '' : densityFooterHtml);
+
+      // Page 2: full second page with header + overflow rows + proctor + specs + footer
+      if (needsSecondPage) {
+        const phoneEmailLine = `${escapeHtml(companyPhone)}${companyEmail ? ` | E: ${escapeHtml(companyEmail)}` : ''}`;
+        const p2MethD2922 = data.methodD2922 ? 'checked' : '';
+        const p2MethD3017 = data.methodD3017 ? 'checked' : '';
+        const p2MethD698  = data.methodD698  ? 'checked' : '';
+        const page2Html = `
+          <div class="page-break-before">
+            <div class="header-section">
+              <div class="company-info">
+                <div>${escapeHtml(companyName)}</div>
+                <div>${escapeHtml(companyAddress)}</div>
+                <div>${phoneEmailLine}</div>
+              </div>
+              <div class="logo-area">${logoHtml}</div>
+            </div>
+
+            <div class="title">IN-PLACE MOISTURE DENSITY TEST RESULTS</div>
+
+            <div class="header-fields">
+              <div class="header-field">
+                <span class="header-label">Client:</span>
+                <span class="header-value">${escapeHtml(data.clientName || '')}</span>
+              </div>
+              <div class="header-field">
+                <span class="header-label">Date Performed:</span>
+                <span class="header-value">${escapeHtml(datePerformed)}</span>
+              </div>
+              <div class="header-field">
+                <span class="header-label">Project:</span>
+                <span class="header-value">${escapeHtml(task.projectName || '')}</span>
+              </div>
+              <div class="header-field">
+                <span class="header-label">Project No:</span>
+                <span class="header-value">${escapeHtml(task.projectNumber || '')}</span>
+              </div>
+              <div class="header-field">
+                <span class="header-label">Structure:</span>
+                <span class="header-value">${escapeHtml(densityStructureFull)}</span>
+              </div>
+            </div>
+
+            <table class="main-table">
+              <colgroup>
+                <col style="width:4%">
+                <col style="width:28%">
+                <col style="width:7%">
+                <col style="width:11%">
+                <col style="width:11%">
+                <col style="width:11%">
+                <col style="width:7%">
+                <col style="width:21%">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Test No.</th>
+                  <th>Test Location</th>
+                  <th>Dept/<br>Lift</th>
+                  <th>Wet Density (pcf)</th>
+                  <th>Field Moisture (%)</th>
+                  <th>Dry Density (pcf)</th>
+                  <th>Proctor No.</th>
+                  <th>Percent Proctor Density</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${page2TestRowsHtml}
+              </tbody>
+            </table>
+
+            <table class="proctor-table">
+              <thead>
+                <tr>
+                  <th>Proctor No:</th>
+                  <th>Description</th>
+                  <th>Opt. Moisture</th>
+                  <th>Max. Density</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${proctorRowsHtml}
+              </tbody>
+            </table>
+
+            <div class="bottom-sections">
+              <div class="section-box specs-box">
+                <div class="section-title">Specs.</div>
+                <div class="section-content spec-rows-dynamic">
+                  ${specRowsHtml}
+                </div>
+              </div>
+              <div class="section-box instrument-box">
+                <div class="section-title">Gauge No: ${escapeHtml(data.gaugeNo || '')}</div>
+                <div class="section-content">
+                  <div>Std. Density Count: ${escapeHtml(data.stdDensityCount || '')}</div>
+                  <div>Std. Moist Count: ${escapeHtml(data.stdMoistCount || '')}</div>
+                  <div>Trans. Depth (in.): ${escapeHtml(data.transDepthIn || '')}</div>
+                </div>
+              </div>
+              <div class="section-box methods-box">
+                <div class="section-title">Test Methods:</div>
+                <div class="section-content">
+                  <div><span class="checkbox ${p2MethD2922}"></span>ASTM D 2922</div>
+                  <div><span class="checkbox ${p2MethD3017}"></span>ASTM D 3017</div>
+                  <div><span class="checkbox ${p2MethD698}"></span>ASTM D 698</div>
+                </div>
+              </div>
+            </div>
+
+            ${densityFooterHtml}
+          </div>
+        `;
+        html = html.replace('{{SECOND_PAGE}}', page2Html);
+      } else {
+        html = html.replace('{{SECOND_PAGE}}', '');
+      }
 
       // Generate PDF using Puppeteer
       console.log('Launching Puppeteer for density PDF generation...');
@@ -1269,12 +1416,23 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
         // Wait a bit to ensure all rendering is complete
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // Generate PDF
+        // Generate PDF — use displayHeaderFooter to draw the page border on every page;
+        // margins give the header/footer templates room to render without clipping content.
         const pdf = await page.pdf({
           format: 'Letter',
           printBackground: true,
-          margin: { top: '0', right: '0', bottom: '0', left: '0' },
-          preferCSSPageSize: false
+          margin: { top: '0.15in', right: '0.15in', bottom: '0.5in', left: '0.15in' },
+          preferCSSPageSize: false,
+          displayHeaderFooter: true,
+          headerTemplate: `
+            <div style="position:absolute;top:0;left:0;right:0;bottom:0;border:3px solid #000;border-bottom:none;pointer-events:none;box-sizing:border-box;"></div>
+          `,
+          footerTemplate: `
+            <div style="position:absolute;top:0;left:0;right:0;bottom:0;border:3px solid #000;border-top:none;pointer-events:none;box-sizing:border-box;">
+              <div style="position:absolute;bottom:0.15in;left:0.4in;font-size:8pt;font-family:Arial,sans-serif;color:#000;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>
+              <div style="position:absolute;bottom:0.15in;right:0.4in;font-size:8pt;font-family:Arial,sans-serif;color:#000;">${escapeHtml(companyName)}</div>
+            </div>
+          `
         });
 
         await safeCloseBrowser(browser);
