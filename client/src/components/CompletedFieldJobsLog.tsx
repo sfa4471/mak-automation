@@ -14,7 +14,7 @@ interface YearGroup {
 }
 
 function bucketTask(task: Task): { year: number; monthKey: string; monthLabel: string } | null {
-  const raw = task.fieldCompletedAt;
+  const raw = task.fieldCompletedAt ?? task.updatedAt;
   if (!raw) return null;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return null;
@@ -31,8 +31,8 @@ function groupTasksByYearMonth(tasks: Task[]): YearGroup[] {
     .filter((x): x is { task: Task; bucket: NonNullable<ReturnType<typeof bucketTask>> } => x.bucket != null);
 
   withBucket.sort((a, b) => {
-    const ta = new Date(a.task.fieldCompletedAt!).getTime();
-    const tb = new Date(b.task.fieldCompletedAt!).getTime();
+    const ta = new Date((a.task.fieldCompletedAt ?? a.task.updatedAt)!).getTime();
+    const tb = new Date((b.task.fieldCompletedAt ?? b.task.updatedAt)!).getTime();
     return tb - ta;
   });
 
@@ -138,13 +138,12 @@ const CompletedFieldJobsLog: React.FC<CompletedFieldJobsLogProps> = ({
     );
   }
 
-  const totalJobs = tasks.filter((t) => t.fieldCompletedAt).length;
+  const totalJobs = tasks.filter((t) => t.fieldCompletedAt ?? t.updatedAt).length;
 
   return (
     <div className="completed-jobs-log">
       <p className="completed-jobs-intro">
-        Field work marked complete ({totalJobs} {totalJobs === 1 ? 'job' : 'jobs'}). This is not the same as report
-        approval — use the Report status column below. Expand a year, then a month, to see details.
+        Completed jobs ({totalJobs} {totalJobs === 1 ? 'entry' : 'entries'}) — field work marked complete or report approved. Expand a year, then a month, to see details.
       </p>
       {grouped.map(({ year, months }) => {
         const yearOpen = expandedYears.has(String(year));
@@ -196,7 +195,7 @@ const CompletedFieldJobsLog: React.FC<CompletedFieldJobsLogProps> = ({
                                   <th>Project</th>
                                   {variant === 'admin' && <th>Technician</th>}
                                   <th>Task</th>
-                                  <th>Field completed</th>
+                                  <th>Completed</th>
                                   <th>Field dates</th>
                                   <th>Report due</th>
                                   <th>Report status</th>
@@ -216,7 +215,7 @@ const CompletedFieldJobsLog: React.FC<CompletedFieldJobsLogProps> = ({
                                       <td>{task.assignedTechnicianName || task.assignedTechnicianEmail || '—'}</td>
                                     )}
                                     <td>{taskTypeLabel(task)}</td>
-                                    <td>{formatCompletedAt(task.fieldCompletedAt)}</td>
+                                    <td>{formatCompletedAt(task.fieldCompletedAt ?? task.updatedAt)}</td>
                                     <td>{formatFieldDates(task)}</td>
                                     <td>{formatDate(task.dueDate)}</td>
                                     <td>

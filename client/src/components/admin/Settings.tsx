@@ -13,6 +13,8 @@ import {
 } from '../../utils/browserFolder';
 import './Settings.css';
 
+const AUTO_SEND_PLACEHOLDERS = '{{companyName}}, {{clientName}}, {{projectNumber}}, {{date}}, {{reportCount}}';
+
 /**
  * Settings Component
  * Allows admin users to configure the project folder location (choose folder on this device).
@@ -32,10 +34,42 @@ const Settings: React.FC = () => {
   const [tenantSaving, setTenantSaving] = useState(false);
   const [tenantForm, setTenantForm] = useState<TenantMeUpdate>({});
   const [signaturePreviewFailed, setSignaturePreviewFailed] = useState(false);
+  const [autoSendEnabled, setAutoSendEnabled] = useState<boolean | null>(null);
+  const [autoSendBody, setAutoSendBody] = useState('');
+  const [autoSendSaving, setAutoSendSaving] = useState(false);
+  const [autoSendMsg, setAutoSendMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     loadSettings();
+    loadAutoSendSettings();
   }, []);
+
+  const loadAutoSendSettings = async () => {
+    try {
+      const [enabledResp, bodyResp] = await Promise.all([
+        settingsAPI.getAutoSendEnabled(),
+        settingsAPI.getAutoSendBodyTemplate(),
+      ]);
+      setAutoSendEnabled(Boolean(enabledResp.enabled));
+      setAutoSendBody(bodyResp.bodyTemplate || '');
+    } catch {
+      setAutoSendEnabled(false);
+    }
+  };
+
+  const saveAutoSend = async () => {
+    setAutoSendSaving(true);
+    setAutoSendMsg(null);
+    try {
+      await settingsAPI.setAutoSendBodyTemplate(autoSendBody);
+      await settingsAPI.setAutoSendEnabled(autoSendEnabled ?? false);
+      setAutoSendMsg({ type: 'success', text: 'Auto-send settings saved.' });
+    } catch (e: any) {
+      setAutoSendMsg({ type: 'error', text: e?.response?.data?.error || 'Failed to save auto-send settings.' });
+    } finally {
+      setAutoSendSaving(false);
+    }
+  };
 
   useEffect(() => {
     setSignaturePreviewFailed(false);
@@ -319,6 +353,70 @@ const Settings: React.FC = () => {
                   {message.text}
                 </div>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* Auto-send approved reports */}
+        <div className="settings-section">
+          <h2>Auto-send Approved Reports</h2>
+          <p className="settings-description">
+            When enabled, approved reports are automatically emailed to clients each night.
+          </p>
+          {autoSendEnabled === null ? (
+            <p className="form-help">Loading…</p>
+          ) : (
+            <div className="settings-form">
+              <div className="form-group">
+                <label>Nightly auto-send</label>
+                <div className="autosend-toggle">
+                  <label className="autosend-radio">
+                    <input
+                      type="radio"
+                      name="auto-send-enabled"
+                      checked={autoSendEnabled === true}
+                      onChange={() => setAutoSendEnabled(true)}
+                      disabled={autoSendSaving}
+                    />
+                    On
+                  </label>
+                  <label className="autosend-radio">
+                    <input
+                      type="radio"
+                      name="auto-send-enabled"
+                      checked={autoSendEnabled === false}
+                      onChange={() => setAutoSendEnabled(false)}
+                      disabled={autoSendSaving}
+                    />
+                    Off
+                  </label>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Email body template</label>
+                <textarea
+                  className="form-textarea"
+                  rows={8}
+                  value={autoSendBody}
+                  onChange={(e) => setAutoSendBody(e.target.value)}
+                  placeholder="Enter the email body sent to clients when reports are delivered…"
+                  disabled={autoSendSaving}
+                />
+                <small className="form-help">Placeholders: {AUTO_SEND_PLACEHOLDERS}</small>
+              </div>
+              {autoSendMsg && (
+                <div className={`message ${autoSendMsg.type}`} style={{ marginBottom: '0.75rem' }}>
+                  {autoSendMsg.text}
+                </div>
+              )}
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={saveAutoSend}
+                disabled={autoSendSaving}
+              >
+                {autoSendSaving ? 'Saving…' : 'Save auto-send settings'}
+              </button>
             </div>
           )}
         </div>

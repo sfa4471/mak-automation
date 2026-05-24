@@ -3,20 +3,24 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useAppDialog } from '../../context/AppDialogContext';
 import { tasksAPI, Task, taskTypeLabel, TaskType } from '../../api/tasks';
-import { settingsAPI } from '../../api/settings';
 import RejectTaskModal from '../RejectTaskModal';
 import UnapproveTaskModal from '../UnapproveTaskModal';
 import CompletedFieldJobsLog from '../CompletedFieldJobsLog';
 import './TasksDashboard.css';
 
-/** Normalize task id from API (number or numeric string) for selection and bulk APIs. */
+type ActiveFilter = 'board' | 'pending-approval' | 'activity';
+
+interface BoardGroup {
+  label: 'Overdue' | 'Today' | 'Upcoming';
+  tasks: Task[];
+}
+
 function toPositiveTaskId(value: unknown): number | null {
   const n = typeof value === 'number' ? value : parseInt(String(value), 10);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return null;
   return n;
 }
 
-/** API rows may mix camelCase and snake_case depending on endpoint age. */
 function resolveTaskApiFields(task: Task): {
   taskType: TaskType | undefined;
   status: string;
@@ -39,19 +43,12 @@ const TasksDashboard: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [activeFilter, setActiveFilter] = useState<'today' | 'upcoming' | 'overdue' | 'activity'>('today');
-  const [upcomingDays, setUpcomingDays] = useState<number>(7);
+  const [boardGroups, setBoardGroups] = useState<BoardGroup[]>([]);
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>('board');
   const [loading, setLoading] = useState(true);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [isBulkApproving, setIsBulkApproving] = useState(false);
   const [approveModalBusy, setApproveModalBusy] = useState(false);
-
-  const [autoSendEnabled, setAutoSendEnabled] = useState<boolean | null>(null);
-  const [autoSendBodyTemplate, setAutoSendBodyTemplate] = useState<string>('');
-  const [isUpdatingAutoSend, setIsUpdatingAutoSend] = useState(false);
-  const [autoSendModalOpen, setAutoSendModalOpen] = useState(false);
-  const [autoSendModalMode, setAutoSendModalMode] = useState<'enable' | 'edit'>('enable');
-  const [autoSendDraftBody, setAutoSendDraftBody] = useState<string>('');
   const [rejectModalTask, setRejectModalTask] = useState<Task | null>(null);
   const [unapproveTask, setUnapproveTask] = useState<Task | null>(null);
   const [unapproveAlreadySent, setUnapproveAlreadySent] = useState(false);
@@ -71,46 +68,55 @@ const TasksDashboard: React.FC = () => {
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter, upcomingDays, location.key]);
-
-  useEffect(() => {
-    // Load auto-send email settings once for this tenant.
-    const loadAutoSendSettings = async () => {
-      try {
-        const enabledResp = await settingsAPI.getAutoSendEnabled();
-        setAutoSendEnabled(Boolean(enabledResp.enabled));
-
-        const bodyResp = await settingsAPI.getAutoSendBodyTemplate();
-        setAutoSendBodyTemplate(bodyResp.bodyTemplate || '');
-      } catch (err) {
-        console.error('Error loading auto-send settings:', err);
-        setAutoSendEnabled(false);
-      }
-    };
-    loadAutoSendSettings();
-  }, []);
+  }, [activeFilter, location.key]);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      // Clear tasks immediately when switching filters to avoid showing stale data
       setTasks([]);
+      setBoardGroups([]);
       setSelectedTaskIds(new Set());
-      
-      let data: Task[] = [];
-      if (activeFilter === 'today') {
-        data = await tasksAPI.getToday();
-      } else if (activeFilter === 'upcoming') {
-        data = await tasksAPI.getUpcoming(upcomingDays);
-      } else if (activeFilter === 'overdue') {
-        data = await tasksAPI.getOverdue();
+
+      if (activeFilter === 'board') {
+        const [todayRaw, overdueRaw, upcomingRaw] = await Promise.all([
+          tasksAPI.getToday(),
+          tasksAPI.getOverdue(),
+          tasksAPI.getUpcoming(30),
+        ]);
+
+        const seen = new Set<number>();
+        const overdueList: Task[] = [];
+        const todayList: Task[] = [];
+        const upcomingList: Task[] = [];
+
+        for (const t of overdueRaw) {
+          if (!seen.has(t.id)) { seen.add(t.id); overdueList.push(t); }
+        }
+        for (const t of todayRaw) {
+          if (!seen.has(t.id) && t.status !== 'APPROVED') { seen.add(t.id); todayList.push(t); }
+        }
+        for (const t of upcomingRaw) {
+          if (!seen.has(t.id)) { seen.add(t.id); upcomingList.push(t); }
+        }
+
+        const groups: BoardGroup[] = [];
+        if (overdueList.length) groups.push({ label: 'Overdue', tasks: overdueList });
+        if (todayList.length) groups.push({ label: 'Today', tasks: todayList });
+        if (upcomingList.length) groups.push({ label: 'Upcoming', tasks: upcomingList });
+
+        setBoardGroups(groups);
+        setTasks([...overdueList, ...todayList, ...upcomingList]);
+      } else if (activeFilter === 'pending-approval') {
+        const data = await tasksAPI.getPendingApproval();
+        setTasks(data);
       } else if (activeFilter === 'activity') {
-        data = await tasksAPI.getCompletedFieldWork();
+        const data = await tasksAPI.getCompletedFieldWork();
+        setTasks(data);
       }
-      setTasks(data);
     } catch (error) {
       console.error('Error loading tasks:', error);
-      setTasks([]); // Clear on error too
+      setTasks([]);
+      setBoardGroups([]);
     } finally {
       setLoading(false);
     }
@@ -160,8 +166,6 @@ const TasksDashboard: React.FC = () => {
 
   const formatDate = (dateString?: string): string => {
     if (!dateString) return 'N/A';
-    // Parse date string (YYYY-MM-DD) as local date to avoid timezone shifts
-    // Split and create date in local timezone
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day);
     return date.toLocaleDateString();
@@ -169,20 +173,15 @@ const TasksDashboard: React.FC = () => {
 
   const formatFieldDates = (task: Task): string => {
     if (task.scheduledStartDate) {
-      // Parse date string (YYYY-MM-DD) as local date to avoid timezone shifts
       const [startYear, startMonth, startDay] = task.scheduledStartDate.split('-').map(Number);
       const startDate = new Date(startYear, startMonth - 1, startDay);
       const startFormatted = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      
+
       if (task.scheduledEndDate) {
         const [endYear, endMonth, endDay] = task.scheduledEndDate.split('-').map(Number);
         const endDate = new Date(endYear, endMonth - 1, endDay);
         const endFormatted = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        
-        // Check if same day
-        if (task.scheduledStartDate === task.scheduledEndDate) {
-          return startFormatted;
-        }
+        if (task.scheduledStartDate === task.scheduledEndDate) return startFormatted;
         return `${startFormatted} – ${endFormatted}`;
       }
       return startFormatted;
@@ -190,34 +189,26 @@ const TasksDashboard: React.FC = () => {
     return '—';
   };
 
-  const isReportTask = (taskType: TaskType): boolean => {
-    return (
-      taskType === 'COMPRESSIVE_STRENGTH' ||
-      taskType === 'DENSITY_MEASUREMENT' ||
-      taskType === 'REBAR' ||
-      taskType === 'PROCTOR'
-    );
-  };
+  const isReportTask = (taskType: TaskType): boolean =>
+    taskType === 'COMPRESSIVE_STRENGTH' ||
+    taskType === 'DENSITY_MEASUREMENT' ||
+    taskType === 'REBAR' ||
+    taskType === 'PROCTOR';
 
-  const isFieldTask = (taskType: TaskType): boolean => {
-    return !isReportTask(taskType);
-  };
+  const isFieldTask = (taskType: TaskType): boolean => !isReportTask(taskType);
 
   const getTaskBadges = (task: Task): string[] => {
     const badges: string[] = [];
-    // Get today's date as YYYY-MM-DD string (local date, no timezone conversion)
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    // Use dueDate directly as string (already in YYYY-MM-DD format)
     const dueDate = task.dueDate || null;
-    
+
     if (task.status === 'APPROVED') {
       badges.push('COMPLETED');
     } else if (dueDate) {
       if (dueDate === today) {
         badges.push('DUE_TODAY');
       } else if (dueDate < today) {
-        // Calculate days overdue using string comparison (safer for dates)
         const [year, month, day] = today.split('-').map(Number);
         const [dueYear, dueMonth, dueDay] = dueDate.split('-').map(Number);
         const todayDate = new Date(year, month - 1, day);
@@ -226,38 +217,14 @@ const TasksDashboard: React.FC = () => {
         badges.push(`OVERDUE_${daysOverdue}`);
       }
     }
-    
     return badges;
   };
 
-  const _getOverdueDays = (task: Task): number | null => {
-    if (!task.dueDate) return null;
-    // Get today's date as YYYY-MM-DD string (local date, no timezone conversion)
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    // Use dueDate directly as string (already in YYYY-MM-DD format)
-    const dueDate = task.dueDate;
-    if (dueDate < today) {
-      // Calculate days overdue using string comparison (safer for dates)
-      const [year, month, day] = today.split('-').map(Number);
-      const [dueYear, dueMonth, dueDay] = dueDate.split('-').map(Number);
-      const todayDate = new Date(year, month - 1, day);
-      const dueDateObj = new Date(dueYear, dueMonth - 1, dueDay);
-      return Math.floor((todayDate.getTime() - dueDateObj.getTime()) / (1000 * 60 * 60 * 24));
-    }
-    return null;
-  };
-
   const navigateToReport = (task: Task) => {
-    if (task.taskType === 'COMPRESSIVE_STRENGTH') {
-      navigate(`/task/${task.id}/wp1`);
-    } else if (task.taskType === 'DENSITY_MEASUREMENT') {
-      navigate(`/task/${task.id}/density`);
-    } else if (task.taskType === 'REBAR') {
-      navigate(`/task/${task.id}/rebar`);
-    } else if (task.taskType === 'PROCTOR') {
-      navigate(`/task/${task.id}/proctor/summary`);
-    }
+    if (task.taskType === 'COMPRESSIVE_STRENGTH') navigate(`/task/${task.id}/wp1`);
+    else if (task.taskType === 'DENSITY_MEASUREMENT') navigate(`/task/${task.id}/density`);
+    else if (task.taskType === 'REBAR') navigate(`/task/${task.id}/rebar`);
+    else if (task.taskType === 'PROCTOR') navigate(`/task/${task.id}/proctor/summary`);
   };
 
   const handleViewReport = (task: Task, e: React.MouseEvent) => {
@@ -267,10 +234,8 @@ const TasksDashboard: React.FC = () => {
 
   const handleViewTask = (task: Task, e: React.MouseEvent) => {
     e.stopPropagation();
-    // Placeholder for field tasks
     void showAlert(`${taskTypeLabel(task)} task details are not available in this view yet.`, 'Coming soon');
   };
-
 
   const handleApproveClick = (taskId: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -287,26 +252,20 @@ const TasksDashboard: React.FC = () => {
     try {
       const updated = await tasksAPI.approve(taskId);
       setApproveConfirm(null);
-      let message =
-        'The report has been approved. The assigned technician has been notified.';
+      let message = 'The report has been approved. The assigned technician has been notified.';
       const pdf = updated.pdf;
       if (pdf && !pdf.skipped) {
         if (pdf.success === false) {
           message += ` PDF was not generated (${pdf.error || 'unknown error'}).`;
         } else if (!pdf.saved) {
-          message +=
-            ' PDF was not saved to the workflow folder (check server path / permissions).';
+          message += ' PDF was not saved to the workflow folder (check server path / permissions).';
           if (pdf.saveError) message += ` ${pdf.saveError}`;
         }
       }
-      setNotice({
-        variant: 'success',
-        message,
-      });
+      setNotice({ variant: 'success', message });
       await loadData();
     } catch (err: any) {
-      const msg =
-        err.response?.data?.error ||
+      const msg = err.response?.data?.error ||
         'We could not approve this report. Please try again or contact support if the problem continues.';
       setNotice({ variant: 'error', message: msg });
     } finally {
@@ -329,11 +288,7 @@ const TasksDashboard: React.FC = () => {
 
       if (totals.approved === 0) {
         const parts: string[] = [];
-        if (totals.skippedWrongStatus) {
-          parts.push(
-            `${totals.skippedWrongStatus} not in "ready for review" status`
-          );
-        }
+        if (totals.skippedWrongStatus) parts.push(`${totals.skippedWrongStatus} not in "ready for review" status`);
         if (totals.notFound) parts.push(`${totals.notFound} not found`);
         if (totals.forbidden) parts.push(`${totals.forbidden} could not be accessed`);
         if (totals.errors) parts.push(`${totals.errors} failed to update in the database`);
@@ -345,26 +300,15 @@ const TasksDashboard: React.FC = () => {
       } else {
         let msg = `Successfully approved ${totals.approved} report${totals.approved === 1 ? '' : 's'}. Technicians have been notified where applicable.`;
         if (totals.skippedWrongStatus > 0 || totals.notFound > 0 || totals.errors > 0) {
-          const skipped =
-            totals.skippedWrongStatus + totals.notFound + totals.forbidden + totals.errors;
+          const skipped = totals.skippedWrongStatus + totals.notFound + totals.forbidden + totals.errors;
           msg += ` ${skipped} item${skipped === 1 ? '' : 's'} could not be approved (wrong status, missing, or database error).`;
           if (firstSaveError) msg += ` ${firstSaveError}`;
         }
         const approvedRows = results?.filter((r) => r.status === 'APPROVED') || [];
-        const pdfGenFailed = approvedRows.filter(
-          (r) => r.pdf && !r.pdf.skipped && r.pdf.success === false
-        ).length;
-        const pdfNotSaved = approvedRows.filter(
-          (r) =>
-            r.pdf &&
-            !r.pdf.skipped &&
-            r.pdf.success === true &&
-            !r.pdf.saved
-        ).length;
+        const pdfGenFailed = approvedRows.filter((r) => r.pdf && !r.pdf.skipped && r.pdf.success === false).length;
+        const pdfNotSaved = approvedRows.filter((r) => r.pdf && !r.pdf.skipped && r.pdf.success === true && !r.pdf.saved).length;
         if (pdfGenFailed > 0) {
-          const firstPdfErr = approvedRows.find(
-            (r) => r.pdf && !r.pdf.skipped && r.pdf.success === false
-          )?.pdf?.error;
+          const firstPdfErr = approvedRows.find((r) => r.pdf && !r.pdf.skipped && r.pdf.success === false)?.pdf?.error;
           msg += ` ${pdfGenFailed} PDF${pdfGenFailed === 1 ? '' : 's'} could not be generated (approvals are still saved).`;
           if (firstPdfErr) msg += ` Detail: ${firstPdfErr}`;
         }
@@ -375,58 +319,11 @@ const TasksDashboard: React.FC = () => {
       }
       await loadData();
     } catch (err: any) {
-      const msg =
-        err.response?.data?.error ||
+      const msg = err.response?.data?.error ||
         'We could not complete bulk approval. Please try again or contact support if the problem continues.';
       setNotice({ variant: 'error', message: msg });
     } finally {
       setIsBulkApproving(false);
-    }
-  };
-
-  const openAutoSendBodyModal = (mode: 'enable' | 'edit') => {
-    setAutoSendModalMode(mode);
-    setAutoSendDraftBody(autoSendBodyTemplate);
-    setAutoSendModalOpen(true);
-  };
-
-  const applyAutoSendBodyAndToggle = async (enabled: boolean) => {
-    setIsUpdatingAutoSend(true);
-    try {
-      // Save (or update) body template first, then toggle enabled.
-      await settingsAPI.setAutoSendBodyTemplate(autoSendDraftBody);
-      await settingsAPI.setAutoSendEnabled(enabled);
-
-      setAutoSendEnabled(enabled);
-      setAutoSendBodyTemplate(autoSendDraftBody);
-      setAutoSendModalOpen(false);
-    } catch (err: any) {
-      console.error('Error updating auto-send settings:', err);
-      await showAlert(err?.response?.data?.error || 'Auto-send settings could not be updated.', 'Settings error');
-    } finally {
-      setIsUpdatingAutoSend(false);
-    }
-  };
-
-  const handleToggleAutoSend = async (enabled: boolean) => {
-    if (isUpdatingAutoSend) return;
-
-    if (enabled) {
-      // Per requirement: when admin enables it, prompt for email body (with draft).
-      openAutoSendBodyModal('enable');
-      return;
-    }
-
-    // Turning OFF is immediate.
-    setIsUpdatingAutoSend(true);
-    try {
-      await settingsAPI.setAutoSendEnabled(false);
-      setAutoSendEnabled(false);
-    } catch (err: any) {
-      console.error('Error disabling auto-send:', err);
-      await showAlert(err?.response?.data?.error || 'Auto-send could not be disabled.', 'Settings error');
-    } finally {
-      setIsUpdatingAutoSend(false);
     }
   };
 
@@ -446,13 +343,9 @@ const TasksDashboard: React.FC = () => {
       setUnapproveAlreadySent(ctx.alreadySentToClient);
       setUnapproveTask(task);
     } catch (err: any) {
-      await showAlert(
-        err.response?.data?.error || 'Could not open unapprove. Please try again.',
-        'Error'
-      );
+      await showAlert(err.response?.data?.error || 'Could not open unapprove. Please try again.', 'Error');
     }
   };
-
 
   const handleEditTask = (task: Task, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -478,43 +371,24 @@ const TasksDashboard: React.FC = () => {
     const isReport = taskType != null && isReportTask(taskType);
     const isField = taskType != null && isFieldTask(taskType);
 
-    // Edit Task button (always available for Admin) - handles assignment/reassignment
     actions.push(
-      <button
-        key="edit"
-        onClick={(e) => handleEditTask(task, e)}
-        className="action-button action-edit"
-        title="Edit Task Details (including assignment)"
-      >
+      <button key="edit" onClick={(e) => handleEditTask(task, e)} className="action-button action-edit" title="Edit Task Details">
         Edit Task
       </button>
     );
 
     if (status !== 'APPROVED') {
       actions.push(
-        <button
-          key="delete"
-          onClick={(e) => handleDeleteTask(task, e)}
-          className="action-button action-reject"
-          title="Delete this task"
-        >
+        <button key="delete" onClick={(e) => handleDeleteTask(task, e)} className="action-button action-reject" title="Delete this task">
           Delete
         </button>
       );
     }
 
     if (isReport) {
-      // Report tasks: always allow opening the report (Activity Log includes field-complete rows still in progress)
       actions.push(
-        <button
-          key="view"
-          onClick={(e) => handleViewReport(task, e)}
-          className="action-button action-view"
-          title="View Report"
-        >
-          {taskType === 'PROCTOR' && status === 'READY_FOR_REVIEW'
-            ? 'Open summary'
-            : 'View Report'}
+        <button key="view" onClick={(e) => handleViewReport(task, e)} className="action-button action-view" title="View Report">
+          {taskType === 'PROCTOR' && status === 'READY_FOR_REVIEW' ? 'Open summary' : 'View Report'}
         </button>
       );
 
@@ -535,37 +409,21 @@ const TasksDashboard: React.FC = () => {
       }
       if (status === 'READY_FOR_REVIEW') {
         actions.push(
-          <button
-            key="reject"
-            onClick={(e) => handleRejectClick(task, e)}
-            className="action-button action-reject"
-            title="Reject Task"
-          >
+          <button key="reject" onClick={(e) => handleRejectClick(task, e)} className="action-button action-reject" title="Reject Task">
             Reject
           </button>
         );
       }
       if (status === 'APPROVED') {
         actions.push(
-          <button
-            key="unapprove"
-            onClick={(e) => void handleUnapproveClick(task, e)}
-            className="action-button action-reject"
-            title="Unapprove report"
-          >
+          <button key="unapprove" onClick={(e) => void handleUnapproveClick(task, e)} className="action-button action-reject" title="Unapprove report">
             Unapprove
           </button>
         );
       }
     } else if (isField) {
-      // Field tasks: View Details (placeholder)
       actions.push(
-        <button
-          key="view"
-          onClick={(e) => handleViewTask(task, e)}
-          className="action-button action-view"
-          title="View Task Details"
-        >
+        <button key="view" onClick={(e) => handleViewTask(task, e)} className="action-button action-view" title="View Task Details">
           View Details
         </button>
       );
@@ -574,9 +432,91 @@ const TasksDashboard: React.FC = () => {
     return <div className="action-buttons">{actions}</div>;
   };
 
+  const renderTaskRow = (task: Task) => {
+    const badges = getTaskBadges(task);
+    const isReport = isReportTask(task.taskType);
+    const canBulkApprove = task.status === 'READY_FOR_REVIEW';
+    const rowTaskId = toPositiveTaskId(task.id);
+
+    return (
+      <tr
+        key={task.id}
+        className={`task-row${isReport ? ' task-row-clickable' : ''}`}
+        onClick={() => { if (isReport) navigateToReport(task); }}
+        title={isReport ? 'Open report' : undefined}
+      >
+        <td onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={rowTaskId != null && selectedTaskIds.has(rowTaskId)}
+            disabled={!canBulkApprove || rowTaskId == null}
+            onChange={(e) => {
+              if (rowTaskId == null) return;
+              const checked = e.target.checked;
+              setSelectedTaskIds(prev => {
+                const next = new Set(prev);
+                if (checked) next.add(rowTaskId);
+                else next.delete(rowTaskId);
+                return next;
+              });
+            }}
+          />
+        </td>
+        <td>
+          <div className="project-cell">
+            <span className="project-number">{task.projectNumber}</span>
+            {task.projectName && <span className="project-name">{task.projectName}</span>}
+          </div>
+        </td>
+        <td>
+          {task.assignedTechnicianName
+            ? <span>{task.assignedTechnicianName}</span>
+            : <span className="unassigned">Unassigned</span>}
+        </td>
+        <td>
+          <div className="task-name-cell">
+            <span className="task-name">{taskTypeLabel(task)}</span>
+            <span className={`task-type-badge ${isReport ? 'badge-report' : 'badge-field'}`}>
+              {isReport ? 'Report' : 'Field'}
+            </span>
+            {badges.map(badge => {
+              let badgeText = badge;
+              if (badge === 'DUE_TODAY') badgeText = 'Due Today';
+              else if (badge === 'COMPLETED') badgeText = 'Completed';
+              else if (badge.startsWith('OVERDUE_')) {
+                const days = badge.replace('OVERDUE_', '');
+                badgeText = `Overdue ${days} ${days === '1' ? 'day' : 'days'}`;
+              }
+              return (
+                <span key={badge} className={`task-status-badge badge-${badge.toLowerCase().split('_')[0]}`}>
+                  {badgeText}
+                </span>
+              );
+            })}
+          </div>
+        </td>
+        <td>{formatFieldDates(task)}</td>
+        <td>
+          <span className={`status-badge ${getStatusClass(task.status)}`}>
+            {getStatusLabel(task.status)}
+          </span>
+        </td>
+        <td>
+          <span className={`pm-review-badge ${getPmReviewClass(task.pm_review_status)}`}>
+            {getPmReviewLabel(task.pm_review_status)}
+          </span>
+        </td>
+        <td>{formatDate(task.dueDate)}</td>
+        <td onClick={(e) => e.stopPropagation()}>{getTaskActions(task)}</td>
+      </tr>
+    );
+  };
+
   if (loading) {
     return <div className="tasks-dashboard-loading">Loading...</div>;
   }
+
+  const pendingCount = tasks.filter(t => t.status === 'READY_FOR_REVIEW').length;
 
   return (
     <div className="tasks-dashboard">
@@ -585,132 +525,32 @@ const TasksDashboard: React.FC = () => {
         <div className="header-actions">
           <span className="user-info">{user?.name || user?.email}</span>
           <span className="user-role">({user?.role})</span>
-          <button onClick={() => navigate('/dashboard')} className="back-button">
-            Back to Projects
-          </button>
+          <button onClick={() => navigate('/dashboard')} className="back-button">Back to Projects</button>
           <button onClick={logout} className="logout-button">Logout</button>
         </div>
       </header>
 
       <div className="tasks-dashboard-content">
         {notice && (
-          <div
-            className={`tasks-dashboard-notice tasks-dashboard-notice--${notice.variant}`}
-            role="status"
-          >
+          <div className={`tasks-dashboard-notice tasks-dashboard-notice--${notice.variant}`} role="status">
             {notice.message}
-            <button
-              type="button"
-              className="tasks-dashboard-notice-dismiss"
-              onClick={() => setNotice(null)}
-              aria-label="Dismiss"
-            >
-              ×
-            </button>
+            <button type="button" className="tasks-dashboard-notice-dismiss" onClick={() => setNotice(null)} aria-label="Dismiss">×</button>
           </div>
         )}
-        <div className="auto-send-panel">
-          <div className="auto-send-title">Auto-send approved reports nightly</div>
-          {autoSendEnabled === null ? (
-            <div className="auto-send-loading">Loading...</div>
-          ) : (
-            <div className="auto-send-controls">
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="auto-send"
-                  checked={autoSendEnabled === true}
-                  onChange={() => handleToggleAutoSend(true)}
-                  disabled={isUpdatingAutoSend}
-                />
-                On
-              </label>
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="auto-send"
-                  checked={autoSendEnabled === false}
-                  onChange={() => handleToggleAutoSend(false)}
-                  disabled={isUpdatingAutoSend}
-                />
-                Off
-              </label>
-
-              {autoSendEnabled && (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => openAutoSendBodyModal('edit')}
-                  disabled={isUpdatingAutoSend}
-                >
-                  Edit Email Body
-                </button>
-              )}
-            </div>
-          )}
-        </div>
 
         <div className="filter-tabs">
-          <button
-            className={`filter-tab ${activeFilter === 'today' ? 'active' : ''}`}
-            onClick={() => setActiveFilter('today')}
-          >
-            Today
+          <button className={`filter-tab ${activeFilter === 'board' ? 'active' : ''}`} onClick={() => setActiveFilter('board')}>
+            Task Board
           </button>
-          <button
-            className={`filter-tab ${activeFilter === 'upcoming' ? 'active' : ''}`}
-            onClick={() => setActiveFilter('upcoming')}
-          >
-            Upcoming
+          <button className={`filter-tab ${activeFilter === 'pending-approval' ? 'active' : ''}`} onClick={() => setActiveFilter('pending-approval')}>
+            Pending Approval{pendingCount > 0 && activeFilter !== 'pending-approval' ? ` (${pendingCount})` : ''}
           </button>
-          <button
-            className={`filter-tab ${activeFilter === 'overdue' ? 'active' : ''}`}
-            onClick={() => setActiveFilter('overdue')}
-          >
-            Overdue/Pending
-          </button>
-          <button
-            className={`filter-tab ${activeFilter === 'activity' ? 'active' : ''}`}
-            onClick={() => setActiveFilter('activity')}
-          >
+          <button className={`filter-tab ${activeFilter === 'activity' ? 'active' : ''}`} onClick={() => setActiveFilter('activity')}>
             Activity Log
           </button>
         </div>
 
-        {activeFilter === 'upcoming' && (
-          <div className="filter-controls">
-            <label htmlFor="upcoming-days">View next:</label>
-            <select
-              id="upcoming-days"
-              value={upcomingDays}
-              onChange={(e) => setUpcomingDays(parseInt(e.target.value))}
-              className="days-selector"
-            >
-              <option value={3}>3 days</option>
-              <option value={7}>7 days</option>
-              <option value={14}>14 days</option>
-            </select>
-          </div>
-        )}
-
         <div className="tasks-table-container">
-          {activeFilter !== 'activity' && (
-            <div className="bulk-approve-bar">
-              <div className="bulk-approve-meta">
-                Selected: <strong>{selectedTaskIds.size}</strong>
-              </div>
-              <button
-                type="button"
-                className="btn-primary bulk-approve-button"
-                disabled={selectedTaskIds.size === 0 || isBulkApproving}
-                onClick={handleBulkApproveClick}
-                title="Approve all selected tasks (one-click)"
-              >
-                {isBulkApproving ? 'Approving...' : 'Approve selected'}
-              </button>
-            </div>
-          )}
-
           {activeFilter === 'activity' ? (
             <CompletedFieldJobsLog
               key="activity-log"
@@ -722,128 +562,112 @@ const TasksDashboard: React.FC = () => {
               getStatusLabel={getStatusLabel}
               renderAdminActions={getTaskActions}
             />
-          ) : tasks.length === 0 && !loading ? (
-            <div className="empty-state">
-              <p>No tasks found for the selected filter.</p>
-            </div>
           ) : (
-            <table key={activeFilter} className="tasks-table">
-              <thead>
-                <tr>
-                  <th className="select-col">Select</th>
-                  <th>Project</th>
-                  <th>Technician</th>
-                  <th>Task</th>
-                  <th>Field Dates</th>
-                  <th>Status</th>
-                  <th>PM Review</th>
-                  <th>Report Due Date</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tasks.map((task) => {
-                  const badges = getTaskBadges(task);
-                  const isReport = isReportTask(task.taskType);
-                  const canBulkApprove = task.status === 'READY_FOR_REVIEW';
-                  const rowTaskId = toPositiveTaskId(task.id);
-
-                  return (
-                    <tr
-                      key={task.id}
-                      className={`task-row${isReport ? ' task-row-clickable' : ''}`}
-                      onClick={() => {
-                        if (isReport) navigateToReport(task);
-                      }}
-                      title={isReport ? 'Open report' : undefined}
+            <>
+              {activeFilter === 'pending-approval' && (
+                <div className="bulk-approve-bar bulk-approve-bar--prominent">
+                  <div className="bulk-approve-meta">
+                    {tasks.length === 0
+                      ? 'No reports waiting for approval'
+                      : <><strong>{selectedTaskIds.size}</strong> of <strong>{tasks.length}</strong> selected</>}
+                  </div>
+                  <div className="bulk-approve-actions">
+                    {tasks.length > 0 && selectedTaskIds.size < tasks.length && (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => {
+                          const allIds = tasks
+                            .filter(t => t.status === 'READY_FOR_REVIEW')
+                            .map(t => toPositiveTaskId(t.id))
+                            .filter((id): id is number => id != null);
+                          setSelectedTaskIds(new Set(allIds));
+                        }}
+                      >
+                        Select all
+                      </button>
+                    )}
+                    {selectedTaskIds.size > 0 && (
+                      <button type="button" className="btn-secondary" onClick={() => setSelectedTaskIds(new Set())}>
+                        Clear
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-primary bulk-approve-button"
+                      disabled={selectedTaskIds.size === 0 || isBulkApproving}
+                      onClick={handleBulkApproveClick}
                     >
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={rowTaskId != null && selectedTaskIds.has(rowTaskId)}
-                          disabled={!canBulkApprove || rowTaskId == null}
-                          onChange={(e) => {
-                            if (rowTaskId == null) return;
-                            const checked = e.target.checked;
-                            setSelectedTaskIds(prev => {
-                              const next = new Set(prev);
-                              if (checked) next.add(rowTaskId);
-                              else next.delete(rowTaskId);
-                              return next;
-                            });
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <div className="project-cell">
-                          <span className="project-number">{task.projectNumber}</span>
-                          {task.projectName && (
-                            <span className="project-name">{task.projectName}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        {task.assignedTechnicianName ? (
-                          <span>{task.assignedTechnicianName}</span>
-                        ) : (
-                          <span className="unassigned">Unassigned</span>
-                        )}
-                      </td>
-                      <td>
-                        <div className="task-name-cell">
-                          <span className="task-name">{taskTypeLabel(task)}</span>
-                          <span className={`task-type-badge ${isReport ? 'badge-report' : 'badge-field'}`}>
-                            {isReport ? 'Report' : 'Field'}
-                          </span>
-                          {badges.map(badge => {
-                            let badgeText = badge;
-                            if (badge === 'DUE_TODAY') {
-                              badgeText = 'Due Today';
-                            } else if (badge === 'COMPLETED') {
-                              badgeText = 'Completed';
-                            } else if (badge.startsWith('OVERDUE_')) {
-                              const days = badge.replace('OVERDUE_', '');
-                              badgeText = `Overdue ${days} ${days === '1' ? 'day' : 'days'}`;
-                            }
-                            return (
-                              <span key={badge} className={`task-status-badge badge-${badge.toLowerCase().split('_')[0]}`}>
-                                {badgeText}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td>{formatFieldDates(task)}</td>
-                      <td>
-                        <span className={`status-badge ${getStatusClass(task.status)}`}>
-                          {getStatusLabel(task.status)}
-                        </span>
-                      </td>
-                      <td>
-                        <span className={`pm-review-badge ${getPmReviewClass(task.pm_review_status)}`}>
-                          {getPmReviewLabel(task.pm_review_status)}
-                        </span>
-                      </td>
-                      <td>{formatDate(task.dueDate)}</td>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        {getTaskActions(task)}
-                      </td>
+                      {isBulkApproving ? 'Approving...' : `Approve selected (${selectedTaskIds.size})`}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {activeFilter === 'board' && (
+                <div className="bulk-approve-bar">
+                  <div className="bulk-approve-meta">
+                    Selected: <strong>{selectedTaskIds.size}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary bulk-approve-button"
+                    disabled={selectedTaskIds.size === 0 || isBulkApproving}
+                    onClick={handleBulkApproveClick}
+                  >
+                    {isBulkApproving ? 'Approving...' : 'Approve selected'}
+                  </button>
+                </div>
+              )}
+
+              {tasks.length === 0 ? (
+                <div className="empty-state">
+                  <p>
+                    {activeFilter === 'pending-approval'
+                      ? 'No reports waiting for approval.'
+                      : 'No tasks found.'}
+                  </p>
+                </div>
+              ) : (
+                <table className="tasks-table">
+                  <thead>
+                    <tr>
+                      <th className="select-col">Select</th>
+                      <th>Project</th>
+                      <th>Technician</th>
+                      <th>Task</th>
+                      <th>Field Dates</th>
+                      <th>Status</th>
+                      <th>PM Review</th>
+                      <th>Report Due Date</th>
+                      <th>Actions</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {activeFilter === 'board' && boardGroups.length > 0
+                      ? boardGroups.map(group => (
+                          <React.Fragment key={group.label}>
+                            <tr className={`board-section-header board-section-${group.label.toLowerCase()}`}>
+                              <td colSpan={9}>
+                                <span className="board-section-label">{group.label}</span>
+                                <span className="board-section-count">{group.tasks.length} {group.tasks.length === 1 ? 'task' : 'tasks'}</span>
+                              </td>
+                            </tr>
+                            {group.tasks.map(task => renderTaskRow(task))}
+                          </React.Fragment>
+                        ))
+                      : tasks.map(task => renderTaskRow(task))}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </div>
       </div>
 
       <RejectTaskModal
         isOpen={rejectModalTask !== null}
-        contextLine={
-          rejectModalTask
-            ? `${rejectModalTask.projectNumber ?? '—'} · ${taskTypeLabel(rejectModalTask)}`
-            : undefined
-        }
+        contextLine={rejectModalTask ? `${rejectModalTask.projectNumber ?? '—'} · ${taskTypeLabel(rejectModalTask)}` : undefined}
         onClose={() => setRejectModalTask(null)}
         onSubmit={async (payload) => {
           if (!rejectModalTask) return;
@@ -854,25 +678,15 @@ const TasksDashboard: React.FC = () => {
 
       <UnapproveTaskModal
         isOpen={unapproveTask !== null}
-        contextLine={
-          unapproveTask
-            ? `${unapproveTask.projectNumber ?? '—'} · ${taskTypeLabel(unapproveTask)}`
-            : undefined
-        }
+        contextLine={unapproveTask ? `${unapproveTask.projectNumber ?? '—'} · ${taskTypeLabel(unapproveTask)}` : undefined}
         alreadySentToClient={unapproveAlreadySent}
-        onClose={() => {
-          setUnapproveTask(null);
-          setUnapproveAlreadySent(false);
-        }}
+        onClose={() => { setUnapproveTask(null); setUnapproveAlreadySent(false); }}
         onSubmit={async (payload) => {
           if (!unapproveTask) return;
           await tasksAPI.unapprove(unapproveTask.id, payload);
           setUnapproveTask(null);
           setUnapproveAlreadySent(false);
-          setNotice({
-            variant: 'success',
-            message: 'The report has been unapproved and is back in review.'
-          });
+          setNotice({ variant: 'success', message: 'The report has been unapproved and is back in review.' });
           await loadData();
         }}
       />
@@ -883,26 +697,15 @@ const TasksDashboard: React.FC = () => {
           role="dialog"
           aria-modal="true"
           aria-labelledby="approve-confirm-title"
-          onClick={() => {
-            if (!isBulkApproving && !approveModalBusy) setApproveConfirm(null);
-          }}
+          onClick={() => { if (!isBulkApproving && !approveModalBusy) setApproveConfirm(null); }}
         >
           <div className="modal modal-confirm" onClick={(e) => e.stopPropagation()}>
-            <h2 id="approve-confirm-title" className="modal-title">
-              Confirm approval
-            </h2>
+            <h2 id="approve-confirm-title" className="modal-title">Confirm approval</h2>
             <p className="modal-confirm-body">
               {approveConfirm.mode === 'single' ? (
-                <>
-                  This will mark the report as <strong>approved</strong>. The assigned technician will be notified.
-                  Continue?
-                </>
+                <>This will mark the report as <strong>approved</strong>. The assigned technician will be notified. Continue?</>
               ) : (
-                <>
-                  You are about to approve <strong>{approveConfirm.count}</strong> report
-                  {approveConfirm.count === 1 ? '' : 's'} that are ready for review. Assigned technicians will be
-                  notified where applicable. Continue?
-                </>
+                <>You are about to approve <strong>{approveConfirm.count}</strong> report{approveConfirm.count === 1 ? '' : 's'} that are ready for review. Assigned technicians will be notified where applicable. Continue?</>
               )}
             </p>
             <div className="modal-actions">
@@ -919,11 +722,8 @@ const TasksDashboard: React.FC = () => {
                 className="btn-primary"
                 disabled={isBulkApproving || approveModalBusy}
                 onClick={() => {
-                  if (approveConfirm.mode === 'single') {
-                    void runApproveSingle(approveConfirm.taskId);
-                  } else {
-                    void runBulkApprove();
-                  }
+                  if (approveConfirm.mode === 'single') void runApproveSingle(approveConfirm.taskId);
+                  else void runBulkApprove();
                 }}
               >
                 {approveConfirm.mode === 'bulk' && isBulkApproving
@@ -936,69 +736,8 @@ const TasksDashboard: React.FC = () => {
           </div>
         </div>
       )}
-
-      {autoSendModalOpen && (
-        <div
-          className="modal-overlay"
-          onClick={() => {
-            setAutoSendModalOpen(false);
-            if (autoSendModalMode === 'enable') {
-              // If they closed without saving during "enable", keep it OFF.
-              setAutoSendEnabled(false);
-            }
-          }}
-        >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2 className="modal-title">
-              {autoSendModalMode === 'enable'
-                ? 'Enable Auto-send & Email Body'
-                : 'Edit Auto-send Email Body'}
-            </h2>
-            <textarea
-              className="modal-textarea"
-              value={autoSendDraftBody}
-              onChange={(e) => setAutoSendDraftBody(e.target.value)}
-              rows={10}
-            />
-            <div className="modal-help">
-              {`Placeholders: {{companyName}}, {{clientName}}, {{projectNumber}}, {{date}}, {{reportCount}}`}
-            </div>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => setAutoSendModalOpen(false)}
-                disabled={isUpdatingAutoSend}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => applyAutoSendBodyAndToggle(true)}
-                disabled={isUpdatingAutoSend}
-              >
-                {autoSendModalMode === 'enable' ? 'Save & Enable' : 'Save'}
-              </button>
-              {autoSendModalMode === 'enable' && (
-                <button
-                  type="button"
-                  className="btn-danger"
-                  onClick={async () => applyAutoSendBodyAndToggle(false)}
-                  disabled={isUpdatingAutoSend}
-                  title="Save body but keep auto-send disabled"
-                >
-                  Save Body Only
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 };
 
 export default TasksDashboard;
-

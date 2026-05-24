@@ -256,6 +256,11 @@ export const tasksAPI = {
     return response.data;
   },
 
+  getPendingApproval: async (): Promise<Task[]> => {
+    const response = await api.get<Task[]>(`/tasks/dashboard/pending-approval?_=${Date.now()}`);
+    return response.data;
+  },
+
   getHistory: async (taskId: number): Promise<TaskHistoryEntry[]> => {
     const response = await api.get<TaskHistoryEntry[]>(`/tasks/${taskId}/history`);
     return response.data;

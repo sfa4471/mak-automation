@@ -2504,6 +2504,55 @@ router.get('/dashboard/overdue', authenticate, requireTenant, requireAdmin, asyn
   }
 });
 
+// PENDING APPROVAL: All READY_FOR_REVIEW tasks regardless of date (Admin/PM)
+router.get('/dashboard/pending-approval', authenticate, requireTenant, requireAdminOrPm, async (req, res) => {
+  try {
+    const legacyDb = req.legacyDb;
+    const tenantId = req.tenantId;
+
+    let tasks;
+    if (db.isSupabase()) {
+      let query = supabase
+        .from('tasks')
+        .select(`
+          *,
+          users:assigned_technician_id(name, email),
+          projects:project_id(project_number, project_name)
+        `)
+        .eq('status', 'READY_FOR_REVIEW')
+        .order('due_date', { ascending: true, nullsFirst: false });
+      if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
+      const { data, error } = await query;
+      if (error) throw error;
+      tasks = (data || []).map(normalizeSupabaseTaskRow);
+    } else {
+      const sqliteDb = require('../database');
+      tasks = await new Promise((resolve, reject) => {
+        sqliteDb.all(
+          `SELECT t.*, u.name as assignedTechnicianName, u.email as assignedTechnicianEmail,
+           p.projectNumber, p.projectName
+           FROM tasks t
+           LEFT JOIN users u ON t.assignedTechnicianId = u.id
+           INNER JOIN projects p ON t.projectId = p.id
+           WHERE t.status = 'READY_FOR_REVIEW'`
+          + (legacyDb ? '' : ' AND t.tenantId = ?') +
+          ` ORDER BY t.dueDate ASC`,
+          legacyDb ? [] : [tenantId],
+          (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+          }
+        );
+      });
+    }
+
+    res.json(tasks);
+  } catch (err) {
+    console.error('Error fetching pending approval tasks:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // TECHNICIAN DASHBOARD: Today view (filtered by assigned technician)
 router.get('/dashboard/technician/today', authenticate, requireTenant, async (req, res) => {
   try {
@@ -3285,14 +3334,19 @@ router.get('/dashboard/completed-field-work', authenticate, requireTenant, requi
           projects:project_id(project_number, project_name)
         `
         )
-        .eq('field_completed', 1)
-        .not('field_completed_at', 'is', null)
-        .order('field_completed_at', { ascending: false })
+        .or('field_completed.eq.1,status.eq.APPROVED')
         .limit(limit);
       if (mustEnforceTenantOnTasks(legacyDb)) q = q.eq('tenant_id', tenantId);
       const { data, error } = await q;
       if (error) throw error;
-      rows = (data || []).map((t) => normalizeSupabaseTaskRow(t));
+      rows = (data || []).map((t) => {
+        const normalized = normalizeSupabaseTaskRow(t);
+        // Backfill fieldCompletedAt for approved tasks that never went through field-complete
+        if (!normalized.fieldCompletedAt && normalized.status === 'APPROVED') {
+          normalized.fieldCompletedAt = normalized.updatedAt;
+        }
+        return normalized;
+      }).sort((a, b) => (b.fieldCompletedAt || '').localeCompare(a.fieldCompletedAt || ''));
     } else {
       const sqliteDb = require('../database');
       rows = await new Promise((resolve, reject) => {
@@ -3302,11 +3356,10 @@ router.get('/dashboard/completed-field-work', authenticate, requireTenant, requi
            FROM tasks t
            LEFT JOIN users u ON t.assignedTechnicianId = u.id
            INNER JOIN projects p ON t.projectId = p.id
-           WHERE t.fieldCompleted = 1
-             AND t.fieldCompletedAt IS NOT NULL` +
+           WHERE (t.fieldCompleted = 1 OR t.status = 'APPROVED')` +
             (legacyDb ? '' : ' AND t.tenantId = ?') +
             `
-           ORDER BY t.fieldCompletedAt DESC
+           ORDER BY COALESCE(t.fieldCompletedAt, t.updatedAt) DESC
            LIMIT ?`,
           legacyDb ? [limit] : [tenantId, limit],
           (err, r) => {
@@ -3318,6 +3371,13 @@ router.get('/dashboard/completed-field-work', authenticate, requireTenant, requi
     }
 
     await reconcileApprovalStatusFromHistory(rows || [], req, tenantId, legacyDb);
+
+    // Backfill fieldCompletedAt for SQLite approved-only rows
+    (rows || []).forEach((r) => {
+      if (!r.fieldCompletedAt && r.status === 'APPROVED') {
+        r.fieldCompletedAt = r.updatedAt;
+      }
+    });
 
     res.json(rows || []);
   } catch (err) {
