@@ -9,16 +9,64 @@ import TaskDetailModal from './TaskDetailModal';
 import CompletedFieldJobsLog from './CompletedFieldJobsLog';
 import './TechnicianDashboard.css';
 
+// ── date bucketing ────────────────────────────────────────────────────────────
+
+type Bucket = 'overdue' | 'today' | 'tomorrow' | 'thisWeek' | 'later';
+
+interface ScheduleGroups {
+  overdue: Task[];
+  today: Task[];
+  tomorrow: Task[];
+  thisWeek: Task[];
+  later: Task[];
+}
+
+function toYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function groupByDate(tasks: Task[], asOf: string): ScheduleGroups {
+  const today = new Date(asOf + 'T00:00:00');
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const weekEnd = new Date(today);
+  weekEnd.setDate(today.getDate() + 7);
+
+  const todayStr    = toYMD(today);
+  const tomorrowStr = toYMD(tomorrow);
+  const weekEndStr  = toYMD(weekEnd);
+
+  const groups: ScheduleGroups = { overdue: [], today: [], tomorrow: [], thisWeek: [], later: [] };
+
+  const sorted = [...tasks].sort((a, b) => {
+    const da = a.scheduledStartDate || '9999-99-99';
+    const db = b.scheduledStartDate || '9999-99-99';
+    if (da !== db) return da.localeCompare(db);
+    return (a.scheduledStartTime || '99:99').localeCompare(b.scheduledStartTime || '99:99');
+  });
+
+  for (const task of sorted) {
+    const d = task.scheduledStartDate;
+    if (!d || d < todayStr)  groups.overdue.push(task);
+    else if (d === todayStr)    groups.today.push(task);
+    else if (d === tomorrowStr) groups.tomorrow.push(task);
+    else if (d <= weekEndStr)   groups.thisWeek.push(task);
+    else                        groups.later.push(task);
+  }
+  return groups;
+}
+
+// ── component ─────────────────────────────────────────────────────────────────
+
 const TechnicianDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   const { showAlert, showConfirm } = useAppDialog();
   const { tenant } = useTenant();
   const navigate = useNavigate();
+
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [tomorrowTasks, setTomorrowTasks] = useState<Task[]>([]);
-  const [allUpcomingTasks, setAllUpcomingTasks] = useState<Task[]>([]);
   const [openReports, setOpenReports] = useState<Task[]>([]);
-  const [activeFilter, setActiveFilter] = useState<'today' | 'upcoming' | 'activity'>('today');
+  const [activeFilter, setActiveFilter] = useState<'schedule' | 'activity'>('schedule');
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -27,84 +75,95 @@ const TechnicianDashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    // Refresh every 30 seconds
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFilter]);
 
-  const laterUpcomingTasks = useMemo(() => {
-    const tomorrowIds = new Set(tomorrowTasks.map((t) => t.id));
-    return allUpcomingTasks.filter((t) => !tomorrowIds.has(t.id));
-  }, [allUpcomingTasks, tomorrowTasks]);
+  // Memoised group structure — only computed for schedule tab
+  const scheduleGroups = useMemo<ScheduleGroups | null>(() => {
+    if (activeFilter !== 'schedule') return null;
+    return groupByDate(tasks, tasksAPI.getTechnicianCalendarAsOf());
+  }, [tasks, activeFilter]);
+
+  const totalScheduled = scheduleGroups
+    ? (Object.values(scheduleGroups) as Task[][]).reduce((n, arr) => n + arr.length, 0)
+    : 0;
+
+  // Bucket definitions — labels computed once per render (dates don't shift mid-session)
+  const bucketOrder = useMemo(() => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const fmtDay = (d: Date) =>
+      d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    return [
+      { key: 'overdue'  as Bucket, label: 'Overdue',   sublabel: 'Past scheduled dates — action required', showDate: true  },
+      { key: 'today'    as Bucket, label: 'Today',     sublabel: fmtDay(today),    showDate: false },
+      { key: 'tomorrow' as Bucket, label: 'Tomorrow',  sublabel: fmtDay(tomorrow), showDate: false },
+      { key: 'thisWeek' as Bucket, label: 'This Week', showDate: true  },
+      { key: 'later'    as Bucket, label: 'Later',     showDate: true  },
+    ];
+  }, []);
+
+  // ── data loading ────────────────────────────────────────────────────────────
 
   const loadData = async () => {
     try {
       setLoading(true);
-      // Clear data immediately when switching filters
       setTasks([]);
 
-      // Align dashboard dates with the technician's browser (server may be UTC).
       const asOf = tasksAPI.getTechnicianCalendarAsOf();
 
-      // Always load Tomorrow snapshot and Open Reports (shown at top)
-      const [tomorrowData, openReportsData, upcomingData] = await Promise.all([
-        tasksAPI.getTechnicianTomorrow(asOf).catch(() => []),
-        tasksAPI.getTechnicianOpenReports().catch(() => []),
-        tasksAPI.getTechnicianUpcoming(asOf).catch(() => [])
-      ]);
-      setTomorrowTasks(tomorrowData);
-      setOpenReports(openReportsData);
-      setAllUpcomingTasks(upcomingData);
-      
-      // Load tasks based on active filter (upcoming list already loaded above)
-      if (activeFilter === 'today') {
-        const tasksData = await tasksAPI.getTechnicianToday(asOf);
-        setTasks(tasksData);
-      } else if (activeFilter === 'upcoming') {
-        setTasks(upcomingData);
-      } else if (activeFilter === 'activity') {
-        const completedData = await tasksAPI.getTechnicianCompletedFieldWork();
-        setTasks(completedData);
+      // Open-reports banner is always refreshed regardless of active tab
+      const reportsData = await tasksAPI.getTechnicianOpenReports().catch(() => [] as Task[]);
+      setOpenReports(reportsData);
+
+      if (activeFilter === 'schedule') {
+        const [todayData, upcomingData] = await Promise.all([
+          tasksAPI.getTechnicianToday(asOf).catch(() => [] as Task[]),
+          tasksAPI.getTechnicianUpcoming(asOf).catch(() => [] as Task[]),
+        ]);
+        // Merge and deduplicate — today endpoint takes precedence for the same task
+        const byId = new Map<number, Task>();
+        todayData.forEach(t => byId.set(t.id, t));
+        upcomingData.forEach(t => { if (!byId.has(t.id)) byId.set(t.id, t); });
+        setTasks(Array.from(byId.values()));
+      } else {
+        const completed = await tasksAPI.getTechnicianCompletedFieldWork().catch(() => [] as Task[]);
+        setTasks(completed);
       }
 
-      // Load notifications
-      const notifs = await notificationsAPI.list();
+      const [notifs, count] = await Promise.all([
+        notificationsAPI.list().catch(() => [] as Notification[]),
+        notificationsAPI.getUnreadCount().catch(() => 0),
+      ]);
       setNotifications(notifs);
-      const count = await notificationsAPI.getUnreadCount();
       setUnreadCount(count);
-    } catch (error) {
-      console.error('Error loading data:', error);
-      setTasks([]);
+    } catch (err) {
+      console.error('Error loading data:', err);
     } finally {
       setLoading(false);
     }
   };
 
+  // ── handlers ────────────────────────────────────────────────────────────────
+
   const handleTaskClick = (task: Task) => {
-    if (task.taskType === 'COMPRESSIVE_STRENGTH') {
-      navigate(`/task/${task.id}/wp1`);
-    } else if (task.taskType === 'DENSITY_MEASUREMENT') {
-      navigate(`/task/${task.id}/density`);
-    } else if (task.taskType === 'REBAR') {
-      navigate(`/task/${task.id}/rebar`);
-    } else if (task.taskType === 'PROCTOR') {
-      navigate(`/task/${task.id}/proctor`);
-    } else {
-      // Placeholder for other task types
-      void showAlert('This task type is not available yet.', 'Not available');
-    }
+    if (task.taskType === 'COMPRESSIVE_STRENGTH') navigate(`/task/${task.id}/wp1`);
+    else if (task.taskType === 'DENSITY_MEASUREMENT') navigate(`/task/${task.id}/density`);
+    else if (task.taskType === 'REBAR') navigate(`/task/${task.id}/rebar`);
+    else if (task.taskType === 'PROCTOR') navigate(`/task/${task.id}/proctor`);
+    else void showAlert('This task type is not available yet.', 'Not available');
   };
 
   const handleMarkFieldComplete = async (task: Task) => {
     try {
       await tasksAPI.markFieldComplete(task.id);
-      // Reload data to refresh tomorrow and open reports
       loadData();
     } catch (error: any) {
-      console.error('Error marking field complete:', error);
       await showAlert(
-        error.response?.data?.error || error.message || 'Field work could not be marked complete. Please try again.',
+        error.response?.data?.error || error.message || 'Could not mark field work complete. Please try again.',
         'Error'
       );
     }
@@ -114,15 +173,10 @@ const TechnicianDashboard: React.FC = () => {
     if (!notification.isRead) {
       await notificationsAPI.markAsRead(notification.id);
       setUnreadCount(prev => Math.max(0, prev - 1));
-      setNotifications(prev => prev.map(n => 
-        n.id === notification.id ? { ...n, isRead: 1 } : n
-      ));
+      setNotifications(prev => prev.map(n => n.id === notification.id ? { ...n, isRead: 1 } : n));
     }
-
-    // Handle both task and workpackage notifications
     if ((notification as any).relatedTaskId) {
-      const taskId = (notification as any).relatedTaskId;
-      navigate(`/task/${taskId}/wp1`);
+      navigate(`/task/${(notification as any).relatedTaskId}/wp1`);
     } else if (notification.relatedWorkPackageId) {
       navigate(`/workpackage/${notification.relatedWorkPackageId}/wp1`);
     }
@@ -130,85 +184,154 @@ const TechnicianDashboard: React.FC = () => {
   };
 
   const handleClearAllNotifications = async () => {
-    const clearOk = await showConfirm(
+    const ok = await showConfirm(
       'Clear all notifications? This removes every notification from your list.',
       'Clear notifications'
     );
-    if (!clearOk) return;
+    if (!ok) return;
     try {
       await notificationsAPI.clearAll();
       setUnreadCount(0);
       setNotifications([]);
     } catch (error: any) {
-      console.error('Error clearing notifications:', error);
       await showAlert('Notifications could not be cleared. Please try again.', 'Error');
     }
   };
 
-  const getStatusLabel = (status: string): string => {
-    const statusMap: { [key: string]: string } = {
-      'ASSIGNED': 'Assigned',
-      'IN_PROGRESS_TECH': 'In Progress',
-      'READY_FOR_REVIEW': 'Under review (PM / Admin)',
-      'APPROVED': 'Approved',
-      'REJECTED_NEEDS_FIX': 'Rejected - Needs Fix'
-    };
-    return statusMap[status] || status;
-  };
-
-  const getStatusBadge = (task: Task): string => {
-    if (task.status === 'REJECTED_NEEDS_FIX') return 'REJECTED';
-    if (task.dueDate && task.status !== 'APPROVED') {
-      // Compare dates as strings (YYYY-MM-DD) to avoid timezone shifts
-      const now = new Date();
-      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-      if (task.dueDate < today) {
-        return 'OVERDUE';
-      }
-    }
-    if (task.status === 'READY_FOR_REVIEW') return 'READY_FOR_REVIEW';
-    return '';
-  };
+  // ── formatters ───────────────────────────────────────────────────────────────
 
   const formatDate = (dateString?: string): string => {
     if (!dateString) return 'N/A';
-    // Parse date string (YYYY-MM-DD) as local date to avoid timezone shifts
-    // Split and create date in local timezone
-    const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    // Format as date only (no time needed for due dates)
-    return date.toLocaleDateString();
+    const [y, m, d] = dateString.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString();
   };
 
   const formatFieldDates = (task: Task): string => {
-    if (task.scheduledStartDate) {
-      // Parse date string (YYYY-MM-DD) as local date to avoid timezone shifts
-      const [startYear, startMonth, startDay] = task.scheduledStartDate.split('-').map(Number);
-      const startDate = new Date(startYear, startMonth - 1, startDay);
-      const startFormatted = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      
-      if (task.scheduledEndDate) {
-        const [endYear, endMonth, endDay] = task.scheduledEndDate.split('-').map(Number);
-        const endDate = new Date(endYear, endMonth - 1, endDay);
-        const endFormatted = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        
-        // Check if same day
-        if (task.scheduledStartDate === task.scheduledEndDate) {
-          return startFormatted;
-        }
-        return `${startFormatted} – ${endFormatted}`;
-      }
-      return startFormatted;
+    if (!task.scheduledStartDate) return '—';
+    const [sy, sm, sd] = task.scheduledStartDate.split('-').map(Number);
+    const start = new Date(sy, sm - 1, sd);
+    const startFmt = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    if (task.scheduledEndDate && task.scheduledEndDate !== task.scheduledStartDate) {
+      const [ey, em, ed] = task.scheduledEndDate.split('-').map(Number);
+      const end = new Date(ey, em - 1, ed);
+      return `${startFmt} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
     }
-    return '—';
+    return startFmt;
   };
 
+  const formatArrivalTime = (timeStr?: string): string => {
+    if (!timeStr) return '';
+    const [hStr, mStr = '00'] = timeStr.split(':');
+    const h = parseInt(hStr, 10);
+    if (isNaN(h)) return timeStr;
+    const period = h >= 12 ? 'PM' : 'AM';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${h12}:${mStr} ${period}`;
+  };
+
+  const getStatusLabel = (status: string): string => {
+    const map: Record<string, string> = {
+      ASSIGNED: 'Assigned',
+      IN_PROGRESS_TECH: 'In Progress',
+      READY_FOR_REVIEW: 'Under review (PM / Admin)',
+      APPROVED: 'Approved',
+      REJECTED_NEEDS_FIX: 'Rejected – Needs Fix',
+    };
+    return map[status] || status;
+  };
+
+  // ── schedule card ────────────────────────────────────────────────────────────
+
+  const renderScheduleCard = (task: Task, showDate: boolean) => {
+    const arrivalTime = formatArrivalTime(task.scheduledStartTime);
+    const hasMeta = !!(arrivalTime || (showDate && task.scheduledStartDate) || task.locationName || task.dueDate);
+
+    return (
+      <div key={task.id} className="schedule-card">
+        <div className="schedule-card-top">
+          <div className="schedule-card-info">
+            <span className="schedule-card-project">{task.projectNumber}</span>
+            <span className="schedule-card-sep">·</span>
+            <span className="schedule-card-type">{taskTypeLabel(task)}</span>
+            {task.projectName && (
+              <span className="schedule-card-projname">{task.projectName}</span>
+            )}
+            {task.status === 'REJECTED_NEEDS_FIX' && (
+              <span className="sched-badge sched-badge--rejected">Rejected</span>
+            )}
+          </div>
+          <div className="schedule-card-actions">
+            <button
+              type="button"
+              className="sched-btn sched-btn--detail"
+              onClick={() => setSelectedTaskForDetail(task)}
+            >
+              Task Detail
+            </button>
+            {task.fieldCompleted ? (
+              <button
+                type="button"
+                className="sched-btn sched-btn--continue"
+                onClick={() => handleTaskClick(task)}
+              >
+                Continue Report
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="sched-btn sched-btn--complete"
+                  onClick={() => handleMarkFieldComplete(task)}
+                >
+                  Mark Complete
+                </button>
+                <button
+                  type="button"
+                  className="sched-btn sched-btn--view"
+                  onClick={() => handleTaskClick(task)}
+                >
+                  View
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {hasMeta && (
+          <div className="schedule-card-meta">
+            {arrivalTime && (
+              <span className="sched-meta-time">⏰ {arrivalTime}</span>
+            )}
+            {showDate && task.scheduledStartDate && (
+              <span className="sched-meta-date">{formatFieldDates(task)}</span>
+            )}
+            {task.locationName && (
+              <span className="sched-meta-loc">📍 {task.locationName}</span>
+            )}
+            {task.dueDate && (
+              <span className="sched-meta-due">Report due {formatDate(task.dueDate)}</span>
+            )}
+          </div>
+        )}
+
+        {task.status === 'REJECTED_NEEDS_FIX' && task.rejectionRemarks && (
+          <div className="schedule-card-rejection">
+            Admin note: {task.rejectionRemarks}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── render ───────────────────────────────────────────────────────────────────
+
   if (loading) {
-    return <div className="technician-dashboard-loading">Loading...</div>;
+    return <div className="technician-dashboard-loading">Loading…</div>;
   }
 
   return (
     <div className="technician-dashboard">
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <header className="technician-dashboard-header">
         <div className="header-left">
           <h1>My Tasks</h1>
@@ -246,13 +369,9 @@ const TechnicianDashboard: React.FC = () => {
                       >
                         <div className="notification-message">{notif.message}</div>
                         <div className="notification-time">
-                          {new Date(notif.createdAt).toLocaleString('en-US', { 
-                            year: 'numeric', 
-                            month: 'short', 
-                            day: 'numeric', 
-                            hour: 'numeric', 
-                            minute: '2-digit',
-                            hour12: true 
+                          {new Date(notif.createdAt).toLocaleString('en-US', {
+                            year: 'numeric', month: 'short', day: 'numeric',
+                            hour: 'numeric', minute: '2-digit', hour12: true,
                           })}
                         </div>
                       </div>
@@ -262,8 +381,8 @@ const TechnicianDashboard: React.FC = () => {
               </div>
             )}
           </div>
-          <button 
-            onClick={() => navigate('/technician/change-password')} 
+          <button
+            onClick={() => navigate('/technician/change-password')}
             className="change-password-button"
           >
             Change Password
@@ -273,176 +392,52 @@ const TechnicianDashboard: React.FC = () => {
       </header>
 
       <div className="technician-dashboard-content">
-        {/* Tomorrow Snapshot Section */}
-        {tomorrowTasks.length > 0 && (
-          <div className="tomorrow-snapshot">
-            <h2>Tomorrow's Field Work</h2>
-            <div className="snapshot-list">
-              {tomorrowTasks.map((task) => (
-                <div key={task.id} className="snapshot-item">
-                  <div className="snapshot-item-main">
-                    <div className="snapshot-item-info">
-                      <strong>{task.projectNumber}</strong> - {task.projectName || taskTypeLabel(task)}
-                      <div className="snapshot-item-details">
-                        <span>Field Date: {formatFieldDates(task)}</span>
-                        {task.dueDate && <span>• Report Due: {formatDate(task.dueDate)}</span>}
-                      </div>
-                    </div>
-                    <div className="snapshot-item-actions">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedTaskForDetail(task);
-                        }}
-                        className="snapshot-action task-detail"
-                      >
-                        Task Detail
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (task.fieldCompleted) {
-                            handleTaskClick(task);
-                          } else {
-                            handleMarkFieldComplete(task);
-                          }
-                        }}
-                        className={`snapshot-action ${task.fieldCompleted ? 'continue-report' : 'mark-complete'}`}
-                      >
-                        {task.fieldCompleted ? 'Continue Report' : 'Mark Field Complete'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* My Open Reports Section */}
+        {/* ── Open Reports Banner ─────────────────────────────────────────── */}
         {openReports.length > 0 && (
-          <div className="open-reports-section">
-            <h2>My Open Reports</h2>
-            <div className="open-reports-list">
-              {openReports.map((task) => (
-                <div key={task.id} className="open-report-item">
-                    <div className="open-report-main">
-                      <div className="open-report-info">
-                        <strong>{taskTypeLabel(task)}</strong> - {task.projectNumber}
-                        <div className="open-report-details">
-                          {task.dueDate && <span>Due: {formatDate(task.dueDate)}</span>}
-                          <span className={`status-badge status-${task.status.toLowerCase().replace(/[ _]/g, '-')}`}>
-                            {getStatusLabel(task.status)}
-                          </span>
-                          {task.status === 'REJECTED_NEEDS_FIX' && task.rejectionRemarks && (
-                            <span className="rejection-badge" title={task.rejectionRemarks}>
-                              Rejected – Notes
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="open-report-actions">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedTaskForDetail(task);
-                          }}
-                          className="task-detail-button-small"
-                        >
-                          Task Detail
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleTaskClick(task);
-                          }}
-                          className="continue-report-btn"
-                        >
-                          Continue Report
-                        </button>
-                      </div>
-                    </div>
+          <div className="open-reports-banner">
+            <div className="open-reports-banner-title">
+              ⚠️&nbsp;{openReports.length}&nbsp;report{openReports.length !== 1 ? 's' : ''} pending your submission
+            </div>
+            <div className="open-reports-banner-list">
+              {openReports.map(task => (
+                <div key={task.id} className="open-reports-banner-item">
+                  <span className="open-reports-item-label">
+                    {task.projectNumber} · {taskTypeLabel(task)}
+                    {task.status === 'REJECTED_NEEDS_FIX' && (
+                      <span className="open-reports-item-rejected">Rejected</span>
+                    )}
+                  </span>
+                  {task.dueDate && (
+                    <span className="open-reports-item-due">Due {formatDate(task.dueDate)}</span>
+                  )}
+                  <button
+                    type="button"
+                    className="open-reports-item-btn"
+                    onClick={() => setSelectedTaskForDetail(task)}
+                  >
+                    Detail
+                  </button>
+                  <button
+                    type="button"
+                    className="open-reports-item-btn open-reports-item-btn--primary"
+                    onClick={() => handleTaskClick(task)}
+                  >
+                    Continue →
+                  </button>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {laterUpcomingTasks.length > 0 && (
-          <div className="coming-up-section">
-            <div className="coming-up-header">
-              <h2>Coming up</h2>
-              <p className="coming-up-subtitle">
-                Work on your schedule that is not listed under Tomorrow's Field Work. Use the Upcoming tab for the full list.
-              </p>
-            </div>
-            <div className="coming-up-list">
-              {laterUpcomingTasks.slice(0, 3).map((task) => (
-                <div key={task.id} className="coming-up-item">
-                  <div className="coming-up-item-info">
-                    <strong>{task.projectNumber}</strong>
-                    <span className="coming-up-sep">·</span>
-                    <span>{task.projectName || taskTypeLabel(task)}</span>
-                    <div className="coming-up-item-meta">
-                      <span>Field: {formatFieldDates(task)}</span>
-                      {task.dueDate && (
-                        <span>Report due: {formatDate(task.dueDate)}</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="coming-up-item-actions">
-                    <button
-                      type="button"
-                      className="coming-up-btn secondary"
-                      onClick={() => setSelectedTaskForDetail(task)}
-                    >
-                      Task detail
-                    </button>
-                    <button
-                      type="button"
-                      className="coming-up-btn primary"
-                      onClick={() => setActiveFilter('upcoming')}
-                    >
-                      Upcoming tab
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="coming-up-footer">
-              {laterUpcomingTasks.length > 3 && (
-                <span className="coming-up-more">
-                  +{laterUpcomingTasks.length - 3} more in Upcoming
-                </span>
-              )}
-              <button
-                type="button"
-                className="coming-up-view-all"
-                onClick={() => setActiveFilter('upcoming')}
-              >
-                View all upcoming
-              </button>
-            </div>
-          </div>
-        )}
-
+        {/* ── Tabs ────────────────────────────────────────────────────────── */}
         <div className="filter-tabs">
           <button
-            className={`filter-tab ${activeFilter === 'today' ? 'active' : ''}`}
-            onClick={() => setActiveFilter('today')}
+            className={`filter-tab ${activeFilter === 'schedule' ? 'active' : ''}`}
+            onClick={() => setActiveFilter('schedule')}
           >
-            Today
-          </button>
-          <button
-            className={`filter-tab filter-tab-with-badge ${activeFilter === 'upcoming' ? 'active' : ''}`}
-            onClick={() => setActiveFilter('upcoming')}
-          >
-            Upcoming
-            {allUpcomingTasks.length > 0 && (
-              <span className="filter-tab-count" aria-label={`${allUpcomingTasks.length} upcoming tasks`}>
-                {allUpcomingTasks.length}
-              </span>
-            )}
+            My Schedule
           </button>
           <button
             className={`filter-tab ${activeFilter === 'activity' ? 'active' : ''}`}
@@ -452,9 +447,8 @@ const TechnicianDashboard: React.FC = () => {
           </button>
         </div>
 
-        {loading ? (
-          <div className="technician-dashboard-loading">Loading...</div>
-        ) : activeFilter === 'activity' ? (
+        {/* ── Activity Log ─────────────────────────────────────────────────── */}
+        {activeFilter === 'activity' && (
           <CompletedFieldJobsLog
             key="activity-log"
             tasks={tasks}
@@ -466,130 +460,47 @@ const TechnicianDashboard: React.FC = () => {
             onTechnicianTaskDetail={setSelectedTaskForDetail}
             onTechnicianOpenTask={handleTaskClick}
           />
-        ) : (
-          // Tasks view (Today or Upcoming)
-          tasks.length === 0 ? (
+        )}
+
+        {/* ── My Schedule ──────────────────────────────────────────────────── */}
+        {activeFilter === 'schedule' && scheduleGroups && (
+          totalScheduled === 0 ? (
             <div className="empty-state">
-              {activeFilter === 'today' && laterUpcomingTasks.length > 0 ? (
-                <>
-                  <p className="empty-state-lead">Nothing scheduled for you today.</p>
-                  <p className="empty-state-detail">
-                    You still have {allUpcomingTasks.length} upcoming assignment
-                    {allUpcomingTasks.length !== 1 ? 's' : ''}. Check the Coming up section above, or open the full Upcoming list.
-                  </p>
-                  <button
-                    type="button"
-                    className="empty-state-cta"
-                    onClick={() => setActiveFilter('upcoming')}
-                  >
-                    Open Upcoming
-                  </button>
-                </>
-              ) : (
-                <p>No tasks found for the selected filter.</p>
-              )}
+              <p>No upcoming tasks assigned to you.</p>
+              <p style={{ fontSize: 14, color: '#888', marginTop: 8 }}>
+                Check back later or contact your PM if you're expecting assignments.
+              </p>
             </div>
           ) : (
-            <div className="work-packages-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Project Number</th>
-                    <th>Task</th>
-                    <th>Status</th>
-                    <th>Due Date</th>
-                    <th>Field Dates</th>
-                    <th>Resubmission Due</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tasks.map((task) => {
-                    const badge = getStatusBadge(task);
-                    return (
-                      <tr
-                        key={task.id}
-                        onClick={() => handleTaskClick(task)}
-                        className="work-package-row"
-                      >
-                        <td>{task.projectNumber}</td>
-                        <td>
-                          <div>
-                            {taskTypeLabel(task)}
-                            {badge && (
-                              <span className={`task-badge badge-${badge.toLowerCase()}`}>
-                                {badge}
-                              </span>
-                            )}
-                          </div>
-                          {task.status === 'REJECTED_NEEDS_FIX' && task.rejectionRemarks && (
-                            <div style={{ fontSize: '12px', color: '#dc3545', marginTop: '5px' }}>
-                              Remarks: {task.rejectionRemarks}
-                            </div>
-                          )}
-                        </td>
-                        <td>
-                          <span className={`status-badge status-${task.status.toLowerCase().replace(/[ _]/g, '-')}`}>
-                            {getStatusLabel(task.status)}
-                          </span>
-                        </td>
-                        <td>{formatDate(task.dueDate)}</td>
-                        <td>{formatFieldDates(task)}</td>
-                        <td>{task.resubmissionDueDate ? formatDate(task.resubmissionDueDate) : 'N/A'}</td>
-                        <td onClick={(e) => e.stopPropagation()}>
-                          <div className="task-actions">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedTaskForDetail(task);
-                              }}
-                              className="task-detail-button"
-                            >
-                              Task Detail
-                            </button>
-                            {task.fieldCompleted ? (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleTaskClick(task);
-                                }}
-                                className="continue-report-button"
-                              >
-                                Continue Report
-                              </button>
-                            ) : (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleMarkFieldComplete(task);
-                                }}
-                                className="mark-complete-button"
-                              >
-                                Mark Complete
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleTaskClick(task);
-                              }}
-                              className="details-button"
-                            >
-                              View
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="schedule-view">
+              {bucketOrder.map(({ key, label, sublabel, showDate }) => {
+                const group = scheduleGroups[key];
+                if (group.length === 0) return null;
+                return (
+                  <div key={key} className={`schedule-group schedule-group--${key}`}>
+                    <div className="schedule-group-header">
+                      <div className="schedule-group-header-text">
+                        <span className="schedule-group-label">{label}</span>
+                        {sublabel && (
+                          <span className="schedule-group-sublabel">{sublabel}</span>
+                        )}
+                      </div>
+                      <span className="schedule-group-count">
+                        {group.length} {group.length === 1 ? 'task' : 'tasks'}
+                      </span>
+                    </div>
+                    <div className="schedule-group-body">
+                      {group.map(task => renderScheduleCard(task, showDate))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )
         )}
       </div>
 
-      {/* Task Detail Modal */}
+      {/* ── Task Detail Modal ───────────────────────────────────────────────── */}
       {selectedTaskForDetail && (
         <TaskDetailModal
           task={selectedTaskForDetail}
@@ -602,4 +513,3 @@ const TechnicianDashboard: React.FC = () => {
 };
 
 export default TechnicianDashboard;
-

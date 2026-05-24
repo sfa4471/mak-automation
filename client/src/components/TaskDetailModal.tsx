@@ -105,7 +105,7 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
     return statusMap[status] || status;
   };
 
-  const hasAdminInstructions = !!(task.locationName || task.locationNotes || task.engagementNotes);
+  const hasAdminInstructions = !!(task.locationName || task.locationNotes || task.engagementNotes || task.scheduledStartTime);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
