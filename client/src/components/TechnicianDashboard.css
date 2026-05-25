@@ -545,6 +545,11 @@
   letter-spacing: 0.4px;
 }
 
+.sched-badge--inprogress {
+  background: #0d6efd;
+  color: white;
+}
+
 .sched-badge--rejected {
   background: #dc3545;
   color: white;

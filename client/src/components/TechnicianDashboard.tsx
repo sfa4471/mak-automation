@@ -256,6 +256,9 @@ const TechnicianDashboard: React.FC = () => {
             {task.projectName && (
               <span className="schedule-card-projname">{task.projectName}</span>
             )}
+            {task.status === 'IN_PROGRESS_TECH' && (
+              <span className="sched-badge sched-badge--inprogress">In Progress</span>
+            )}
             {task.status === 'REJECTED_NEEDS_FIX' && (
               <span className="sched-badge sched-badge--rejected">Rejected</span>
             )}
@@ -290,7 +293,7 @@ const TechnicianDashboard: React.FC = () => {
                   className="sched-btn sched-btn--view"
                   onClick={() => handleTaskClick(task)}
                 >
-                  View
+                  {task.status === 'IN_PROGRESS_TECH' ? 'Continue' : 'View'}
                 </button>
               </>
             )}
