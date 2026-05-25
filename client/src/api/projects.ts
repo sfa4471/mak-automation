@@ -56,6 +56,7 @@ export function normalizeSoilSpecRow(spec: SoilSpecRow | undefined): SoilSpecRow
   const legacyDensityPct = spec.densityPct ?? raw.density_pct;
   const moistureRangesFromDb = spec.moistureRanges ?? (raw.moisture_ranges as MoistureRange[] | undefined);
   const legacyMoisture = spec.moistureRange ?? (raw.moisture_range as MoistureRange | undefined);
+  const otherDetails = spec.otherDetails ?? (raw.other_details as string | undefined);
 
   const densityPcts =
     Array.isArray(densityPctsFromDb) && densityPctsFromDb.length > 0
@@ -78,7 +79,8 @@ export function normalizeSoilSpecRow(spec: SoilSpecRow | undefined): SoilSpecRow
       legacyDensityPct !== undefined &&
       legacyDensityPct !== null && { densityPct: String(legacyDensityPct) }),
     ...(spec.moistureRange && { moistureRange: spec.moistureRange }),
-    ...(spec.moistureRange === undefined && legacyMoisture && { moistureRange: legacyMoisture })
+    ...(spec.moistureRange === undefined && legacyMoisture && { moistureRange: legacyMoisture }),
+    ...(otherDetails != null && { otherDetails })
   };
 }
 
