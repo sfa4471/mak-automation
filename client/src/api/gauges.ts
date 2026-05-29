@@ -71,7 +71,7 @@ const gaugesApi = {
   create: (payload: { serialNumber: string; model: GaugeModel; nickname?: string }) =>
     api.post<NuclearGauge>('/gauges', payload).then((r) => r.data),
 
-  update: (gaugeId: number, payload: Partial<{ model: GaugeModel; nickname: string; active: boolean }>) =>
+  update: (gaugeId: number, payload: Partial<{ serialNumber: string; model: GaugeModel; nickname: string; active: boolean }>) =>
     api.put<NuclearGauge>(`/gauges/${gaugeId}`, payload).then((r) => r.data),
 
   deactivate: (gaugeId: number) =>

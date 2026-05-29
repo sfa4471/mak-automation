@@ -1,7 +1,7 @@
 const express = require('express');
 const QRCode = require('qrcode');
 const puppeteer = require('puppeteer');
-const { supabase } = require('../db/supabase');
+const { supabase, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
@@ -15,6 +15,10 @@ router.use(authenticate, requireTenant);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function cc(obj) {
+  return obj ? keysToCamelCase(obj) : obj;
+}
 
 function frontendUrl() {
   return process.env.FRONTEND_URL || 'https://app.crestfield.com';
@@ -61,9 +65,9 @@ router.get('/', async (req, res) => {
       gauges.map(async (g) => {
         const open = await getOpenCheckout(g.id);
         return {
-          ...g,
+          ...cc(g),
           status: open ? 'in_field' : 'in_lab',
-          currentCheckout: open || null,
+          currentCheckout: open ? cc(open) : null,
         };
       })
     );
@@ -111,7 +115,7 @@ router.post(
         return res.status(500).json({ error: error.message });
       }
 
-      res.status(201).json(data);
+      res.status(201).json(cc(data));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -125,6 +129,7 @@ router.put(
   '/:id',
   requireAdmin,
   [
+    body('serialNumber').optional().notEmpty().trim(),
     body('model').optional().notEmpty().trim(),
     body('nickname').optional().trim(),
     body('active').optional().isBoolean(),
@@ -137,6 +142,7 @@ router.put(
     if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
 
     const updates = {};
+    if (req.body.serialNumber !== undefined) updates.serial_number = req.body.serialNumber;
     if (req.body.model !== undefined) updates.model = req.body.model;
     if (req.body.nickname !== undefined) updates.nickname = req.body.nickname || null;
     if (req.body.active !== undefined) updates.active = req.body.active;
@@ -149,8 +155,11 @@ router.put(
         .select()
         .single();
 
-      if (error) return res.status(500).json({ error: error.message });
-      res.json(data);
+      if (error) {
+        if (error.code === '23505') return res.status(409).json({ error: 'Serial number already exists for this tenant.' });
+        return res.status(500).json({ error: error.message });
+      }
+      res.json(cc(data));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -259,9 +268,9 @@ router.get('/:id/status', async (req, res) => {
 
   const open = await getOpenCheckout(gauge.id);
   res.json({
-    gauge,
+    gauge: cc(gauge),
     status: open ? 'in_field' : 'in_lab',
-    currentCheckout: open || null,
+    currentCheckout: open ? cc(open) : null,
   });
 });
 
@@ -313,7 +322,7 @@ router.post(
         .single();
 
       if (error) return res.status(500).json({ error: error.message });
-      res.status(201).json(data);
+      res.status(201).json(cc(data));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -349,7 +358,7 @@ router.post(
         .single();
 
       if (error) return res.status(500).json({ error: error.message });
-      res.json(data);
+      res.json(cc(data));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -379,7 +388,7 @@ router.get('/:id/log', async (req, res) => {
       .order('time_out');
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ gauge, month, year, entries: data || [] });
+    res.json({ gauge: cc(gauge), month, year, entries: (data || []).map(cc) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -405,7 +414,7 @@ router.get('/log/all', async (req, res) => {
       .order('time_out');
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ month, year, entries: data || [] });
+    res.json({ month, year, entries: (data || []).map(cc) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

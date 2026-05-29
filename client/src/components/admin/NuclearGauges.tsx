@@ -80,7 +80,11 @@ export default function NuclearGauges() {
     setSaving(true);
     try {
       if (editGauge) {
-        await gaugesApi.update(editGauge.id, { model: addForm.model, nickname: addForm.nickname || undefined });
+        await gaugesApi.update(editGauge.id, {
+          serialNumber: addForm.serialNumber,
+          model: addForm.model,
+          nickname: addForm.nickname || undefined,
+        });
       } else {
         await gaugesApi.create(addForm);
       }
@@ -310,7 +314,6 @@ export default function NuclearGauges() {
               <input
                 value={addForm.serialNumber}
                 onChange={(e) => setAddForm((f) => ({ ...f, serialNumber: e.target.value }))}
-                disabled={!!editGauge}
                 placeholder="e.g. 30303"
               />
             </div>
