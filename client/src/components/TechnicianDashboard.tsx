@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAppDialog } from '../context/AppDialogContext';
 import { useTenant } from '../context/TenantContext';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
+import gaugesApi, { NuclearGauge } from '../api/gauges';
 import TaskDetailModal from './TaskDetailModal';
 import CompletedFieldJobsLog from './CompletedFieldJobsLog';
 import './TechnicianDashboard.css';
@@ -66,7 +67,9 @@ const TechnicianDashboard: React.FC = () => {
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [openReports, setOpenReports] = useState<Task[]>([]);
-  const [activeFilter, setActiveFilter] = useState<'schedule' | 'activity'>('schedule');
+  const [activeFilter, setActiveFilter] = useState<'schedule' | 'activity' | 'gauges'>('schedule');
+  const [gauges, setGauges] = useState<NuclearGauge[]>([]);
+  const [gaugesLoading, setGaugesLoading] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -105,6 +108,24 @@ const TechnicianDashboard: React.FC = () => {
       { key: 'later'    as Bucket, label: 'Later',     showDate: true  },
     ];
   }, []);
+
+  // ── gauge loading ────────────────────────────────────────────────────────────
+
+  const loadGauges = useCallback(async () => {
+    setGaugesLoading(true);
+    try {
+      const data = await gaugesApi.list();
+      setGauges(data.filter(g => g.active));
+    } catch {
+      setGauges([]);
+    } finally {
+      setGaugesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeFilter === 'gauges') loadGauges();
+  }, [activeFilter, loadGauges]);
 
   // ── data loading ────────────────────────────────────────────────────────────
 
@@ -448,6 +469,12 @@ const TechnicianDashboard: React.FC = () => {
           >
             Activity Log
           </button>
+          <button
+            className={`filter-tab ${activeFilter === 'gauges' ? 'active' : ''}`}
+            onClick={() => setActiveFilter('gauges')}
+          >
+            Nuclear Gauges
+          </button>
         </div>
 
         {/* ── Activity Log ─────────────────────────────────────────────────── */}
@@ -500,6 +527,85 @@ const TechnicianDashboard: React.FC = () => {
               })}
             </div>
           )
+        )}
+        {/* ── Nuclear Gauges ───────────────────────────────────────────────── */}
+        {activeFilter === 'gauges' && (
+          <div className="td-gauges">
+            {gaugesLoading && <div className="td-gauges-loading">Loading gauges…</div>}
+            {!gaugesLoading && (() => {
+              const myCheckout = gauges.find(
+                g => g.status === 'in_field' && g.currentCheckout?.technicianId === (user as any)?.id
+              );
+              const checkedOutByOthers = gauges.filter(
+                g => g.status === 'in_field' && g.currentCheckout?.technicianId !== (user as any)?.id
+              );
+              const inLab = gauges.filter(g => g.status === 'in_lab');
+
+              return (
+                <>
+                  {/* My current gauge */}
+                  <div className="td-gauges-section">
+                    <div className="td-gauges-section-title">My Gauge</div>
+                    {myCheckout ? (
+                      <div className="td-gauge-card td-gauge-mine" onClick={() => navigate(`/gauges/${myCheckout.id}`)}>
+                        <div className="td-gauge-dot out" />
+                        <div className="td-gauge-info">
+                          <div className="td-gauge-name">{myCheckout.model} · S/N {myCheckout.serialNumber}</div>
+                          {myCheckout.nickname && <div className="td-gauge-nick">{myCheckout.nickname}</div>}
+                          <div className="td-gauge-meta">
+                            Checked out {myCheckout.currentCheckout?.timeOut
+                              ? new Date(myCheckout.currentCheckout.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                              : ''}
+                            {myCheckout.currentCheckout?.projectName ? ` · ${myCheckout.currentCheckout.projectName}` : ''}
+                          </div>
+                        </div>
+                        <button className="td-gauge-action checkin">Return to Lab →</button>
+                      </div>
+                    ) : (
+                      <div className="td-gauges-empty">You have no gauge checked out.</div>
+                    )}
+                  </div>
+
+                  {/* Available in lab */}
+                  <div className="td-gauges-section">
+                    <div className="td-gauges-section-title">Available in Lab <span className="td-gauges-count">{inLab.length}</span></div>
+                    {inLab.length === 0
+                      ? <div className="td-gauges-empty">No gauges available — all are in the field.</div>
+                      : inLab.map(g => (
+                          <div key={g.id} className="td-gauge-card" onClick={() => navigate(`/gauges/${g.id}`)}>
+                            <div className="td-gauge-dot in" />
+                            <div className="td-gauge-info">
+                              <div className="td-gauge-name">{g.model} · S/N {g.serialNumber}</div>
+                              {g.nickname && <div className="td-gauge-nick">{g.nickname}</div>}
+                            </div>
+                            <button className="td-gauge-action checkout">Check Out →</button>
+                          </div>
+                        ))
+                    }
+                  </div>
+
+                  {/* In field by others */}
+                  {checkedOutByOthers.length > 0 && (
+                    <div className="td-gauges-section">
+                      <div className="td-gauges-section-title">In Field — Others <span className="td-gauges-count">{checkedOutByOthers.length}</span></div>
+                      {checkedOutByOthers.map(g => (
+                        <div key={g.id} className="td-gauge-card td-gauge-other">
+                          <div className="td-gauge-dot out" />
+                          <div className="td-gauge-info">
+                            <div className="td-gauge-name">{g.model} · S/N {g.serialNumber}</div>
+                            <div className="td-gauge-meta">
+                              {g.currentCheckout?.users?.name || 'Unknown'}
+                              {g.currentCheckout?.projectName ? ` · ${g.currentCheckout.projectName}` : ''}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
         )}
       </div>
 

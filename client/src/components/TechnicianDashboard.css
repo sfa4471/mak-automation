@@ -954,3 +954,118 @@
     text-align: center;
   }
 }
+
+/* ── Nuclear Gauges Tab ─────────────────────────────────────────────────── */
+
+.td-gauges {
+  padding: 4px 0 24px;
+}
+
+.td-gauges-loading {
+  padding: 32px;
+  text-align: center;
+  color: #888;
+  font-size: 15px;
+}
+
+.td-gauges-section {
+  margin-bottom: 28px;
+}
+
+.td-gauges-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #9ca3af;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.td-gauges-count {
+  background: #e5e7eb;
+  color: #374151;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.td-gauge-card {
+  background: white;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.td-gauge-card:hover { border-color: #1a1a2e; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+
+.td-gauge-card.td-gauge-mine { border-color: #fcd34d; background: #fffbeb; }
+.td-gauge-card.td-gauge-other { cursor: default; opacity: 0.7; }
+.td-gauge-card.td-gauge-other:hover { border-color: #e5e7eb; box-shadow: none; }
+
+.td-gauge-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.td-gauge-dot.in  { background: #16a34a; }
+.td-gauge-dot.out { background: #dc2626; }
+
+.td-gauge-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.td-gauge-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.td-gauge-nick {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-top: 1px;
+}
+
+.td-gauge-meta {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 3px;
+}
+
+.td-gauge-action {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.td-gauge-action.checkout { background: #1a1a2e; color: white; }
+.td-gauge-action.checkout:hover { background: #2d2d4e; }
+
+.td-gauge-action.checkin { background: #16a34a; color: white; }
+.td-gauge-action.checkin:hover { background: #15803d; }
+
+.td-gauges-empty {
+  color: #9ca3af;
+  font-size: 14px;
+  padding: 12px 0;
+}
