@@ -77,16 +77,18 @@ const gaugesApi = {
   deactivate: (gaugeId: number) =>
     api.delete(`/gauges/${gaugeId}`).then((r) => r.data),
 
-  downloadQr: (gaugeId: number, serialNumber: string) =>
+  permanentDelete: (gaugeId: number) =>
+    api.delete(`/gauges/${gaugeId}/permanent`).then((r) => r.data),
+
+  downloadQr: (gaugeId: number) =>
     api
-      .get(`/gauges/${gaugeId}/qr`, { responseType: 'blob' })
+      .get(`/gauges/${gaugeId}/qr`, { responseType: 'text' })
       .then((r) => {
-        const url = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }));
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `QR-${serialNumber}.pdf`;
-        a.click();
-        URL.revokeObjectURL(url);
+        const win = window.open('', '_blank');
+        if (win) {
+          win.document.write(r.data);
+          win.document.close();
+        }
       }),
 
   checkout: (gaugeId: number, payload: CheckoutPayload) =>

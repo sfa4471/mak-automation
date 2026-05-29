@@ -118,9 +118,22 @@ export default function NuclearGauges() {
 
   async function handleDownloadQr(g: NuclearGauge) {
     try {
-      await gaugesApi.downloadQr(g.id, g.serialNumber);
+      await gaugesApi.downloadQr(g.id);
     } catch {
-      showAlert('Failed to generate QR code');
+      showAlert('Failed to generate QR code. Please try again.');
+    }
+  }
+
+  async function handlePermanentDelete(g: NuclearGauge) {
+    const confirmed = await showConfirm(
+      `Permanently delete gauge ${g.serialNumber}? This cannot be undone. Only allowed if the gauge has no checkout history.`
+    );
+    if (!confirmed) return;
+    try {
+      await gaugesApi.permanentDelete(g.id);
+      loadGauges();
+    } catch (e: any) {
+      showAlert(e?.response?.data?.error || 'Failed to delete gauge');
     }
   }
 
@@ -296,6 +309,7 @@ export default function NuclearGauges() {
                     {g.active && (
                       <button className="ng-action-btn danger" onClick={() => handleDeactivate(g)}>Deactivate</button>
                     )}
+                    <button className="ng-action-btn danger" onClick={() => handlePermanentDelete(g)}>Delete</button>
                   </td>
                 </tr>
               ))}

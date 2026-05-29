@@ -1,11 +1,9 @@
 const express = require('express');
 const QRCode = require('qrcode');
-const puppeteer = require('puppeteer');
 const { supabase, keysToCamelCase } = require('../db/supabase');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
-const { getPuppeteerLaunchOptions } = require('../utils/puppeteerLaunch');
 
 const router = express.Router();
 
@@ -185,7 +183,34 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/gauges/:id/qr — download print-ready QR code PDF
+// DELETE /api/gauges/:id/permanent — hard delete (admin only, only if no checkout history)
+// ---------------------------------------------------------------------------
+router.delete('/:id/permanent', requireAdmin, async (req, res) => {
+  const gauge = await getGauge(req.params.id, req.tenantId);
+  if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
+
+  try {
+    const { count } = await supabase
+      .from('gauge_checkouts')
+      .select('id', { count: 'exact', head: true })
+      .eq('gauge_id', gauge.id);
+
+    if (count > 0) {
+      return res.status(409).json({
+        error: `Cannot delete — gauge has ${count} checkout record(s). Use Deactivate instead to preserve the audit trail.`,
+      });
+    }
+
+    const { error } = await supabase.from('nuclear_gauges').delete().eq('id', gauge.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/gauges/:id/qr — print-ready QR code page (HTML, no Puppeteer)
 // ---------------------------------------------------------------------------
 router.get('/:id/qr', requireAdmin, async (req, res) => {
   const gauge = await getGauge(req.params.id, req.tenantId);
@@ -204,6 +229,7 @@ router.get('/:id/qr', requireAdmin, async (req, res) => {
 <html>
 <head>
 <meta charset="utf-8"/>
+<title>QR - ${label}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -227,6 +253,17 @@ router.get('/:id/qr', requireAdmin, async (req, res) => {
   .model { font-size: 14px; color: #444; margin-top: 4px; }
   .serial { font-size: 12px; color: #888; margin-top: 2px; }
   .instruction { font-size: 11px; color: #999; margin-top: 14px; border-top: 1px solid #eee; padding-top: 10px; }
+  .print-btn {
+    margin-top: 20px;
+    padding: 10px 28px;
+    background: #1a1a2e;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  @media print { .print-btn { display: none; } }
 </style>
 </head>
 <body>
@@ -237,23 +274,13 @@ router.get('/:id/qr', requireAdmin, async (req, res) => {
   <div class="model">${gauge.model}</div>
   <div class="serial">S/N: ${gauge.serial_number}</div>
   <div class="instruction">Scan to check out or check in</div>
+  <button class="print-btn" onclick="window.print()">Print</button>
 </div>
 </body>
 </html>`;
 
-    const browser = await puppeteer.launch(getPuppeteerLaunchOptions());
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    const pdf = await page.pdf({
-      format: 'A6',
-      printBackground: true,
-      margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' },
-    });
-    await browser.close();
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="QR-${gauge.serial_number}.pdf"`);
-    res.send(pdf);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
