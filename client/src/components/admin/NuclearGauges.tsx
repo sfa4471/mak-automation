@@ -33,7 +33,9 @@ export default function NuclearGauges() {
   // Manage tab
   const [showAddModal, setShowAddModal] = useState(false);
   const [editGauge, setEditGauge] = useState<NuclearGauge | null>(null);
-  const [addForm, setAddForm] = useState({ serialNumber: '', model: GAUGE_MODELS[0] as GaugeModel, nickname: '' });
+  const [addForm, setAddForm] = useState({ serialNumber: '', model: GAUGE_MODELS[0] as string, nickname: '' });
+  const [customModel, setCustomModel] = useState('');
+  const isCustomModel = !GAUGE_MODELS.includes(addForm.model as GaugeModel);
   const [saving, setSaving] = useState(false);
 
   // Log tab
@@ -77,20 +79,23 @@ export default function NuclearGauges() {
   // ---- Add / Edit ----
   async function handleSaveGauge() {
     if (!addForm.serialNumber.trim()) return showAlert('Serial number is required.');
+    const resolvedModel = addForm.model === 'Other' ? customModel.trim() : addForm.model;
+    if (!resolvedModel) return showAlert('Please enter a model name.');
     setSaving(true);
     try {
       if (editGauge) {
         await gaugesApi.update(editGauge.id, {
           serialNumber: addForm.serialNumber,
-          model: addForm.model,
+          model: resolvedModel,
           nickname: addForm.nickname || undefined,
         });
       } else {
-        await gaugesApi.create(addForm);
+        await gaugesApi.create({ ...addForm, model: resolvedModel });
       }
       setShowAddModal(false);
       setEditGauge(null);
       setAddForm({ serialNumber: '', model: GAUGE_MODELS[0], nickname: '' });
+      setCustomModel('');
       loadGauges();
     } catch (e: any) {
       showAlert(e?.response?.data?.error || 'Failed to save gauge');
@@ -101,7 +106,9 @@ export default function NuclearGauges() {
 
   function openEdit(g: NuclearGauge) {
     setEditGauge(g);
-    setAddForm({ serialNumber: g.serialNumber, model: g.model, nickname: g.nickname || '' });
+    const isPreset = GAUGE_MODELS.includes(g.model as GaugeModel);
+    setAddForm({ serialNumber: g.serialNumber, model: isPreset ? g.model : 'Other', nickname: g.nickname || '' });
+    setCustomModel(isPreset ? '' : g.model);
     setShowAddModal(true);
   }
 
@@ -333,9 +340,25 @@ export default function NuclearGauges() {
             </div>
             <div className="ng-form-group">
               <label>Model</label>
-              <select value={addForm.model} onChange={(e) => setAddForm((f) => ({ ...f, model: e.target.value as GaugeModel }))}>
+              <select
+                value={isCustomModel ? 'Other' : addForm.model}
+                onChange={(e) => {
+                  setAddForm((f) => ({ ...f, model: e.target.value }));
+                  if (e.target.value !== 'Other') setCustomModel('');
+                }}
+              >
                 {GAUGE_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                <option value="Other">Other (enter manually)</option>
               </select>
+              {(addForm.model === 'Other' || isCustomModel) && (
+                <input
+                  style={{ marginTop: 8 }}
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                  placeholder="e.g. Instrotek Chek-It 5001"
+                  autoFocus
+                />
+              )}
             </div>
             <div className="ng-form-group">
               <label>Nickname <span className="ng-optional">(optional)</span></label>
