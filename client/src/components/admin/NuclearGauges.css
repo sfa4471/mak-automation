@@ -301,3 +301,89 @@
   .ng-card { width: 100%; }
   .ng-modal { padding: 20px 16px; }
 }
+
+/* Log tab controls with manual entry button */
+.ng-log-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.ng-manual-btn {
+  margin-left: auto;
+  font-size: 13px;
+  padding: 7px 14px;
+}
+
+/* Wide modal for manual entry */
+.ng-modal-wide {
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.ng-modal-error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  color: #dc2626;
+  font-size: 13px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+}
+
+/* Two-column form row */
+.ng-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.ng-form-group textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1a1a2e;
+  background: white;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.ng-form-group textarea:focus {
+  outline: none;
+  border-color: #1a1a2e;
+}
+
+/* Block std toggle inside modal */
+.ng-toggle-row {
+  display: flex;
+  gap: 10px;
+}
+
+.ng-toggle-btn {
+  flex: 1;
+  padding: 9px;
+  border: 2px solid #d1d5db;
+  border-radius: 8px;
+  background: white;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ng-toggle-btn.active-yes { border-color: #16a34a; background: #dcfce7; color: #15803d; }
+.ng-toggle-btn.active-no  { border-color: #dc2626; background: #fee2e2; color: #dc2626; }
+
+.ng-req { color: #dc2626; }
+.ng-opt { font-weight: 400; color: #9ca3af; }
+
+@media (max-width: 500px) {
+  .ng-form-row { grid-template-columns: 1fr; }
+  .ng-modal-wide { max-width: 100%; }
+}

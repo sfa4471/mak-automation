@@ -102,6 +102,22 @@ const gaugesApi = {
 
   getAllLog: (month: number, year: number) =>
     api.get<AllLogResponse>('/gauges/log/all', { params: { month, year } }).then((r) => r.data),
+
+  manualLogEntry: (payload: {
+    gaugeId: number;
+    date: string;
+    timeOut: string;
+    timeIn?: string;
+    blockClosed: boolean;
+    destination: string;
+    technicianId?: number;
+    projectName?: string;
+    chd?: string;
+    notes?: string;
+  }) => api.post<GaugeCheckout>('/gauges/log/manual', payload).then((r) => r.data),
+
+  listTechnicians: () =>
+    api.get<{ id: number; name: string }[]>('/auth/technicians').then((r) => r.data),
 };
 
 export default gaugesApi;

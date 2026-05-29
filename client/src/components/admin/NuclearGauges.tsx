@@ -45,6 +45,25 @@ export default function NuclearGauges() {
   const [logEntries, setLogEntries] = useState<any[]>([]);
   const [logLoading, setLogLoading] = useState(false);
 
+  // Manual entry modal
+  const [showManualModal, setShowManualModal] = useState(false);
+  const [technicians, setTechnicians] = useState<{ id: number; name: string }[]>([]);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [manualForm, setManualForm] = useState({
+    gaugeId: '' as number | '',
+    date: todayStr,
+    timeOut: '',
+    timeIn: '',
+    blockClosed: null as boolean | null,
+    destination: '',
+    technicianId: '' as number | '',
+    projectName: '',
+    chd: '',
+    notes: '',
+  });
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualError, setManualError] = useState('');
+
   const loadGauges = useCallback(async () => {
     try {
       setLoading(true);
@@ -73,8 +92,44 @@ export default function NuclearGauges() {
   }, [logMonth, logYear]);
 
   useEffect(() => {
-    if (tab === 'log') loadLog();
-  }, [tab, loadLog]);
+    if (tab === 'log') {
+      loadLog();
+      if (technicians.length === 0) {
+        gaugesApi.listTechnicians().then(setTechnicians).catch(() => {});
+      }
+    }
+  }, [tab, loadLog]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleSaveManualEntry() {
+    setManualError('');
+    if (!manualForm.gaugeId) return setManualError('Select a gauge.');
+    if (!manualForm.date) return setManualError('Date is required.');
+    if (!manualForm.timeOut) return setManualError('Time out is required.');
+    if (manualForm.blockClosed === null) return setManualError('Block standardization confirmation is required.');
+    if (!manualForm.destination.trim()) return setManualError('Destination is required.');
+    setManualSaving(true);
+    try {
+      await gaugesApi.manualLogEntry({
+        gaugeId: manualForm.gaugeId as number,
+        date: manualForm.date,
+        timeOut: manualForm.timeOut,
+        timeIn: manualForm.timeIn || undefined,
+        blockClosed: manualForm.blockClosed,
+        destination: manualForm.destination.trim(),
+        technicianId: manualForm.technicianId ? (manualForm.technicianId as number) : undefined,
+        projectName: manualForm.projectName.trim() || undefined,
+        chd: manualForm.chd.trim() || undefined,
+        notes: manualForm.notes.trim() || undefined,
+      });
+      setShowManualModal(false);
+      setManualForm({ gaugeId: '', date: todayStr, timeOut: '', timeIn: '', blockClosed: null, destination: '', technicianId: '', projectName: '', chd: '', notes: '' });
+      loadLog();
+    } catch (e: any) {
+      setManualError(e?.response?.data?.errors?.[0]?.msg || e?.response?.data?.error || 'Failed to save entry.');
+    } finally {
+      setManualSaving(false);
+    }
+  }
 
   // ---- Add / Edit ----
   async function handleSaveGauge() {
@@ -235,6 +290,9 @@ export default function NuclearGauges() {
             <select value={logYear} onChange={(e) => setLogYear(Number(e.target.value))}>
               {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
+            <button className="primary-button ng-manual-btn" onClick={() => { setManualError(''); setShowManualModal(true); }}>
+              + Manual Entry
+            </button>
           </div>
 
           {logLoading && <div className="ng-loading">Loading log…</div>}
@@ -248,7 +306,7 @@ export default function NuclearGauges() {
                     <th>Technician</th>
                     <th>Time Out</th>
                     <th>Time In</th>
-                    <th>Block Closed</th>
+                    <th>Block Std.</th>
                     <th>Project</th>
                     <th>Destination</th>
                     <th>CHD</th>
@@ -260,14 +318,18 @@ export default function NuclearGauges() {
                   )}
                   {logEntries.map((e) => (
                     <tr key={e.id}>
-                      <td>{new Date(e.log_date).toLocaleDateString()}</td>
-                      <td>{e.nuclear_gauges?.nickname || e.nuclear_gauges?.serial_number || '—'}</td>
+                      <td>{formatDate(e.logDate)}</td>
+                      <td>
+                        {e.nuclearGauges
+                          ? `${e.nuclearGauges.model} · ${e.nuclearGauges.serialNumber}`
+                          : '—'}
+                      </td>
                       <td>{e.users?.name || '—'}</td>
-                      <td>{formatTime(e.time_out)}</td>
-                      <td>{formatTime(e.time_in)}</td>
-                      <td className={e.block_closed ? 'ng-yes' : 'ng-no'}>{e.block_closed ? 'Yes' : 'No'}</td>
-                      <td>{e.project_name || '—'}</td>
-                      <td>{e.destination}</td>
+                      <td>{formatTime(e.timeOut)}</td>
+                      <td>{formatTime(e.timeIn)}</td>
+                      <td className={e.blockClosed ? 'ng-yes' : 'ng-no'}>{e.blockClosed ? 'Yes' : 'No'}</td>
+                      <td>{e.projectName || '—'}</td>
+                      <td>{e.destination || '—'}</td>
                       <td>{e.chd || '—'}</td>
                     </tr>
                   ))}
@@ -372,6 +434,86 @@ export default function NuclearGauges() {
               <button className="secondary-button" onClick={() => setShowAddModal(false)}>Cancel</button>
               <button className="primary-button" onClick={handleSaveGauge} disabled={saving}>
                 {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ---- MANUAL LOG ENTRY MODAL ---- */}
+      {showManualModal && (
+        <div className="ng-modal-overlay" onClick={() => setShowManualModal(false)}>
+          <div className="ng-modal ng-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h2>Manual Log Entry</h2>
+            {manualError && <div className="ng-modal-error">{manualError}</div>}
+
+            <div className="ng-form-row">
+              <div className="ng-form-group">
+                <label>Gauge <span className="ng-req">*</span></label>
+                <select value={manualForm.gaugeId} onChange={(e) => setManualForm((f) => ({ ...f, gaugeId: e.target.value ? Number(e.target.value) : '' }))}>
+                  <option value="">Select gauge…</option>
+                  {gauges.filter(g => g.active).map((g) => (
+                    <option key={g.id} value={g.id}>{g.model} · {g.serialNumber}{g.nickname ? ` (${g.nickname})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="ng-form-group">
+                <label>Date <span className="ng-req">*</span></label>
+                <input type="date" value={manualForm.date} onChange={(e) => setManualForm((f) => ({ ...f, date: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="ng-form-row">
+              <div className="ng-form-group">
+                <label>Time Out <span className="ng-req">*</span></label>
+                <input type="time" value={manualForm.timeOut} onChange={(e) => setManualForm((f) => ({ ...f, timeOut: e.target.value }))} />
+              </div>
+              <div className="ng-form-group">
+                <label>Time In <span className="ng-opt">(optional)</span></label>
+                <input type="time" value={manualForm.timeIn} onChange={(e) => setManualForm((f) => ({ ...f, timeIn: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="ng-form-group">
+              <label>Technician <span className="ng-opt">(optional — defaults to you)</span></label>
+              <select value={manualForm.technicianId} onChange={(e) => setManualForm((f) => ({ ...f, technicianId: e.target.value ? Number(e.target.value) : '' }))}>
+                <option value="">Select technician…</option>
+                {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+
+            <div className="ng-form-group">
+              <label>Block Standardization Check <span className="ng-req">*</span></label>
+              <div className="ng-toggle-row">
+                <button type="button" className={`ng-toggle-btn ${manualForm.blockClosed === true ? 'active-yes' : ''}`} onClick={() => setManualForm((f) => ({ ...f, blockClosed: true }))}>Yes — completed</button>
+                <button type="button" className={`ng-toggle-btn ${manualForm.blockClosed === false ? 'active-no' : ''}`} onClick={() => setManualForm((f) => ({ ...f, blockClosed: false }))}>No</button>
+              </div>
+            </div>
+
+            <div className="ng-form-group">
+              <label>Destination <span className="ng-req">*</span></label>
+              <input value={manualForm.destination} onChange={(e) => setManualForm((f) => ({ ...f, destination: e.target.value }))} placeholder="Job site address or name" />
+            </div>
+
+            <div className="ng-form-row">
+              <div className="ng-form-group">
+                <label>Project <span className="ng-opt">(optional)</span></label>
+                <input value={manualForm.projectName} onChange={(e) => setManualForm((f) => ({ ...f, projectName: e.target.value }))} placeholder="Project name" />
+              </div>
+              <div className="ng-form-group">
+                <label>CHD <span className="ng-opt">(optional)</span></label>
+                <input value={manualForm.chd} onChange={(e) => setManualForm((f) => ({ ...f, chd: e.target.value }))} placeholder="Count history data" />
+              </div>
+            </div>
+
+            <div className="ng-form-group">
+              <label>Notes <span className="ng-opt">(optional)</span></label>
+              <textarea rows={2} value={manualForm.notes} onChange={(e) => setManualForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Any observations" />
+            </div>
+
+            <div className="ng-modal-actions">
+              <button className="secondary-button" onClick={() => setShowManualModal(false)}>Cancel</button>
+              <button className="primary-button" onClick={handleSaveManualEntry} disabled={manualSaving}>
+                {manualSaving ? 'Saving…' : 'Save Entry'}
               </button>
             </div>
           </div>

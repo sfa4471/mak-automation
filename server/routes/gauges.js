@@ -393,6 +393,63 @@ router.post(
 );
 
 // ---------------------------------------------------------------------------
+// POST /api/gauges/log/manual — manually create a log entry (admin only)
+// ---------------------------------------------------------------------------
+router.post(
+  '/log/manual',
+  requireAdmin,
+  [
+    body('gaugeId').isInt().withMessage('Gauge is required'),
+    body('date').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('Date is required (YYYY-MM-DD)'),
+    body('timeOut').matches(/^\d{2}:\d{2}$/).withMessage('Time out is required (HH:MM)'),
+    body('timeIn').optional({ nullable: true }).matches(/^\d{2}:\d{2}$/),
+    body('blockClosed').isBoolean().withMessage('Block standardization confirmation is required'),
+    body('destination').notEmpty().trim().withMessage('Destination is required'),
+    body('technicianId').optional({ nullable: true }).isInt(),
+    body('projectName').optional().trim(),
+    body('chd').optional().trim(),
+    body('notes').optional().trim(),
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const { gaugeId, date, timeOut, timeIn, blockClosed, destination, technicianId, projectName, chd, notes } = req.body;
+
+    const gauge = await getGauge(gaugeId, req.tenantId);
+    if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
+
+    const timeOutIso = `${date}T${timeOut}:00`;
+    const timeInIso = timeIn ? `${date}T${timeIn}:00` : null;
+
+    try {
+      const { data, error } = await supabase
+        .from('gauge_checkouts')
+        .insert({
+          tenant_id: req.tenantId,
+          gauge_id: gaugeId,
+          technician_id: technicianId || req.user.id,
+          project_name: projectName || null,
+          destination,
+          time_out: timeOutIso,
+          time_in: timeInIso,
+          block_closed: blockClosed,
+          chd: chd || null,
+          notes: notes || null,
+          log_date: date,
+        })
+        .select()
+        .single();
+
+      if (error) return res.status(500).json({ error: error.message });
+      res.status(201).json(cc(data));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
 // GET /api/gauges/:id/log?month=5&year=2026 — monthly checkout log for one gauge
 // ---------------------------------------------------------------------------
 router.get('/:id/log', async (req, res) => {
