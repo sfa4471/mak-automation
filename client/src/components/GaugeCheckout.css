@@ -296,3 +296,18 @@
 }
 
 @keyframes gc-spin { to { transform: rotate(360deg); } }
+
+.gc-home-btn {
+  display: inline-block;
+  margin-top: 20px;
+  padding: 11px 24px;
+  background: #f3f4f6;
+  color: #374151;
+  border: none;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.gc-home-btn:hover { background: #e5e7eb; }

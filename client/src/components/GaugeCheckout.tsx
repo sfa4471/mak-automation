@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import gaugesApi, { GaugeCheckout as GaugeCheckoutType, NuclearGauge } from '../api/gauges';
 import { projectsAPI, Project } from '../api/projects';
 import { useAuth } from '../context/AuthContext';
@@ -21,6 +21,7 @@ export default function GaugeCheckout() {
   const { id } = useParams<{ id: string }>();
   const gaugeId = Number(id);
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -165,6 +166,7 @@ export default function GaugeCheckout() {
             </div>
           </div>
           <p className="gc-footer-note">Scan the QR code when you return the gauge.</p>
+          <button className="gc-home-btn" onClick={() => navigate('/dashboard')}>← Back to Dashboard</button>
         </div>
       </div>
     );
@@ -184,6 +186,7 @@ export default function GaugeCheckout() {
               <span>{formatTime(new Date().toISOString())}</span>
             </div>
           </div>
+          <button className="gc-home-btn" onClick={() => navigate('/dashboard')}>← Back to Dashboard</button>
         </div>
       </div>
     );
