@@ -109,6 +109,7 @@ app.use('/api/pdf', require('./routes/pdf'));
 app.use('/api/notifications', require('./routes/notifications').router);
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/gauges', require('./routes/gauges'));
 
 // Logos, signatures, and other files under server/public (e.g. /tenants/:id/signature.png)
 app.use(express.static(path.join(__dirname, 'public')));

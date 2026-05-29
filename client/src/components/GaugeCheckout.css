@@ -1,0 +1,240 @@
+/* Mobile-first, full-screen layout for QR scan landing */
+.gc-wrap {
+  min-height: 100vh;
+  background: #f3f4f6;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px 48px;
+}
+
+.gc-card {
+  background: white;
+  border-radius: 16px;
+  padding: 28px 24px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  text-align: center;
+}
+
+/* Status dot */
+.gc-status-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  margin: 0 auto 14px;
+}
+.gc-status-dot.in-lab { background: #16a34a; }
+.gc-status-dot.in-field { background: #dc2626; }
+
+.gc-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 4px;
+}
+
+.gc-model {
+  font-size: 13px;
+  color: #9ca3af;
+  margin-bottom: 0;
+}
+
+/* Current checkout info (check-in phase) */
+.gc-current-info {
+  background: #fef9f0;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 16px;
+  text-align: left;
+}
+
+.gc-info-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 3px 0;
+}
+
+.gc-info-label { color: #9ca3af; }
+.gc-info-value { color: #1a1a2e; font-weight: 500; }
+
+.gc-divider {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 20px 0;
+}
+
+.gc-form-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 18px;
+  text-align: left;
+}
+
+.gc-validation-error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  color: #dc2626;
+  font-size: 13px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+/* Form fields */
+.gc-field {
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.gc-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.gc-required { color: #dc2626; }
+.gc-optional { font-weight: 400; color: #9ca3af; }
+
+.gc-input,
+.gc-select,
+.gc-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 15px;
+  color: #1a1a2e;
+  background: white;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+}
+
+.gc-input:focus,
+.gc-select:focus,
+.gc-textarea:focus {
+  outline: none;
+  border-color: #1a1a2e;
+}
+
+.gc-textarea { resize: vertical; }
+
+.gc-project-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.gc-project-row .gc-input,
+.gc-project-row .gc-select {
+  flex: 1;
+}
+
+.gc-link-btn {
+  background: none;
+  border: none;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+/* Block toggle */
+.gc-toggle-row {
+  display: flex;
+  gap: 10px;
+}
+
+.gc-toggle {
+  flex: 1;
+  padding: 10px;
+  border: 2px solid #d1d5db;
+  border-radius: 8px;
+  background: white;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.gc-toggle.yes {
+  border-color: #16a34a;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.gc-toggle.no {
+  border-color: #dc2626;
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+/* Submit button */
+.gc-submit-btn {
+  width: 100%;
+  padding: 14px;
+  background: #1a1a2e;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: background 0.15s;
+}
+
+.gc-submit-btn:hover:not(:disabled) { background: #2d2d4e; }
+.gc-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.gc-submit-btn.checkin {
+  background: #16a34a;
+}
+.gc-submit-btn.checkin:hover:not(:disabled) { background: #15803d; }
+
+/* Success state */
+.gc-card.gc-success {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.gc-success-icon {
+  font-size: 56px;
+  margin-bottom: 16px;
+  color: #16a34a;
+}
+
+.gc-error-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.gc-sub {
+  font-size: 15px;
+  color: #6b7280;
+  margin-top: 8px;
+}
+
+.gc-time {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-top: 12px;
+}
+
+.gc-loading {
+  color: #9ca3af;
+  padding: 32px 0;
+  font-size: 15px;
+}

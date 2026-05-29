@@ -430,6 +430,14 @@ const Dashboard: React.FC = () => {
             </button>
             {isAdmin() && (
               <button
+                onClick={() => navigate('/admin/nuclear-gauges')}
+                className="secondary-button"
+              >
+                Nuclear Gauge Log
+              </button>
+            )}
+            {isAdmin() && (
+              <button
                 onClick={() => navigate('/admin/settings')}
                 className="secondary-button"
               >

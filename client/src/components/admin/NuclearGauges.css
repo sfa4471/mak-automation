@@ -1,0 +1,303 @@
+.ng-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.ng-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.ng-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+/* Tabs */
+.ng-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e5e7eb;
+  margin-bottom: 24px;
+}
+
+.ng-tab {
+  padding: 10px 22px;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ng-tab.active {
+  color: #1a1a2e;
+  border-bottom-color: #1a1a2e;
+}
+
+.ng-tab:hover:not(.active) {
+  color: #374151;
+}
+
+.ng-error { color: #dc2626; margin-bottom: 12px; }
+.ng-loading { color: #6b7280; padding: 16px 0; }
+.ng-empty { color: #9ca3af; font-size: 14px; padding: 8px 0; }
+
+/* Section label */
+.ng-section-label {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #6b7280;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ng-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  color: white;
+}
+.ng-count.in-lab { background: #16a34a; }
+.ng-count.in-field { background: #dc2626; }
+
+/* Status cards */
+.ng-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.ng-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 14px 18px;
+  width: 280px;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  background: white;
+}
+
+.ng-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.ng-card.in-lab { border-left: 4px solid #16a34a; }
+.ng-card.in-field { border-left: 4px solid #dc2626; }
+.ng-card.overdue { border-left: 4px solid #f59e0b; background: #fffbeb; }
+
+.ng-card-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+.ng-card-dot.in-lab { background: #16a34a; }
+.ng-card-dot.in-field { background: #dc2626; }
+
+.ng-card-body { flex: 1; }
+.ng-card-name { font-size: 15px; font-weight: 600; color: #1a1a2e; }
+.ng-card-sub { font-size: 12px; color: #9ca3af; margin-top: 2px; }
+.ng-card-status { font-size: 12px; color: #16a34a; font-weight: 500; margin-top: 4px; }
+.ng-card-tech { font-size: 13px; font-weight: 500; color: #374151; margin-top: 6px; }
+.ng-card-project { font-size: 12px; color: #6b7280; margin-top: 2px; }
+.ng-card-destination { font-size: 12px; color: #6b7280; }
+.ng-card-time { font-size: 12px; color: #6b7280; margin-top: 4px; }
+.ng-card-time.overdue { color: #d97706; font-weight: 600; }
+
+/* Monthly log */
+.ng-log-controls {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.ng-log-controls select {
+  padding: 7px 12px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+}
+
+.ng-log-table-wrap {
+  overflow-x: auto;
+}
+
+.ng-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ng-log-table th {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.ng-log-table td {
+  border: 1px solid #e5e7eb;
+  padding: 7px 12px;
+  color: #374151;
+}
+
+.ng-log-table tr:hover td { background: #f9fafb; }
+.ng-empty-row { text-align: center; color: #9ca3af; padding: 24px !important; }
+.ng-yes { color: #16a34a; font-weight: 600; }
+.ng-no { color: #dc2626; }
+
+/* Manage table */
+.ng-manage-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+
+.ng-manage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.ng-manage-table th {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  padding: 9px 14px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+}
+
+.ng-manage-table td {
+  border: 1px solid #e5e7eb;
+  padding: 8px 14px;
+  color: #374151;
+}
+
+.ng-inactive-row td { color: #9ca3af; }
+
+.ng-actions { display: flex; gap: 8px; }
+
+.ng-action-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 5px;
+  border: 1.5px solid #d1d5db;
+  background: white;
+  cursor: pointer;
+  font-weight: 500;
+  color: #374151;
+  transition: background 0.12s;
+}
+.ng-action-btn:hover { background: #f3f4f6; }
+.ng-action-btn.danger { color: #dc2626; border-color: #fca5a5; }
+.ng-action-btn.danger:hover { background: #fef2f2; }
+
+/* Badge */
+.ng-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ng-badge.in-lab { background: #dcfce7; color: #15803d; }
+.ng-badge.in-field { background: #fee2e2; color: #dc2626; }
+.ng-badge.inactive { background: #f3f4f6; color: #9ca3af; }
+
+/* Modal */
+.ng-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.ng-modal {
+  background: white;
+  border-radius: 12px;
+  padding: 28px 32px;
+  width: 420px;
+  max-width: 95vw;
+}
+
+.ng-modal h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 20px;
+}
+
+.ng-form-group {
+  margin-bottom: 16px;
+}
+
+.ng-form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 5px;
+}
+
+.ng-optional { font-weight: 400; color: #9ca3af; }
+
+.ng-form-group input,
+.ng-form-group select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1a1a2e;
+  background: white;
+}
+
+.ng-form-group input:focus,
+.ng-form-group select:focus {
+  outline: none;
+  border-color: #1a1a2e;
+}
+
+.ng-form-group input:disabled {
+  background: #f9fafb;
+  color: #6b7280;
+}
+
+.ng-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+@media (max-width: 600px) {
+  .ng-card { width: 100%; }
+  .ng-modal { padding: 20px 16px; }
+}

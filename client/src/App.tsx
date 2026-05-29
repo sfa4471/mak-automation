@@ -28,6 +28,8 @@ const RebarForm = lazy(() => import('./components/RebarForm'));
 const ProctorForm = lazy(() => import('./components/ProctorForm'));
 const ProctorSummary = lazy(() => import('./components/ProctorSummary'));
 const Settings = lazy(() => import('./components/admin/Settings'));
+const NuclearGauges = lazy(() => import('./components/admin/NuclearGauges'));
+const GaugeCheckout = lazy(() => import('./components/GaugeCheckout'));
 
 function App() {
   return (
@@ -218,6 +220,26 @@ function App() {
               <ProtectedRoute>
                 <Suspense fallback={<LoadingSpinner fullScreen message="Loading summary..." />}>
                   <ProctorSummary />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/nuclear-gauges"
+            element={
+              <ProtectedRoute requireAdmin>
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading gauge log…" />}>
+                  <NuclearGauges />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/gauges/:id"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading…" />}>
+                  <GaugeCheckout />
                 </Suspense>
               </ProtectedRoute>
             }
