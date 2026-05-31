@@ -73,8 +73,6 @@ export default function GaugeCheckout() {
   async function handleCheckout() {
     setValidationError('');
     if (isGuest && !guestName.trim()) return setValidationError('Your name is required.');
-    if (!destination.trim()) return setValidationError('Destination / job site is required.');
-    if (blockClosed === null) return setValidationError('Please confirm the block standardization check.');
 
     const finalProjectName = isGuest
       ? (manualProject.trim() || null)
@@ -318,7 +316,7 @@ export default function GaugeCheckout() {
             </div>
 
             <div className="gc-field">
-              <label className="gc-label">Destination / Job Site <span className="gc-required">*</span></label>
+              <label className="gc-label">Destination / Job Site <span className="gc-optional">(optional)</span></label>
               <input
                 className="gc-input"
                 placeholder="e.g. 1234 Main St, Site B"
@@ -329,7 +327,7 @@ export default function GaugeCheckout() {
 
             <div className="gc-field">
               <label className="gc-label">
-                Block Standardization Check <span className="gc-required">*</span>
+                Block Standardization Check <span className="gc-optional">(optional)</span>
               </label>
               <p className="gc-field-hint">Confirm you performed and closed the block std. before leaving the lab.</p>
               <div className="gc-toggle-row">

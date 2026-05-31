@@ -474,6 +474,52 @@ router.post(
 );
 
 // ---------------------------------------------------------------------------
+// PUT /api/gauges/log/:entryId — edit a log entry (admin only)
+// ---------------------------------------------------------------------------
+router.put('/log/:entryId', adminAuth, async (req, res) => {
+  try {
+    const { data: entry, error: fetchErr } = await supabase
+      .from('gauge_checkouts')
+      .select('id, tenant_id')
+      .eq('id', req.params.entryId)
+      .single();
+
+    if (fetchErr || !entry) return res.status(404).json({ error: 'Entry not found' });
+    if (Number(entry.tenant_id) !== req.tenantId) return res.status(403).json({ error: 'Access denied' });
+
+    const { date, timeOut, timeIn, blockClosed, destination, technicianId, technicianName, projectName, chd, notes } = req.body;
+    const updates = {};
+
+    if (date && timeOut) {
+      updates.time_out = `${date}T${timeOut}:00`;
+      updates.log_date = date;
+    }
+    if (timeIn !== undefined) {
+      updates.time_in = (timeIn && date) ? `${date}T${timeIn}:00` : null;
+    }
+    if (blockClosed !== undefined) updates.block_closed = blockClosed;
+    if (destination !== undefined) updates.destination = destination || null;
+    if (technicianId !== undefined) updates.technician_id = technicianId || null;
+    if (technicianName !== undefined) updates.technician_name = technicianName || null;
+    if (projectName !== undefined) updates.project_name = projectName || null;
+    if (chd !== undefined) updates.chd = chd || null;
+    if (notes !== undefined) updates.notes = notes || null;
+
+    const { data, error } = await supabase
+      .from('gauge_checkouts')
+      .update(updates)
+      .eq('id', entry.id)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(cc(data));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/gauges/:id/log?month=5&year=2026 — monthly checkout log for one gauge
 // ---------------------------------------------------------------------------
 router.get('/:id/log', auth, async (req, res) => {

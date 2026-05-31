@@ -311,10 +311,46 @@
   flex-wrap: wrap;
 }
 
-.ng-manual-btn {
+.ng-log-actions {
   margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ng-manual-btn {
   font-size: 13px;
   padding: 7px 14px;
+}
+
+.ng-print-btn {
+  padding: 7px 14px;
+  font-size: 13px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  color: #374151;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ng-print-btn:hover:not(:disabled) { background: #f3f4f6; }
+.ng-print-btn:disabled { opacity: 0.45; cursor: default; }
+
+.ng-notes-cell {
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.ng-modal-subtitle {
+  font-size: 13px;
+  color: #6b7280;
+  margin-top: -12px;
+  margin-bottom: 16px;
 }
 
 /* Wide modal for manual entry */
@@ -377,8 +413,9 @@
   transition: all 0.15s;
 }
 
-.ng-toggle-btn.active-yes { border-color: #16a34a; background: #dcfce7; color: #15803d; }
-.ng-toggle-btn.active-no  { border-color: #dc2626; background: #fee2e2; color: #dc2626; }
+.ng-toggle-btn.active-yes     { border-color: #16a34a; background: #dcfce7; color: #15803d; }
+.ng-toggle-btn.active-no      { border-color: #dc2626; background: #fee2e2; color: #dc2626; }
+.ng-toggle-btn.active-neutral { border-color: #6b7280; background: #f3f4f6; color: #374151; }
 
 .ng-req { color: #dc2626; }
 .ng-opt { font-weight: 400; color: #9ca3af; }

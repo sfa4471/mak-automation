@@ -24,7 +24,8 @@ export interface NuclearGauge {
 export interface GaugeCheckout {
   id: number;
   gaugeId: number;
-  technicianId: number;
+  technicianId: number | null;
+  technicianName: string | null;
   projectId: number | null;
   projectName: string | null;
   destination: string;
@@ -119,6 +120,19 @@ const gaugesApi = {
 
   listTechnicians: () =>
     api.get<{ id: number; name: string }[]>('/auth/technicians').then((r) => r.data),
+
+  updateLogEntry: (entryId: number, payload: {
+    date?: string;
+    timeOut?: string;
+    timeIn?: string;
+    blockClosed?: boolean | null;
+    destination?: string;
+    technicianId?: number | null;
+    technicianName?: string;
+    projectName?: string;
+    chd?: string;
+    notes?: string;
+  }) => api.put<GaugeCheckout>(`/gauges/log/${entryId}`, payload).then((r) => r.data),
 };
 
 export default gaugesApi;

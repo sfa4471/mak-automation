@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import gaugesApi, { GAUGE_MODELS, GaugeModel, NuclearGauge } from '../../api/gauges';
 import { useAppDialog } from '../../context/AppDialogContext';
+import { useTenant } from '../../context/TenantContext';
 import './NuclearGauges.css';
 
 type Tab = 'status' | 'manage' | 'log';
@@ -21,9 +22,16 @@ function formatDate(iso: string | null) {
   return new Date(iso).toLocaleDateString();
 }
 
+function isoToTimeInput(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export default function NuclearGauges() {
   const navigate = useNavigate();
   const { showAlert, showConfirm } = useAppDialog();
+  const { tenant } = useTenant();
 
   const [tab, setTab] = useState<Tab>('status');
   const [gauges, setGauges] = useState<NuclearGauge[]>([]);
@@ -64,6 +72,26 @@ export default function NuclearGauges() {
   const [manualSaving, setManualSaving] = useState(false);
   const [manualError, setManualError] = useState('');
 
+  // Edit log entry modal
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editEntryId, setEditEntryId] = useState<number | null>(null);
+  const [editGaugeName, setEditGaugeName] = useState('');
+  const [editIsGuest, setEditIsGuest] = useState(false);
+  const [editForm, setEditForm] = useState({
+    date: '',
+    timeOut: '',
+    timeIn: '',
+    blockClosed: null as boolean | null,
+    destination: '',
+    technicianId: '' as number | '',
+    technicianName: '',
+    projectName: '',
+    chd: '',
+    notes: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+
   const loadGauges = useCallback(async () => {
     try {
       setLoading(true);
@@ -100,6 +128,145 @@ export default function NuclearGauges() {
     }
   }, [tab, loadLog]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- Print monthly log ----
+  function handlePrint() {
+    const monthName = MONTHS[logMonth - 1];
+    const companyName = tenant?.name || '';
+    const addr = [tenant?.companyAddress, tenant?.companyCity, tenant?.companyState, tenant?.companyZip]
+      .filter(Boolean).join(', ');
+    const phone = tenant?.companyPhone || '';
+    const email = tenant?.companyEmail || '';
+
+    const rows = logEntries.map(e => {
+      const gaugeName = e.nuclearGauges
+        ? `${e.nuclearGauges.model} · ${e.nuclearGauges.serialNumber}`
+        : '—';
+      const tech = e.users?.name || e.technicianName || '—';
+      const dateStr = e.logDate ? new Date(e.logDate).toLocaleDateString() : '—';
+      const tOut = e.timeOut ? new Date(e.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const tIn  = e.timeIn  ? new Date(e.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const blk  = e.blockClosed === true ? 'Yes' : e.blockClosed === false ? 'No' : '—';
+      return `<tr>
+        <td>${dateStr}</td>
+        <td>${gaugeName}</td>
+        <td>${tech}</td>
+        <td>${tOut}</td>
+        <td>${tIn}</td>
+        <td style="color:${e.blockClosed ? '#15803d' : '#dc2626'};font-weight:600">${blk}</td>
+        <td>${e.projectName || '—'}</td>
+        <td>${e.destination || '—'}</td>
+        <td>${e.chd || '—'}</td>
+      </tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Nuclear Gauge Log — ${monthName} ${logYear}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; font-size: 9pt; padding: 16px 20px; background: white; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1a1a2e; padding-bottom: 12px; margin-bottom: 14px; }
+  .company-name { font-size: 11pt; font-weight: bold; margin-bottom: 3px; }
+  .company-info { font-size: 9pt; line-height: 1.6; color: #444; }
+  .report-label { font-size: 9pt; color: #888; text-align: right; }
+  .report-title { text-align: center; font-size: 14pt; font-weight: bold; text-decoration: underline; margin: 12px 0 4px; }
+  .report-period { text-align: center; font-size: 10pt; color: #555; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+  th { background: #1a1a2e; color: white; padding: 6px 8px; text-align: left; font-weight: 600; white-space: nowrap; }
+  td { border: 1px solid #d1d5db; padding: 5px 8px; }
+  tr:nth-child(even) td { background: #f9fafb; }
+  .print-btn { margin: 14px 0; padding: 8px 22px; background: #1a1a2e; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  @media print { .print-btn { display: none; } }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      ${companyName ? `<div class="company-name">${companyName}</div>` : ''}
+      <div class="company-info">
+        ${addr   ? `<div>${addr}</div>` : ''}
+        ${phone  ? `<div>Phone: ${phone}</div>` : ''}
+        ${email  ? `<div>Email: ${email}</div>` : ''}
+      </div>
+    </div>
+    <div class="report-label">Nuclear Gauge Log</div>
+  </div>
+  <div class="report-title">Nuclear Gauge Monthly Log</div>
+  <div class="report-period">Period: ${monthName} ${logYear}</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Gauge</th><th>Technician</th>
+        <th>Time Out</th><th>Time In</th><th>Block Std.</th>
+        <th>Project</th><th>Destination</th><th>CHD</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows || '<tr><td colspan="9" style="text-align:center;color:#999;padding:14px">No entries for this period</td></tr>'}
+    </tbody>
+  </table>
+  <button class="print-btn" onclick="window.print()">Print</button>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(html); win.document.close(); }
+  }
+
+  // ---- Edit log entry ----
+  function openEditEntry(e: any) {
+    setEditEntryId(e.id);
+    const gaugeName = e.nuclearGauges
+      ? `${e.nuclearGauges.model} · S/N ${e.nuclearGauges.serialNumber}`
+      : `Gauge #${e.gaugeId}`;
+    setEditGaugeName(gaugeName);
+    setEditIsGuest(!e.technicianId && !!e.technicianName);
+    setEditForm({
+      date: e.logDate || '',
+      timeOut: isoToTimeInput(e.timeOut),
+      timeIn: isoToTimeInput(e.timeIn),
+      blockClosed: e.blockClosed,
+      destination: e.destination || '',
+      technicianId: e.technicianId || '',
+      technicianName: e.technicianName || '',
+      projectName: e.projectName || '',
+      chd: e.chd || '',
+      notes: e.notes || '',
+    });
+    setEditError('');
+    setShowEditModal(true);
+  }
+
+  async function handleSaveEditEntry() {
+    setEditError('');
+    if (!editForm.date) return setEditError('Date is required.');
+    if (!editForm.timeOut) return setEditError('Time out is required.');
+    setEditSaving(true);
+    try {
+      await gaugesApi.updateLogEntry(editEntryId!, {
+        date: editForm.date,
+        timeOut: editForm.timeOut,
+        timeIn: editForm.timeIn || undefined,
+        blockClosed: editForm.blockClosed,
+        destination: editForm.destination.trim() || undefined,
+        technicianId: editIsGuest ? undefined : (editForm.technicianId ? (editForm.technicianId as number) : null),
+        technicianName: editIsGuest ? (editForm.technicianName || undefined) : undefined,
+        projectName: editForm.projectName.trim() || undefined,
+        chd: editForm.chd.trim() || undefined,
+        notes: editForm.notes.trim() || undefined,
+      });
+      setShowEditModal(false);
+      loadLog();
+    } catch (e: any) {
+      setEditError(e?.response?.data?.error || 'Failed to save changes.');
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  // ---- Manual entry ----
   async function handleSaveManualEntry() {
     setManualError('');
     if (!manualForm.gaugeId) return setManualError('Select a gauge.');
@@ -131,7 +298,7 @@ export default function NuclearGauges() {
     }
   }
 
-  // ---- Add / Edit ----
+  // ---- Add / Edit gauge ----
   async function handleSaveGauge() {
     if (!addForm.serialNumber.trim()) return showAlert('Serial number is required.');
     const resolvedModel = addForm.model === 'Other' ? customModel.trim() : addForm.model;
@@ -264,8 +431,10 @@ export default function NuclearGauges() {
                     <div className="ng-card-sub">{g.model} · S/N {g.serialNumber}</div>
                     {co && (
                       <>
-                        <div className="ng-card-tech">{co.users?.name || 'Unknown technician'}</div>
-                        <div className="ng-card-project">{co.projectName || `Project #${co.projectId}`}</div>
+                        <div className="ng-card-tech">
+                          {co.users?.name || (co as any).technicianName || 'Unknown technician'}
+                        </div>
+                        <div className="ng-card-project">{co.projectName || (co.projectId ? `Project #${co.projectId}` : '')}</div>
                         <div className="ng-card-destination">{co.destination}</div>
                         <div className={`ng-card-time ${overdue ? 'overdue' : ''}`}>
                           Out since {formatTime(co.timeOut)} · {hoursOut}h ago {overdue ? '⚠️ Overdue' : ''}
@@ -290,9 +459,14 @@ export default function NuclearGauges() {
             <select value={logYear} onChange={(e) => setLogYear(Number(e.target.value))}>
               {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
-            <button className="primary-button ng-manual-btn" onClick={() => { setManualError(''); setShowManualModal(true); }}>
-              + Manual Entry
-            </button>
+            <div className="ng-log-actions">
+              <button className="ng-print-btn" onClick={handlePrint} disabled={logEntries.length === 0}>
+                Print Report
+              </button>
+              <button className="primary-button ng-manual-btn" onClick={() => { setManualError(''); setShowManualModal(true); }}>
+                + Manual Entry
+              </button>
+            </div>
           </div>
 
           {logLoading && <div className="ng-loading">Loading log…</div>}
@@ -310,11 +484,13 @@ export default function NuclearGauges() {
                     <th>Project</th>
                     <th>Destination</th>
                     <th>CHD</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logEntries.length === 0 && (
-                    <tr><td colSpan={9} className="ng-empty-row">No entries for {MONTHS[logMonth - 1]} {logYear}</td></tr>
+                    <tr><td colSpan={11} className="ng-empty-row">No entries for {MONTHS[logMonth - 1]} {logYear}</td></tr>
                   )}
                   {logEntries.map((e) => (
                     <tr key={e.id}>
@@ -331,6 +507,10 @@ export default function NuclearGauges() {
                       <td>{e.projectName || '—'}</td>
                       <td>{e.destination || '—'}</td>
                       <td>{e.chd || '—'}</td>
+                      <td className="ng-notes-cell">{e.notes || '—'}</td>
+                      <td>
+                        <button className="ng-action-btn" onClick={() => openEditEntry(e)}>Edit</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -387,7 +567,7 @@ export default function NuclearGauges() {
         </div>
       )}
 
-      {/* ---- ADD / EDIT MODAL ---- */}
+      {/* ---- ADD / EDIT GAUGE MODAL ---- */}
       {showAddModal && (
         <div className="ng-modal-overlay" onClick={() => setShowAddModal(false)}>
           <div className="ng-modal" onClick={(e) => e.stopPropagation()}>
@@ -439,6 +619,7 @@ export default function NuclearGauges() {
           </div>
         </div>
       )}
+
       {/* ---- MANUAL LOG ENTRY MODAL ---- */}
       {showManualModal && (
         <div className="ng-modal-overlay" onClick={() => setShowManualModal(false)}>
@@ -514,6 +695,92 @@ export default function NuclearGauges() {
               <button className="secondary-button" onClick={() => setShowManualModal(false)}>Cancel</button>
               <button className="primary-button" onClick={handleSaveManualEntry} disabled={manualSaving}>
                 {manualSaving ? 'Saving…' : 'Save Entry'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---- EDIT LOG ENTRY MODAL ---- */}
+      {showEditModal && (
+        <div className="ng-modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="ng-modal ng-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h2>Edit Log Entry</h2>
+            <p className="ng-modal-subtitle">{editGaugeName}</p>
+            {editError && <div className="ng-modal-error">{editError}</div>}
+
+            <div className="ng-form-row">
+              <div className="ng-form-group">
+                <label>Date <span className="ng-req">*</span></label>
+                <input type="date" value={editForm.date} onChange={(e) => setEditForm((f) => ({ ...f, date: e.target.value }))} />
+              </div>
+              <div className="ng-form-group">
+                {editIsGuest ? (
+                  <>
+                    <label>Guest Name</label>
+                    <input
+                      value={editForm.technicianName}
+                      onChange={(e) => setEditForm((f) => ({ ...f, technicianName: e.target.value }))}
+                      placeholder="Technician name"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label>Technician</label>
+                    <select value={editForm.technicianId} onChange={(e) => setEditForm((f) => ({ ...f, technicianId: e.target.value ? Number(e.target.value) : '' }))}>
+                      <option value="">— Unassigned —</option>
+                      {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="ng-form-row">
+              <div className="ng-form-group">
+                <label>Time Out <span className="ng-req">*</span></label>
+                <input type="time" value={editForm.timeOut} onChange={(e) => setEditForm((f) => ({ ...f, timeOut: e.target.value }))} />
+              </div>
+              <div className="ng-form-group">
+                <label>Time In <span className="ng-opt">(optional)</span></label>
+                <input type="time" value={editForm.timeIn} onChange={(e) => setEditForm((f) => ({ ...f, timeIn: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="ng-form-group">
+              <label>Block Standardization Check</label>
+              <div className="ng-toggle-row">
+                <button type="button" className={`ng-toggle-btn ${editForm.blockClosed === true ? 'active-yes' : ''}`} onClick={() => setEditForm((f) => ({ ...f, blockClosed: true }))}>Yes — completed</button>
+                <button type="button" className={`ng-toggle-btn ${editForm.blockClosed === false ? 'active-no' : ''}`} onClick={() => setEditForm((f) => ({ ...f, blockClosed: false }))}>No</button>
+                <button type="button" className={`ng-toggle-btn ${editForm.blockClosed === null ? 'active-neutral' : ''}`} onClick={() => setEditForm((f) => ({ ...f, blockClosed: null }))}>N/A</button>
+              </div>
+            </div>
+
+            <div className="ng-form-group">
+              <label>Destination</label>
+              <input value={editForm.destination} onChange={(e) => setEditForm((f) => ({ ...f, destination: e.target.value }))} placeholder="Job site address or name" />
+            </div>
+
+            <div className="ng-form-row">
+              <div className="ng-form-group">
+                <label>Project</label>
+                <input value={editForm.projectName} onChange={(e) => setEditForm((f) => ({ ...f, projectName: e.target.value }))} placeholder="Project name" />
+              </div>
+              <div className="ng-form-group">
+                <label>CHD</label>
+                <input value={editForm.chd} onChange={(e) => setEditForm((f) => ({ ...f, chd: e.target.value }))} placeholder="Count history data" />
+              </div>
+            </div>
+
+            <div className="ng-form-group">
+              <label>Notes</label>
+              <textarea rows={2} value={editForm.notes} onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Any observations" />
+            </div>
+
+            <div className="ng-modal-actions">
+              <button className="secondary-button" onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button className="primary-button" onClick={handleSaveEditEntry} disabled={editSaving}>
+                {editSaving ? 'Saving…' : 'Save Changes'}
               </button>
             </div>
           </div>

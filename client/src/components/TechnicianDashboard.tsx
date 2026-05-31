@@ -594,7 +594,7 @@ const TechnicianDashboard: React.FC = () => {
                           <div className="td-gauge-info">
                             <div className="td-gauge-name">{g.model} · S/N {g.serialNumber}</div>
                             <div className="td-gauge-meta">
-                              {g.currentCheckout?.users?.name || 'Unknown'}
+                              {g.currentCheckout?.users?.name || (g.currentCheckout as any)?.technicianName || 'Unknown'}
                               {g.currentCheckout?.projectName ? ` · ${g.currentCheckout.projectName}` : ''}
                             </div>
                           </div>
