@@ -40,7 +40,7 @@ export interface GaugeCheckout {
 
 export interface CheckoutPayload {
   destination: string;
-  blockClosed: boolean;
+  blockClosed: boolean | null;
   technicianName?: string;
   projectId?: number | null;
   projectName?: string | null;

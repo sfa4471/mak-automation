@@ -321,8 +321,8 @@ router.post(
   '/:id/checkout',
   optionalAuthenticate,
   [
-    body('destination').notEmpty().trim().withMessage('Destination is required'),
-    body('blockClosed').isBoolean().withMessage('Block closed confirmation is required'),
+    body('destination').optional({ nullable: true }).trim(),
+    body('blockClosed').optional({ nullable: true }).isBoolean(),
     body('technicianName').optional().trim(),
     body('projectId').optional({ nullable: true }).isInt(),
     body('projectName').optional().trim(),
