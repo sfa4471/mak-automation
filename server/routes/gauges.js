@@ -1,14 +1,15 @@
 const express = require('express');
 const QRCode = require('qrcode');
 const { supabase, keysToCamelCase } = require('../db/supabase');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, optionalAuthenticate, requireAdmin } = require('../middleware/auth');
 const { requireTenant } = require('../middleware/tenant');
 const { body, validationResult } = require('express-validator');
 
 const router = express.Router();
 
-// All routes require auth + tenant
-router.use(authenticate, requireTenant);
+// Reusable middleware chains
+const auth      = [authenticate, requireTenant];
+const adminAuth = [authenticate, requireTenant, requireAdmin];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -22,12 +23,24 @@ function frontendUrl() {
   return process.env.FRONTEND_URL || 'https://app.crestfield.com';
 }
 
+// Tenant-scoped lookup (authenticated routes)
 async function getGauge(gaugeId, tenantId) {
   const { data, error } = await supabase
     .from('nuclear_gauges')
     .select('*')
     .eq('id', gaugeId)
     .eq('tenant_id', tenantId)
+    .single();
+  if (error || !data) return null;
+  return data;
+}
+
+// Public lookup — no tenant filter; gauge ID is globally unique
+async function getGaugePublic(gaugeId) {
+  const { data, error } = await supabase
+    .from('nuclear_gauges')
+    .select('*')
+    .eq('id', gaugeId)
     .single();
   if (error || !data) return null;
   return data;
@@ -48,7 +61,7 @@ async function getOpenCheckout(gaugeId) {
 // ---------------------------------------------------------------------------
 // GET /api/gauges — list all gauges with live status
 // ---------------------------------------------------------------------------
-router.get('/', async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const { data: gauges, error } = await supabase
       .from('nuclear_gauges')
@@ -81,7 +94,7 @@ router.get('/', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post(
   '/',
-  requireAdmin,
+  adminAuth,
   [
     body('serialNumber').notEmpty().trim().withMessage('Serial number is required'),
     body('model').notEmpty().trim().withMessage('Model is required'),
@@ -125,7 +138,7 @@ router.post(
 // ---------------------------------------------------------------------------
 router.put(
   '/:id',
-  requireAdmin,
+  adminAuth,
   [
     body('serialNumber').optional().notEmpty().trim(),
     body('model').optional().notEmpty().trim(),
@@ -167,7 +180,7 @@ router.put(
 // ---------------------------------------------------------------------------
 // DELETE /api/gauges/:id — deactivate gauge (admin only, soft delete)
 // ---------------------------------------------------------------------------
-router.delete('/:id', requireAdmin, async (req, res) => {
+router.delete('/:id', adminAuth, async (req, res) => {
   const gauge = await getGauge(req.params.id, req.tenantId);
   if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
 
@@ -185,7 +198,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/gauges/:id/permanent — hard delete (admin only, only if no checkout history)
 // ---------------------------------------------------------------------------
-router.delete('/:id/permanent', requireAdmin, async (req, res) => {
+router.delete('/:id/permanent', adminAuth, async (req, res) => {
   const gauge = await getGauge(req.params.id, req.tenantId);
   if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
 
@@ -212,7 +225,7 @@ router.delete('/:id/permanent', requireAdmin, async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/gauges/:id/qr — print-ready QR code page (HTML, no Puppeteer)
 // ---------------------------------------------------------------------------
-router.get('/:id/qr', requireAdmin, async (req, res) => {
+router.get('/:id/qr', adminAuth, async (req, res) => {
   const gauge = await getGauge(req.params.id, req.tenantId);
   if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
 
@@ -287,10 +300,10 @@ router.get('/:id/qr', requireAdmin, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/gauges/:id/status — current status of one gauge (for QR scan landing)
+// GET /api/gauges/:id/status — PUBLIC: current status of one gauge (QR scan)
 // ---------------------------------------------------------------------------
-router.get('/:id/status', async (req, res) => {
-  const gauge = await getGauge(req.params.id, req.tenantId);
+router.get('/:id/status', optionalAuthenticate, async (req, res) => {
+  const gauge = await getGaugePublic(req.params.id);
   if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
 
   const open = await getOpenCheckout(gauge.id);
@@ -302,13 +315,15 @@ router.get('/:id/status', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/gauges/:id/checkout — check out a gauge
+// POST /api/gauges/:id/checkout — PUBLIC: check out a gauge
 // ---------------------------------------------------------------------------
 router.post(
   '/:id/checkout',
+  optionalAuthenticate,
   [
     body('destination').notEmpty().trim().withMessage('Destination is required'),
     body('blockClosed').isBoolean().withMessage('Block closed confirmation is required'),
+    body('technicianName').optional().trim(),
     body('projectId').optional({ nullable: true }).isInt(),
     body('projectName').optional().trim(),
     body('chd').optional().trim(),
@@ -318,12 +333,19 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const gauge = await getGauge(req.params.id, req.tenantId);
+    const gauge = await getGaugePublic(req.params.id);
     if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
     if (!gauge.active) return res.status(400).json({ error: 'Gauge is inactive' });
 
     const open = await getOpenCheckout(gauge.id);
     if (open) return res.status(409).json({ error: 'Gauge is already checked out', currentCheckout: open });
+
+    // Identify technician: registered user (JWT) or guest (name only)
+    const technicianId = req.user?.id || null;
+    const technicianName = !technicianId ? (req.body.technicianName?.trim() || null) : null;
+    if (!technicianId && !technicianName) {
+      return res.status(400).json({ error: 'Your name is required to check out this gauge.' });
+    }
 
     const { destination, blockClosed, projectId, projectName, chd, notes } = req.body;
     const now = new Date();
@@ -332,9 +354,10 @@ router.post(
       const { data, error } = await supabase
         .from('gauge_checkouts')
         .insert({
-          tenant_id: req.tenantId,
+          tenant_id: gauge.tenant_id,
           gauge_id: gauge.id,
-          technician_id: req.user.id,
+          technician_id: technicianId,
+          technician_name: technicianName,
           project_id: projectId || null,
           project_name: projectName || null,
           destination,
@@ -357,16 +380,17 @@ router.post(
 );
 
 // ---------------------------------------------------------------------------
-// POST /api/gauges/:id/checkin — check in a gauge
+// POST /api/gauges/:id/checkin — PUBLIC: check in a gauge
 // ---------------------------------------------------------------------------
 router.post(
   '/:id/checkin',
+  optionalAuthenticate,
   [
     body('notes').optional().trim(),
     body('chd').optional().trim(),
   ],
   async (req, res) => {
-    const gauge = await getGauge(req.params.id, req.tenantId);
+    const gauge = await getGaugePublic(req.params.id);
     if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
 
     const open = await getOpenCheckout(gauge.id);
@@ -397,7 +421,7 @@ router.post(
 // ---------------------------------------------------------------------------
 router.post(
   '/log/manual',
-  requireAdmin,
+  adminAuth,
   [
     body('gaugeId').isInt().withMessage('Gauge is required'),
     body('date').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('Date is required (YYYY-MM-DD)'),
@@ -452,7 +476,7 @@ router.post(
 // ---------------------------------------------------------------------------
 // GET /api/gauges/:id/log?month=5&year=2026 — monthly checkout log for one gauge
 // ---------------------------------------------------------------------------
-router.get('/:id/log', async (req, res) => {
+router.get('/:id/log', auth, async (req, res) => {
   const gauge = await getGauge(req.params.id, req.tenantId);
   if (!gauge) return res.status(404).json({ error: 'Gauge not found' });
 
@@ -481,7 +505,7 @@ router.get('/:id/log', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/gauges/log/all?month=5&year=2026 — monthly log across all gauges
 // ---------------------------------------------------------------------------
-router.get('/log/all', async (req, res) => {
+router.get('/log/all', auth, async (req, res) => {
   const month = parseInt(req.query.month) || new Date().getMonth() + 1;
   const year = parseInt(req.query.year) || new Date().getFullYear();
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`;

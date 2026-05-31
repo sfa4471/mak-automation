@@ -237,11 +237,9 @@ function App() {
           <Route
             path="/gauges/:id"
             element={
-              <ProtectedRoute>
-                <Suspense fallback={<LoadingSpinner fullScreen message="Loading…" />}>
-                  <GaugeCheckout />
-                </Suspense>
-              </ProtectedRoute>
+              <Suspense fallback={<LoadingSpinner fullScreen message="Loading…" />}>
+                <GaugeCheckout />
+              </Suspense>
             }
           />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />

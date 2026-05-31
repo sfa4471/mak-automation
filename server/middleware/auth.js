@@ -44,8 +44,23 @@ const requireTechnician = (req, res, next) => {
   next();
 };
 
+// Sets req.user if a valid JWT is present, but never blocks the request.
+// Used for public endpoints where logged-in users get enhanced behaviour.
+const optionalAuthenticate = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token) {
+    try {
+      req.user = jwt.verify(token, JWT_SECRET);
+    } catch {
+      // Invalid token — treat as guest
+    }
+  }
+  next();
+};
+
 module.exports = {
   authenticate,
+  optionalAuthenticate,
   requireAdmin,
   requireAdminOrPm,
   requireTechnician,

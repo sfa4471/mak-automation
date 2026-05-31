@@ -324,7 +324,7 @@ export default function NuclearGauges() {
                           ? `${e.nuclearGauges.model} · ${e.nuclearGauges.serialNumber}`
                           : '—'}
                       </td>
-                      <td>{e.users?.name || '—'}</td>
+                      <td>{e.users?.name || e.technicianName || '—'}</td>
                       <td>{formatTime(e.timeOut)}</td>
                       <td>{formatTime(e.timeIn)}</td>
                       <td className={e.blockClosed ? 'ng-yes' : 'ng-no'}>{e.blockClosed ? 'Yes' : 'No'}</td>

@@ -311,3 +311,12 @@
   transition: background 0.15s;
 }
 .gc-home-btn:hover { background: #e5e7eb; }
+
+/* Guest name field — visually distinct to draw attention */
+.gc-guest-banner {
+  background: #eff6ff;
+  border: 1.5px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 14px 14px 4px;
+  margin-bottom: 18px;
+}

@@ -23,24 +23,27 @@ export default function GaugeCheckout() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  const isGuest = !user;
+
   const [phase, setPhase] = useState<Phase>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [gauge, setGauge] = useState<NuclearGauge | null>(null);
   const [openCheckout, setOpenCheckout] = useState<GaugeCheckoutType | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
 
+  // Guest name (unregistered technician)
+  const [guestName, setGuestName] = useState('');
+
   // Checkout form
   const [destination, setDestination] = useState('');
   const [blockClosed, setBlockClosed] = useState<boolean | null>(null);
   const [projectId, setProjectId] = useState<number | ''>('');
   const [manualProject, setManualProject] = useState('');
-  const [useManualProject, setUseManualProject] = useState(false);
+  const [useManualProject, setUseManualProject] = useState(isGuest); // guests always use text
   const [chd, setChd] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [validationError, setValidationError] = useState('');
-
-  // Saved values shown on success screen
   const [savedCheckout, setSavedCheckout] = useState<GaugeCheckoutType | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -54,30 +57,38 @@ export default function GaugeCheckout() {
         setPhase('checkout');
       }
     } catch (e: any) {
-      setErrorMsg(e?.response?.data?.error || 'Gauge not found. Make sure you are logged in.');
+      setErrorMsg(e?.response?.data?.error || 'Gauge not found.');
       setPhase('error');
     }
   }, [gaugeId]);
 
   useEffect(() => {
     loadStatus();
-    projectsAPI.list().then(setProjects).catch(() => {});
-  }, [loadStatus]);
+    // Only fetch project dropdown for logged-in users
+    if (!isGuest) {
+      projectsAPI.list().then(setProjects).catch(() => {});
+    }
+  }, [loadStatus, isGuest]);
 
   async function handleCheckout() {
     setValidationError('');
+    if (isGuest && !guestName.trim()) return setValidationError('Your name is required.');
     if (!destination.trim()) return setValidationError('Destination / job site is required.');
     if (blockClosed === null) return setValidationError('Please confirm the block standardization check.');
-    const finalProjectName = useManualProject
-      ? manualProject.trim() || null
-      : projects.find((p) => p.id === Number(projectId))?.projectName || null;
+
+    const finalProjectName = isGuest
+      ? (manualProject.trim() || null)
+      : useManualProject
+        ? (manualProject.trim() || null)
+        : (projects.find((p) => p.id === Number(projectId))?.projectName || null);
 
     setSubmitting(true);
     try {
       const result = await gaugesApi.checkout(gaugeId, {
         destination: destination.trim(),
         blockClosed,
-        projectId: !useManualProject && projectId ? Number(projectId) : null,
+        technicianName: isGuest ? guestName.trim() : undefined,
+        projectId: !isGuest && !useManualProject && projectId ? Number(projectId) : null,
         projectName: finalProjectName,
         chd: chd.trim() || undefined,
         notes: notes.trim() || undefined,
@@ -85,7 +96,7 @@ export default function GaugeCheckout() {
       setSavedCheckout(result);
       setPhase('done-out');
     } catch (e: any) {
-      setValidationError(e?.response?.data?.error || 'Failed to check out gauge. Try again.');
+      setValidationError(e?.response?.data?.error || 'Failed to check out. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -101,14 +112,17 @@ export default function GaugeCheckout() {
       setSavedCheckout(result);
       setPhase('done-in');
     } catch (e: any) {
-      setValidationError(e?.response?.data?.error || 'Failed to check in gauge. Try again.');
+      setValidationError(e?.response?.data?.error || 'Failed to check in. Please try again.');
     } finally {
       setSubmitting(false);
     }
   }
 
   const displayName = gauge?.nickname || gauge?.serialNumber || '…';
-  const checkedOutByMe = openCheckout?.technicianId === (user as any)?.id;
+  const checkedOutByMe = !isGuest && openCheckout?.technicianId === (user as any)?.id;
+  const checkedOutName = openCheckout
+    ? ((openCheckout as any).users?.name || (openCheckout as any).technicianName || 'Unknown')
+    : null;
 
   // ---- LOADING ----
   if (phase === 'loading') {
@@ -128,7 +142,7 @@ export default function GaugeCheckout() {
       <div className="gc-wrap">
         <div className="gc-card gc-center">
           <div className="gc-icon-circle error">!</div>
-          <h2 className="gc-title">Something went wrong</h2>
+          <h2 className="gc-title">Gauge Not Found</h2>
           <p className="gc-sub">{errorMsg}</p>
         </div>
       </div>
@@ -142,13 +156,13 @@ export default function GaugeCheckout() {
         <div className="gc-card gc-center">
           <div className="gc-icon-circle success">✓</div>
           <h2 className="gc-title">Checked Out</h2>
-          <p className="gc-sub">{displayName} is signed out to you.</p>
+          <p className="gc-sub">{displayName} is signed out to {isGuest ? guestName : user?.name || 'you'}.</p>
           <div className="gc-summary">
             <div className="gc-summary-row">
               <span>Time out</span>
               <span>{savedCheckout ? formatTime(savedCheckout.timeOut) : formatTime(new Date().toISOString())}</span>
             </div>
-            {(savedCheckout?.projectName) && (
+            {savedCheckout?.projectName && (
               <div className="gc-summary-row">
                 <span>Project</span>
                 <span>{savedCheckout.projectName}</span>
@@ -166,7 +180,9 @@ export default function GaugeCheckout() {
             </div>
           </div>
           <p className="gc-footer-note">Scan the QR code when you return the gauge.</p>
-          <button className="gc-home-btn" onClick={() => navigate('/dashboard')}>← Back to Dashboard</button>
+          {!isGuest && (
+            <button className="gc-home-btn" onClick={() => navigate('/dashboard')}>← Back to Dashboard</button>
+          )}
         </div>
       </div>
     );
@@ -186,7 +202,9 @@ export default function GaugeCheckout() {
               <span>{formatTime(new Date().toISOString())}</span>
             </div>
           </div>
-          <button className="gc-home-btn" onClick={() => navigate('/dashboard')}>← Back to Dashboard</button>
+          {!isGuest && (
+            <button className="gc-home-btn" onClick={() => navigate('/dashboard')}>← Back to Dashboard</button>
+          )}
         </div>
       </div>
     );
@@ -210,7 +228,7 @@ export default function GaugeCheckout() {
           <div className={`gc-current-info ${!checkedOutByMe ? 'other-user' : ''}`}>
             <div className="gc-info-row">
               <span className="gc-info-label">Checked out by</span>
-              <span className="gc-info-value">{(openCheckout as any).users?.name || 'Unknown'}</span>
+              <span className="gc-info-value">{checkedOutName}</span>
             </div>
             <div className="gc-info-row">
               <span className="gc-info-label">Time out</span>
@@ -227,7 +245,11 @@ export default function GaugeCheckout() {
               <span className="gc-info-value">{openCheckout.destination}</span>
             </div>
             {!checkedOutByMe && (
-              <p className="gc-other-warning">This gauge was checked out by someone else. Only check it in if you are returning it on their behalf.</p>
+              <p className="gc-other-warning">
+                {isGuest
+                  ? 'Only check in if you are returning this gauge to the lab.'
+                  : 'This gauge was checked out by someone else. Only check it in if returning it on their behalf.'}
+              </p>
             )}
           </div>
         )}
@@ -237,12 +259,34 @@ export default function GaugeCheckout() {
 
         {validationError && <div className="gc-validation-error">{validationError}</div>}
 
+        {/* ---- GUEST NAME (always first for unregistered users) ---- */}
+        {isGuest && (
+          <div className="gc-field gc-guest-banner">
+            <label className="gc-label">Your Name <span className="gc-required">*</span></label>
+            <input
+              className="gc-input"
+              placeholder="First and last name"
+              value={guestName}
+              onChange={(e) => setGuestName(e.target.value)}
+              autoFocus
+            />
+          </div>
+        )}
+
         {/* ---- CHECKOUT FIELDS ---- */}
         {phase === 'checkout' && (
           <>
+            {/* Project */}
             <div className="gc-field">
-              <label className="gc-label">Project</label>
-              {!useManualProject ? (
+              <label className="gc-label">Project <span className="gc-optional">(optional)</span></label>
+              {isGuest ? (
+                <input
+                  className="gc-input"
+                  placeholder="Project name"
+                  value={manualProject}
+                  onChange={(e) => setManualProject(e.target.value)}
+                />
+              ) : !useManualProject ? (
                 <div className="gc-project-row">
                   <select
                     className="gc-select"
@@ -289,16 +333,10 @@ export default function GaugeCheckout() {
               </label>
               <p className="gc-field-hint">Confirm you performed and closed the block std. before leaving the lab.</p>
               <div className="gc-toggle-row">
-                <button
-                  className={`gc-toggle ${blockClosed === true ? 'yes' : ''}`}
-                  onClick={() => setBlockClosed(true)}
-                >
+                <button className={`gc-toggle ${blockClosed === true ? 'yes' : ''}`} onClick={() => setBlockClosed(true)}>
                   Yes — completed
                 </button>
-                <button
-                  className={`gc-toggle ${blockClosed === false ? 'no' : ''}`}
-                  onClick={() => setBlockClosed(false)}
-                >
+                <button className={`gc-toggle ${blockClosed === false ? 'no' : ''}`} onClick={() => setBlockClosed(false)}>
                   No
                 </button>
               </div>
@@ -306,23 +344,12 @@ export default function GaugeCheckout() {
 
             <div className="gc-field">
               <label className="gc-label">CHD <span className="gc-optional">(optional)</span></label>
-              <input
-                className="gc-input"
-                placeholder="Count history data reading"
-                value={chd}
-                onChange={(e) => setChd(e.target.value)}
-              />
+              <input className="gc-input" placeholder="Count history data reading" value={chd} onChange={(e) => setChd(e.target.value)} />
             </div>
 
             <div className="gc-field">
               <label className="gc-label">Notes <span className="gc-optional">(optional)</span></label>
-              <textarea
-                className="gc-textarea"
-                rows={2}
-                placeholder="Any observations or special conditions"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
+              <textarea className="gc-textarea" rows={2} placeholder="Any observations or special conditions" value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
 
             <button className="gc-submit-btn checkout" onClick={handleCheckout} disabled={submitting}>
@@ -336,23 +363,12 @@ export default function GaugeCheckout() {
           <>
             <div className="gc-field">
               <label className="gc-label">CHD <span className="gc-optional">(optional)</span></label>
-              <input
-                className="gc-input"
-                placeholder="Count history data reading"
-                value={chd}
-                onChange={(e) => setChd(e.target.value)}
-              />
+              <input className="gc-input" placeholder="Count history data reading" value={chd} onChange={(e) => setChd(e.target.value)} />
             </div>
 
             <div className="gc-field">
               <label className="gc-label">Notes <span className="gc-optional">(optional)</span></label>
-              <textarea
-                className="gc-textarea"
-                rows={2}
-                placeholder="Any issues, damage, or observations?"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
+              <textarea className="gc-textarea" rows={2} placeholder="Any issues, damage, or observations?" value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
 
             <button className="gc-submit-btn checkin" onClick={handleCheckin} disabled={submitting}>
