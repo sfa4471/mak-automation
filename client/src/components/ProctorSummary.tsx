@@ -207,7 +207,28 @@ const ProctorSummary: React.FC = () => {
         if (!initialData.percentPassing200 && initialData.passing200SummaryPct) {
           initialData.percentPassing200 = initialData.passing200SummaryPct;
         }
-        
+
+        // Recovery: if LL or PL were overwritten to empty (admin overwrite bug), recompute
+        // from the raw atterbergLimits dish data that is now stored in the DB.
+        const dbAtterberg = (savedData as any).atterbergLimits;
+        if (Array.isArray(dbAtterberg) && dbAtterberg.length >= 2) {
+          if (!initialData.liquidLimitLL) {
+            const d1ll = parseFloat(dbAtterberg[0]?.liquidLimit || '');
+            const d2ll = parseFloat(dbAtterberg[1]?.liquidLimit || '');
+            if (!isNaN(d1ll) && !isNaN(d2ll)) {
+              initialData.liquidLimitLL = String(Math.round((d1ll + d2ll) / 2));
+            } else if (!isNaN(d1ll)) {
+              initialData.liquidLimitLL = String(Math.round(d1ll));
+            } else if (!isNaN(d2ll)) {
+              initialData.liquidLimitLL = String(Math.round(d2ll));
+            }
+          }
+          if (!initialData.plasticLimit && dbAtterberg.length >= 3) {
+            const d3pl = parseFloat(dbAtterberg[2]?.plasticLimit || '');
+            if (!isNaN(d3pl)) initialData.plasticLimit = String(Math.round(d3pl));
+          }
+        }
+
         {
           const autoPI = calculatePlasticityIndex(initialData.liquidLimitLL, initialData.plasticLimit);
           const savedPI = savedData.plasticityIndex != null ? String(savedData.plasticityIndex).trim() : '';

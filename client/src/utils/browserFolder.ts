@@ -142,8 +142,23 @@ export async function saveFileToChosenFolder(
   projectNumber?: string,
   tenantId?: number | null
 ): Promise<boolean> {
-  const root = await getFolderHandle(tenantId);
-  if (!root) return false;
+  const key = getFolderHandleKey(tenantId);
+  const handle = await getFromIdb<FileSystemDirectoryHandle>(key);
+  if (!handle) return false;
+
+  // queryPermission is non-interactive; if result is 'prompt' (e.g. after page reload),
+  // call requestPermission — safe here because this function is only called from button clicks.
+  let permission = await handle.queryPermission({ mode: 'readwrite' });
+  if (permission === 'prompt') {
+    try {
+      permission = await (handle as any).requestPermission({ mode: 'readwrite' });
+    } catch {
+      return false;
+    }
+  }
+  if (permission !== 'granted') return false;
+
+  const root = handle;
   let dir: FileSystemDirectoryHandle = root;
   if (projectNumber) {
     const sanitized = projectNumber.replace(/[\\/:*?"<>|]/g, '_');

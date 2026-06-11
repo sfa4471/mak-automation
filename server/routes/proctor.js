@@ -1182,7 +1182,11 @@ router.post('/task/:taskId', authenticate, requireTenant, [
     const proctorPointsJson = proctorPoints ? JSON.stringify(proctorPoints) : null;
     const zavPointsJson = zavPoints ? JSON.stringify(zavPoints) : null;
     const passing200Json = passing200 ? JSON.stringify(passing200) : null;
-    const atterbergLimitsJson = atterbergLimits ? JSON.stringify(atterbergLimits) : null;
+    // Only overwrite atterberg_limits if the client explicitly sent the field.
+    // ProctorSummary saves without it — passing undefined means "leave DB value alone".
+    const atterbergLimitsJson = atterbergLimits !== undefined
+      ? JSON.stringify(atterbergLimits || [])
+      : undefined;
 
     // Check if record exists
     const existing = await db.get('proctor_data', { taskId: parseInt(taskId) });
@@ -1223,7 +1227,7 @@ router.post('/task/:taskId', authenticate, requireTenant, [
       percentPassing200: percentPassing200 || null,
       passing200: passing200Json,
       passing200SummaryPct: passing200SummaryPct || null,
-      atterbergLimits: atterbergLimitsJson,
+      ...(atterbergLimitsJson !== undefined ? { atterbergLimits: atterbergLimitsJson } : {}),
       specificGravityG: specificGravityG || null,
       proctorPoints: proctorPointsJson,
       zavPoints: zavPointsJson
