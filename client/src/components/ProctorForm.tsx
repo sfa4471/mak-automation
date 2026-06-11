@@ -59,43 +59,28 @@ interface ProctorData {
 // Constant defined outside the component so it's never recreated on re-render
 const ZAV_MOISTURE_VALUES = [2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43];
 
-// Isolated input cell — local state keeps typing fast; parent only re-renders on blur
+// Uncontrolled input cell — React never touches the DOM value after mount,
+// so nothing can interfere with typing. Parent passes key={dataVersion} so
+// cells remount exactly once after saved data loads, re-seeding defaultValue.
 const ProctorInputCell: React.FC<{
   value: string;
   columnIndex: number;
   field: keyof ProctorRow;
   onCommit: (columnIndex: number, field: keyof ProctorRow, value: string) => void;
   isEditable: boolean;
-  inputType?: 'text' | 'number';
-  step?: string;
-}> = React.memo(({ value, columnIndex, field, onCommit, isEditable, inputType = 'number', step }) => {
-  const [localVal, setLocalVal] = React.useState(value);
-  const focusedRef = React.useRef(false);
-
-  // Sync from parent only when the cell is not focused (e.g. after recalculation or data load)
-  React.useEffect(() => {
-    if (!focusedRef.current) setLocalVal(value);
-  }, [value]);
-
+}> = React.memo(({ value, columnIndex, field, onCommit, isEditable }) => {
   if (!isEditable) {
     return <input type="text" value={value} readOnly className="readonly" />;
   }
-
   return (
     <input
       type="text"
       inputMode="decimal"
-      value={localVal}
-      onChange={(e) => setLocalVal(e.target.value)}
-      onFocus={() => { focusedRef.current = true; }}
-      onBlur={(e) => {
-        focusedRef.current = false;
-        onCommit(columnIndex, field, e.target.value);
-      }}
+      autoComplete="off"
+      defaultValue={value}
+      onBlur={(e) => onCommit(columnIndex, field, e.target.value)}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          (e.target as HTMLInputElement).blur();
-        }
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
       }}
     />
   );
@@ -166,6 +151,7 @@ const ProctorForm: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [error, setError] = useState('');
+  const [dataVersion, setDataVersion] = useState(0);
   const lastSavedDataRef = useRef<string>('');
 
   // Calculation functions (defined before use in useEffect)
@@ -710,7 +696,8 @@ const ProctorForm: React.FC = () => {
             atterbergLimits: recalculatedAtterberg
           };
           setFormData(finalRestoredData);
-          
+          setDataVersion(v => v + 1);
+
           // Update last saved snapshot after loading
           lastSavedDataRef.current = JSON.stringify({
             formData: finalRestoredData,
@@ -1390,12 +1377,12 @@ const ProctorForm: React.FC = () => {
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
                     <ProctorInputCell
+                      key={dataVersion}
                       value={col.panNumber}
                       columnIndex={idx}
                       field="panNumber"
                       onCommit={handleColumnFieldChange}
                       isEditable={isEditable}
-                      inputType="text"
                     />
                   </td>
                 ))}
@@ -1414,12 +1401,12 @@ const ProctorForm: React.FC = () => {
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
                     <ProctorInputCell
+                      key={dataVersion}
                       value={col.wetWtMold}
                       columnIndex={idx}
                       field="wetWtMold"
                       onCommit={handleColumnFieldChange}
                       isEditable={isEditable}
-                      step="0.001"
                     />
                   </td>
                 ))}
@@ -1433,12 +1420,12 @@ const ProctorForm: React.FC = () => {
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
                     <ProctorInputCell
+                      key={dataVersion}
                       value={col.wtOfMold}
                       columnIndex={idx}
                       field="wtOfMold"
                       onCommit={handleColumnFieldChange}
                       isEditable={isEditable}
-                      step="0.001"
                     />
                   </td>
                 ))}
@@ -1491,12 +1478,12 @@ const ProctorForm: React.FC = () => {
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
                     <ProctorInputCell
+                      key={dataVersion}
                       value={col.wetWtPan}
                       columnIndex={idx}
                       field="wetWtPan"
                       onCommit={handleColumnFieldChange}
                       isEditable={isEditable}
-                      step="0.01"
                     />
                   </td>
                 ))}
@@ -1510,12 +1497,12 @@ const ProctorForm: React.FC = () => {
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
                     <ProctorInputCell
+                      key={dataVersion}
                       value={col.dryWtPan}
                       columnIndex={idx}
                       field="dryWtPan"
                       onCommit={handleColumnFieldChange}
                       isEditable={isEditable}
-                      step="0.01"
                     />
                   </td>
                 ))}
@@ -1546,12 +1533,12 @@ const ProctorForm: React.FC = () => {
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
                     <ProctorInputCell
+                      key={dataVersion}
                       value={col.wtOfPan}
                       columnIndex={idx}
                       field="wtOfPan"
                       onCommit={handleColumnFieldChange}
                       isEditable={isEditable}
-                      step="0.01"
                     />
                   </td>
                 ))}
