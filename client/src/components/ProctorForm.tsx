@@ -604,16 +604,18 @@ const ProctorForm: React.FC = () => {
           // If data comes from database, we need to check if columns/atterbergLimits exist
           // Database might not have these, so we fallback to localStorage or initial values
           let columns = saved.columns;
-          let atterbergLimits = saved.atterbergLimits;
+          let atterbergLimits = (saved as any).atterbergLimits;
           let passing200 = saved.passing200;
-          
-          // If database data doesn't have form fields, try to get from localStorage
-          if (!columns || !atterbergLimits) {
+
+          // If database data doesn't have form fields (legacy rows before atterberg_limits column),
+          // fall back to localStorage draft so returning technicians still see their data.
+          const hasDbAtterberg = Array.isArray(atterbergLimits) && atterbergLimits.length > 0;
+          if (!columns || !hasDbAtterberg) {
             if (draftData) {
               try {
                 const localData = JSON.parse(draftData);
                 columns = localData.columns || columns;
-                atterbergLimits = localData.atterbergLimits || atterbergLimits;
+                if (!hasDbAtterberg) atterbergLimits = localData.atterbergLimits || atterbergLimits;
                 passing200 = localData.passing200 || passing200;
               } catch (e) {
                 console.error('Error parsing localStorage draft data:', e);
@@ -1023,8 +1025,9 @@ const ProctorForm: React.FC = () => {
         reviewedBy: '',
         checkedBy: '',
         percentPassing200: passing200SummaryPct || '', // Use summary as legacy field
-        passing200: formData.passing200 || [], // Add Passing #200 table
-        passing200SummaryPct: passing200SummaryPct || '', // Add summary percentage
+        passing200: formData.passing200 || [],
+        passing200SummaryPct: passing200SummaryPct || '',
+        atterbergLimits: formData.atterbergLimits || [],
         specificGravityG: formData.specificGravity.toString() || '',
         proctorPoints: proctorPoints || [],
         zavPoints: zavPoints || []
@@ -1122,8 +1125,9 @@ const ProctorForm: React.FC = () => {
         reviewedBy: '',
         checkedBy: '',
         percentPassing200: passing200SummaryPct || '', // Use summary as legacy field
-        passing200: formData.passing200 || [], // Add Passing #200 table
-        passing200SummaryPct: passing200SummaryPct || '', // Add summary percentage
+        passing200: formData.passing200 || [],
+        passing200SummaryPct: passing200SummaryPct || '',
+        atterbergLimits: formData.atterbergLimits || [],
         specificGravityG: formData.specificGravity.toString() || '',
         proctorPoints: proctorPoints || [],
         zavPoints: zavPoints || []

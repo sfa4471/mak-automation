@@ -174,7 +174,14 @@ const TechnicianDashboard: React.FC = () => {
     if (task.taskType === 'COMPRESSIVE_STRENGTH') navigate(`/task/${task.id}/wp1`);
     else if (task.taskType === 'DENSITY_MEASUREMENT') navigate(`/task/${task.id}/density`);
     else if (task.taskType === 'REBAR') navigate(`/task/${task.id}/rebar`);
-    else if (task.taskType === 'PROCTOR') navigate(`/task/${task.id}/proctor`);
+    else if (task.taskType === 'PROCTOR') {
+      const reviewStatuses = ['READY_FOR_REVIEW', 'APPROVED'];
+      if (reviewStatuses.includes(task.status)) {
+        navigate(`/task/${task.id}/proctor/summary`);
+      } else {
+        navigate(`/task/${task.id}/proctor`);
+      }
+    }
     else void showAlert('This task type is not available yet.', 'Not available');
   };
 

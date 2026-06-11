@@ -963,6 +963,16 @@ router.get('/task/:taskId', authenticate, requireTenant, async (req, res) => {
       } else {
         data.passing200 = data.passing200 || [];
       }
+
+      if (typeof data.atterbergLimits === 'string') {
+        try {
+          data.atterbergLimits = JSON.parse(data.atterbergLimits || '[]');
+        } catch (e) {
+          data.atterbergLimits = [];
+        }
+      } else {
+        data.atterbergLimits = data.atterbergLimits || [];
+      }
       
       // Ensure passing200SummaryPct is included in response (fallback to percentPassing200 for backward compatibility)
       if (!data.passing200SummaryPct && data.percentPassing200) {
@@ -1148,6 +1158,7 @@ router.post('/task/:taskId', authenticate, requireTenant, [
       percentPassing200,
       passing200,
       passing200SummaryPct,
+      atterbergLimits,
       specificGravityG,
       proctorPoints,
       zavPoints
@@ -1171,6 +1182,7 @@ router.post('/task/:taskId', authenticate, requireTenant, [
     const proctorPointsJson = proctorPoints ? JSON.stringify(proctorPoints) : null;
     const zavPointsJson = zavPoints ? JSON.stringify(zavPoints) : null;
     const passing200Json = passing200 ? JSON.stringify(passing200) : null;
+    const atterbergLimitsJson = atterbergLimits ? JSON.stringify(atterbergLimits) : null;
 
     // Check if record exists
     const existing = await db.get('proctor_data', { taskId: parseInt(taskId) });
@@ -1211,6 +1223,7 @@ router.post('/task/:taskId', authenticate, requireTenant, [
       percentPassing200: percentPassing200 || null,
       passing200: passing200Json,
       passing200SummaryPct: passing200SummaryPct || null,
+      atterbergLimits: atterbergLimitsJson,
       specificGravityG: specificGravityG || null,
       proctorPoints: proctorPointsJson,
       zavPoints: zavPointsJson

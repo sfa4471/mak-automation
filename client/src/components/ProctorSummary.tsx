@@ -652,16 +652,11 @@ const ProctorSummary: React.FC = () => {
         if (result.saved && result.savedPath) {
           setLastSavedPath(result.savedPath);
           setError('');
-          setPdfSaveNotice(result.savedToConfiguredPath ? '' : 'PDF downloaded. To save automatically to your workflow folder, run the app locally (npm run dev) and set Workflow path in Settings.');
+          setPdfSaveNotice('');
         } else if (result.saveError) {
-          setError(`PDF generated but save failed: ${result.saveError}`);
-          await showAlert(
-            `The PDF was generated, but saving to the server folder failed.\n\nDetails: ${result.saveError}\n\nThe PDF will still download to your device.`,
-            'PDF generated'
-          );
           setPdfSaveNotice('');
         } else if (result.saved && result.savedToConfiguredPath === false && !result.saveError) {
-          setPdfSaveNotice('PDF downloaded. To save automatically to your workflow folder, run the app locally (npm run dev) and set Workflow path in Settings.');
+          setPdfSaveNotice('');
         }
         
         // Trigger download from base64
