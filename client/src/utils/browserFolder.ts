@@ -105,6 +105,24 @@ export async function clearChosenFolder(tenantId?: number | null): Promise<void>
 }
 
 /**
+ * Request folder permission immediately (while user activation is still fresh).
+ * Call this at the very start of a PDF handler — before any awaited API calls —
+ * so that requestPermission() runs inside the button-click activation window.
+ * By the time saveFileToChosenFolder() is called after PDF generation, permission
+ * is already 'granted' and no second activation is needed.
+ */
+export async function warmFolderPermission(tenantId?: number | null): Promise<void> {
+  if (!isFolderPickerSupported()) return;
+  const key = getFolderHandleKey(tenantId);
+  const handle = await getFromIdb<FileSystemDirectoryHandle>(key);
+  if (!handle) return;
+  const permission = await handle.queryPermission({ mode: 'readwrite' });
+  if (permission === 'prompt') {
+    try { await (handle as any).requestPermission({ mode: 'readwrite' }); } catch {}
+  }
+}
+
+/**
  * Get the stored directory handle only if permission is already granted.
  * Pass tenantId so the handle is the one chosen by this company (no cross-tenant overwrite).
  * Does NOT call requestPermission() here, because that requires a user gesture.

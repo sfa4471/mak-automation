@@ -1211,6 +1211,12 @@ const DensityReportForm: React.FC = () => {
     setLastSavedPath(null); // Clear previous saved path
     setError('');
     try {
+      // Request folder permission while user activation is still fresh (before async PDF generation).
+      // Without this, requestPermission() inside saveFileToChosenFolder() may fail after a page
+      // reload because Chrome's activation window expires during the Puppeteer PDF render.
+      const { warmFolderPermission } = await import('../utils/browserFolder');
+      await warmFolderPermission(user?.tenantId);
+
       const token = localStorage.getItem('token');
       if (!token) {
         await showAlert('Your session has expired or you are not signed in. Please log in again.', 'Authentication required');

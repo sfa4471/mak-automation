@@ -849,8 +849,8 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
       // savedToConfiguredPath: false when using deployed server (e.g. Render) or path not set - file cannot be saved to user's folder
       res.status(200).json({
         success: true,
-        saved: saveInfo !== null,
-        savedPath: saveInfo ? saveInfo.filePath : null,
+        saved: saveInfo !== null && !saveError,
+        savedPath: saveInfo && !saveError ? saveInfo.filePath : null,
         fileName: saveInfo ? saveInfo.filename : null,
         sequence: saveInfo ? saveInfo.sequence : null,
         isRevision: saveInfo ? saveInfo.isRevision : false,
@@ -1200,6 +1200,26 @@ router.post('/task/:taskId', authenticate, requireTenant, [
     const reviewedByFinal = existing && !hasSignOffValue(reviewedBy) ? (existing.reviewedBy ?? existing.reviewed_by ?? null) : (reviewedBy || null);
     const checkedByFinal = existing && !hasSignOffValue(checkedBy) ? (existing.checkedBy ?? existing.checked_by ?? null) : (checkedBy || null);
 
+    // Preserve Atterberg/passing fields — ProctorForm step 1 sends empty strings when the admin
+    // clicks Next without dish data, which would overwrite the technician's calculated values.
+    const liquidLimitFinal = existing && !hasSignOffValue(liquidLimitLL) ? (existing.liquidLimitLL ?? null) : (liquidLimitLL || null);
+    const plasticLimitFinal = existing && !hasSignOffValue(plasticLimit) ? (existing.plasticLimit ?? null) : (plasticLimit || null);
+    const plasticityIndexFinal = existing && !hasSignOffValue(plasticityIndex) ? (existing.plasticityIndex ?? null) : (plasticityIndex || null);
+    const percentPassing200Final = existing && !hasSignOffValue(percentPassing200) ? (existing.percentPassing200 ?? null) : (percentPassing200 || null);
+    const passing200SummaryPctFinal = existing && !hasSignOffValue(passing200SummaryPct) ? (existing.passing200SummaryPct ?? null) : (passing200SummaryPct || null);
+
+    // Only overwrite atterbergLimits if incoming data is non-empty; preserve existing dish rows otherwise.
+    const atterbergToSave = (() => {
+      if (atterbergLimitsJson === undefined) return undefined;
+      let parsed;
+      try { parsed = JSON.parse(atterbergLimitsJson); } catch { parsed = []; }
+      if (Array.isArray(parsed) && parsed.length > 0) return atterbergLimitsJson;
+      // Incoming is empty — keep whatever is already stored
+      const existingArr = existing?.atterbergLimits;
+      if (Array.isArray(existingArr) && existingArr.length > 0) return JSON.stringify(existingArr);
+      return atterbergLimitsJson; // both empty, write empty
+    })();
+
     const proctorData = {
       taskId: parseInt(taskId),
       projectName: projectName || null,
@@ -1217,17 +1237,17 @@ router.post('/task/:taskId', authenticate, requireTenant, [
       applyCorrectionFactor: applyCorrectionFactor !== undefined ? applyCorrectionFactor : false,
       optMoisturePct: finalOptMoisture, // Canonical field
       maxDryDensityPcf: finalMaxDensity, // Canonical field
-      liquidLimitLL: liquidLimitLL || null,
-      plasticLimit: plasticLimit || null,
-      plasticityIndex: plasticityIndex || null,
+      liquidLimitLL: liquidLimitFinal,
+      plasticLimit: plasticLimitFinal,
+      plasticityIndex: plasticityIndexFinal,
       sampleDate: sampleDateFinal,
       calculatedBy: calculatedByFinal,
       reviewedBy: reviewedByFinal,
       checkedBy: checkedByFinal,
-      percentPassing200: percentPassing200 || null,
+      percentPassing200: percentPassing200Final,
       passing200: passing200Json,
-      passing200SummaryPct: passing200SummaryPct || null,
-      ...(atterbergLimitsJson !== undefined ? { atterbergLimits: atterbergLimitsJson } : {}),
+      passing200SummaryPct: passing200SummaryPctFinal,
+      ...(atterbergToSave !== undefined ? { atterbergLimits: atterbergToSave } : {}),
       specificGravityG: specificGravityG || null,
       proctorPoints: proctorPointsJson,
       zavPoints: zavPointsJson

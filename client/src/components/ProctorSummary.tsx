@@ -555,7 +555,15 @@ const ProctorSummary: React.FC = () => {
 
   const handleCreatePDF = async () => {
     if (!task) return;
-    
+
+    // Request folder permission while user activation is still fresh — before the slow
+    // Puppeteer PDF render. Chrome's activation window expires during the await chain
+    // otherwise, and saveFileToChosenFolder silently fails after a page reload.
+    try {
+      const { warmFolderPermission } = await import('../utils/browserFolder');
+      await warmFolderPermission(user?.tenantId);
+    } catch {}
+
     try {
       setSaving(true);
       setError(''); // Clear previous errors
