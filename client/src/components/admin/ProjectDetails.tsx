@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useAppDialog } from '../../context/AppDialogContext';
-import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress, normalizeSoilSpecRow, isValidSoilDensityEntry, PresetProctorRow } from '../../api/projects';
+import { projectsAPI, Project, ProjectDrawing, SoilSpecs, ConcreteSpecs, CustomerDetails, ProjectAddress, normalizeSoilSpecRow, isValidSoilDensityEntry, PresetProctorRow, FolderCreationResult } from '../../api/projects';
 import './ProjectDetails.css';
 
 const SOIL_STRUCTURE_TYPES = [
@@ -44,6 +44,8 @@ const ProjectDetails: React.FC = () => {
   const [addDrawingFiles, setAddDrawingFiles] = useState<File[]>([]);
   const [uploadingDrawings, setUploadingDrawings] = useState(false);
   const [drawingUploadError, setDrawingUploadError] = useState('');
+  const [folderCreating, setFolderCreating] = useState(false);
+  const [folderResult, setFolderResult] = useState<{ success: boolean; path?: string | null; error?: string | null } | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -555,6 +557,21 @@ const ProjectDetails: React.FC = () => {
   };
   const renameCustomConcreteType = (id: string, name: string) => {
     setCustomConcreteTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+  };
+
+  const handleCreateFolder = async () => {
+    if (!project) return;
+    setFolderCreating(true);
+    setFolderResult(null);
+    try {
+      const result = await projectsAPI.retryFolderCreation(project.id);
+      const fc: FolderCreationResult = result.folderCreation;
+      setFolderResult({ success: result.success, path: fc.path, error: fc.error });
+    } catch (err: any) {
+      setFolderResult({ success: false, error: err.response?.data?.error || err.message || 'Failed to create folder' });
+    } finally {
+      setFolderCreating(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1766,6 +1783,42 @@ const ProjectDetails: React.FC = () => {
               </>
             )}
           </div>
+
+          {isAdmin() && (
+            <div className="form-section">
+              <h2>Project Folder</h2>
+              <p style={{ color: '#555', fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+                If the workflow folder path was configured <em>after</em> this project was created, or the
+                project folder is missing, use this to create it now. PDF reports will be saved there, and
+                the nightly auto-send requires it.
+              </p>
+              <button
+                type="button"
+                disabled={folderCreating}
+                onClick={handleCreateFolder}
+                className="details-button"
+                style={{ padding: '8px 16px' }}
+              >
+                {folderCreating ? 'Creating...' : 'Create / Retry Project Folder'}
+              </button>
+              {folderResult && (
+                <div style={{
+                  marginTop: 12,
+                  padding: '10px 14px',
+                  borderRadius: 4,
+                  fontSize: 14,
+                  background: folderResult.success ? '#e8f5e9' : '#fdecea',
+                  color: folderResult.success ? '#1b5e20' : '#b71c1c',
+                  border: `1px solid ${folderResult.success ? '#a5d6a7' : '#ef9a9a'}`
+                }}>
+                  {folderResult.success
+                    ? `Folder created successfully${folderResult.path ? `: ${folderResult.path}` : ''}`
+                    : `Failed: ${folderResult.error || 'Unknown error. Check that the workflow folder path is configured in Settings.'}`
+                  }
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="form-section">
             <h2>Drawings</h2>

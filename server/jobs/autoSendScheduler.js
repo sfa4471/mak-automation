@@ -1,9 +1,9 @@
 const { sendApprovedReportsForAllTenants } = require('./sendApprovedReports');
 
 const TIME_ZONE = 'America/Chicago';
-// Nightly send wall time in Chicago (handles CST/CDT). Revert to 18 / 0 after testing (6:00 PM).
-const TARGET_HOUR = 2; // 2 AM (24h) — TEMP for 2:20am test, revert to 18 after
-const TARGET_MINUTE = 20; // 2:20 AM Chicago
+// Nightly send wall time in Chicago (handles CST/CDT).
+const TARGET_HOUR = 18; // 6 PM (24h)
+const TARGET_MINUTE = 0; // 6:00 PM Chicago
 
 function getTimeZoneParts(date) {
   const dtf = new Intl.DateTimeFormat('en-US', {
