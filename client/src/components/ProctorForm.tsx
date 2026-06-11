@@ -123,6 +123,7 @@ const ProctorForm: React.FC = () => {
   const [error, setError] = useState('');
   const [_hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const lastSavedDataRef = useRef<string>('');
+  const recalcTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Calculation functions (defined before use in useEffect)
   const calculateWetWtSample = (wetWtMold: string, wtOfMold: string): string => {
@@ -734,18 +735,23 @@ const ProctorForm: React.FC = () => {
     setFormData(prev => ({ ...prev, specificGravity: numValue }));
   };
 
-  const handleColumnFieldChange = (columnIndex: number, field: keyof ProctorRow, value: string) => {
+  const handleColumnFieldChange = useCallback((columnIndex: number, field: keyof ProctorRow, value: string) => {
+    // Immediately update the raw value so the input feels instant
     setFormData(prev => {
-      const updatedColumns = [...prev.columns];
-      updatedColumns[columnIndex] = {
-        ...updatedColumns[columnIndex],
-        [field]: value
-      };
-      // Recalculate all computed fields for this column
-      updatedColumns[columnIndex] = recalculateColumn(updatedColumns[columnIndex], prev.moldVolume);
-      return { ...prev, columns: updatedColumns };
+      const cols = [...prev.columns];
+      cols[columnIndex] = { ...cols[columnIndex], [field]: value };
+      return { ...prev, columns: cols };
     });
-  };
+    // Debounce the full recalculation (derived fields + chart re-render) by 250ms
+    if (recalcTimerRef.current) clearTimeout(recalcTimerRef.current);
+    recalcTimerRef.current = setTimeout(() => {
+      setFormData(prev => {
+        const cols = [...prev.columns];
+        cols[columnIndex] = recalculateColumn(cols[columnIndex], prev.moldVolume);
+        return { ...prev, columns: cols };
+      });
+    }, 250);
+  }, []);
 
   const handleAtterbergFieldChange = (dishIndex: number, field: keyof AtterbergDish, value: string) => {
     setFormData(prev => {

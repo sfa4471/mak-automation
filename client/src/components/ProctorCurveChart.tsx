@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -30,7 +30,7 @@ interface ProctorCurveChartProps {
   correctedPoint?: ProctorPoint | null; // Corrected point if correction factor is applied
 }
 
-const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
+const ProctorCurveChartInner: React.FC<ProctorCurveChartProps> = ({
   proctorPoints,
   zavPoints,
   omc,
@@ -78,13 +78,6 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
       .sort((a, b) => a.x - b.x);
   }, [zavPoints]);
 
-  // Console logs for debugging
-  console.log("proctorPoints (raw):", proctorPoints);
-  console.log("cleanedProctorPoints:", cleanedProctorPoints);
-  console.log("zavPoints (raw):", zavPoints);
-  console.log("cleanedZAVPoints:", cleanedZAVPoints);
-  console.log("omc:", omc, "maxDryDensity:", maxDryDensity);
-
   // Sort proctor points by x (moisture content) for proper line connection
   const sortedProctorPoints = cleanedProctorPoints;
 
@@ -120,12 +113,6 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     // Filter out any remaining invalid values
     const validYs = yValues.filter(Number.isFinite);
     
-    console.log('Y-axis domain calculation (Proctor only):', {
-      proctorYs: cleanedProctorPoints.map(p => p.y),
-      maxDryDensity,
-      allValidYs: validYs
-    });
-    
     // If no valid values, use default range
     if (validYs.length === 0) {
       console.warn('No valid Y values found, using default domain [0, 10]');
@@ -147,15 +134,6 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     const domainMin = Math.max(0, roundedMinY);
     
     const domain: [number, number] = [domainMin, domainMax];
-    
-    console.log('Calculated Y-axis domain:', {
-      minY,
-      dataMaxY,
-      domainMin,
-      domainMax,
-      finalDomain: domain
-    });
-    
     return domain;
   }, [cleanedProctorPoints, maxDryDensity]);
 
@@ -174,11 +152,6 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     
     // Filter out any remaining invalid values
     const validMoistures = moistureValues.filter(Number.isFinite);
-    
-    console.log('X-axis domain calculation (Proctor only):', {
-      proctorMoistures: cleanedProctorPoints.map(p => p.x),
-      allValidMoistures: validMoistures
-    });
     
     // If no valid values, use default range
     if (validMoistures.length === 0) {
@@ -215,25 +188,8 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     }
     
     const domain: [number, number] = [xMinAligned, xMaxAligned];
-    
-    // Store xAxisMax for ZAV clipping (use aligned values to match domain)
     const xAxisMaxForClipping = xMaxAligned;
     const xAxisMinForClipping = xMinAligned;
-    
-    console.log('Calculated X-axis domain and ticks:', {
-      minX,
-      maxX,
-      xAxisMinTentative,
-      xAxisMax,
-      range,
-      tickStep,
-      xMinAligned,
-      xMaxAligned,
-      gapMinXToAxis: minX - xMinAligned,
-      finalDomain: domain,
-      ticks
-    });
-    
     return { domain, ticks, xAxisMaxForClipping, xAxisMinForClipping };
   }, [cleanedProctorPoints]);
 
@@ -307,10 +263,7 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
       }
     });
 
-    const sorted = data.sort((a, b) => a.moisture - b.moisture);
-    console.log("chartData:", sorted);
-    console.log("filteredZAVPoints (min x):", filteredZAVPoints.length > 0 ? Math.min(...filteredZAVPoints.map(p => p.x)) : "none");
-    return sorted;
+    return data.sort((a, b) => a.moisture - b.moisture);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortedProctorPoints, zavClippedForChart]);
 
@@ -366,13 +319,6 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
     if (ticks.length === 0) {
       ticks.push(roundedMin, roundedMax);
     }
-    
-    console.log('Generated Y-axis ticks (step=2):', {
-      domain: yDomain,
-      roundedMin,
-      roundedMax,
-      ticks
-    });
     
     return ticks;
   }, [yDomain]);
@@ -678,4 +624,5 @@ const ProctorCurveChart: React.FC<ProctorCurveChartProps> = ({
   );
 };
 
+const ProctorCurveChart = memo(ProctorCurveChartInner);
 export default ProctorCurveChart;

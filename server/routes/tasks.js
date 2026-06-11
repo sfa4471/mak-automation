@@ -2576,27 +2576,28 @@ router.get('/dashboard/technician/today', authenticate, requireTenant, async (re
           users:assigned_technician_id(name, email),
           projects:project_id(project_number, project_name)
         `)
-        .eq('assigned_technician_id', req.user.id);
+        .eq('assigned_technician_id', req.user.id)
+        .neq('status', 'APPROVED');
       if (mustEnforceTenantOnTasks(legacyDb)) query = query.eq('tenant_id', tenantId);
       const { data, error } = await query;
-      
+
       if (error) throw error;
-      
+
       // Filter tasks based on date logic
       tasks = (data || []).filter(task => {
         const dueDate = toCalendarYmd(task.due_date);
         const scheduledStart = toCalendarYmd(task.scheduled_start_date);
         const scheduledEnd = toCalendarYmd(task.scheduled_end_date);
-        
+
         // Rule A: Report Due Date is today
         if (dueDate === today) return true;
-        
+
         // Rule B1: Single date (scheduledStartDate only, no scheduledEndDate)
         if (scheduledStart === today && !scheduledEnd) return true;
-        
+
         // Rule B2: Date range (scheduledStartDate + scheduledEndDate) - inclusive boundaries
         if (scheduledStart && scheduledEnd && scheduledStart <= today && scheduledEnd >= today) return true;
-        
+
         return false;
       }).map(normalizeSupabaseTaskRow);
       
@@ -2624,17 +2625,18 @@ router.get('/dashboard/technician/today', authenticate, requireTenant, async (re
            LEFT JOIN users u ON t.assignedTechnicianId = u.id
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.assignedTechnicianId = ?
+           AND t.status != 'APPROVED'
            AND (
              (t.dueDate IS NOT NULL AND substr(trim(t.dueDate),1,10) = ?)
              OR
              (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NULL AND substr(trim(t.scheduledStartDate),1,10) = ?)
              OR
-             (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL 
+             (t.scheduledStartDate IS NOT NULL AND t.scheduledEndDate IS NOT NULL
               AND substr(trim(t.scheduledStartDate),1,10) <= ? AND substr(trim(t.scheduledEndDate),1,10) >= ?)
            )`
           + (legacyDb ? '' : ' AND t.tenantId = ?') +
           `
-           ORDER BY 
+           ORDER BY
              CASE WHEN t.status = 'READY_FOR_REVIEW' THEN 0 ELSE 1 END,
              t.scheduledStartDate ASC,
              t.dueDate ASC`,
@@ -3162,9 +3164,8 @@ router.get('/dashboard/technician/completed-field-work', authenticate, requireTe
         `
         )
         .eq('assigned_technician_id', userId)
-        .eq('field_completed', 1)
-        .not('field_completed_at', 'is', null)
-        .order('field_completed_at', { ascending: false })
+        .eq('status', 'APPROVED')
+        .order('updated_at', { ascending: false })
         .limit(limit);
       if (mustEnforceTenantOnTasks(legacyDb)) q = q.eq('tenant_id', tenantId);
       const { data, error } = await q;
@@ -3180,11 +3181,10 @@ router.get('/dashboard/technician/completed-field-work', authenticate, requireTe
            LEFT JOIN users u ON t.assignedTechnicianId = u.id
            INNER JOIN projects p ON t.projectId = p.id
            WHERE t.assignedTechnicianId = ?
-             AND t.fieldCompleted = 1
-             AND t.fieldCompletedAt IS NOT NULL` +
+             AND t.status = 'APPROVED'` +
             (legacyDb ? '' : ' AND t.tenantId = ?') +
             `
-           ORDER BY t.fieldCompletedAt DESC
+           ORDER BY t.updatedAt DESC
            LIMIT ?`,
           legacyDb ? [userId, limit] : [userId, tenantId, limit],
           (err, r) => {

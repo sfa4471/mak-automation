@@ -292,31 +292,14 @@ const TechnicianDashboard: React.FC = () => {
             >
               Task Detail
             </button>
-            {task.reportSubmitted ? null : task.fieldCompleted ? (
+            {!task.reportSubmitted && (
               <button
                 type="button"
-                className="sched-btn sched-btn--continue"
+                className="sched-btn sched-btn--view"
                 onClick={() => handleTaskClick(task)}
               >
-                Continue Report
+                {task.status === 'IN_PROGRESS_TECH' ? 'Continue' : 'View'}
               </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="sched-btn sched-btn--complete"
-                  onClick={() => handleMarkFieldComplete(task)}
-                >
-                  Mark Complete
-                </button>
-                <button
-                  type="button"
-                  className="sched-btn sched-btn--view"
-                  onClick={() => handleTaskClick(task)}
-                >
-                  {task.status === 'IN_PROGRESS_TECH' ? 'Continue' : 'View'}
-                </button>
-              </>
             )}
           </div>
         </div>
