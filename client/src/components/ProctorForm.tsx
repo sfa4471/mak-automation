@@ -78,14 +78,14 @@ const ProctorInputCell: React.FC<{
   }, [value]);
 
   if (!isEditable) {
-    return <input type={inputType} value={value} readOnly className="readonly" step={step} />;
+    return <input type="text" value={value} readOnly className="readonly" />;
   }
 
   return (
     <input
-      type={inputType}
+      type="text"
+      inputMode="decimal"
       value={localVal}
-      step={step}
       onChange={(e) => setLocalVal(e.target.value)}
       onFocus={() => { focusedRef.current = true; }}
       onBlur={(e) => {
