@@ -422,15 +422,15 @@ const ProctorForm: React.FC = () => {
   const proctorPoints: ProctorPoint[] = useMemo(() => {
     const points: ProctorPoint[] = [];
     formData.columns.forEach(col => {
-      // Parse Water Content (%) and Dry Unit Wt (pcf) using toNum()
       const waterContent = toNum(col.waterContent);
       const dryUnitWt = toNum(col.dryUnitWt);
-      // Only include points where BOTH values are valid numbers
-      if (!isNaN(waterContent) && !isNaN(dryUnitWt)) {
+      // Require physically valid values: positive moisture, realistic density range
+      if (!isNaN(waterContent) && !isNaN(dryUnitWt) &&
+          waterContent > 0 && waterContent < 100 &&
+          dryUnitWt > 50 && dryUnitWt < 200) {
         points.push({ x: waterContent, y: dryUnitWt });
       }
     });
-    // Sort by moisture ascending
     return points.sort((a, b) => a.x - b.x);
   }, [formData.columns]);
 

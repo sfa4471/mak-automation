@@ -323,45 +323,6 @@ const ProctorCurveChartInner: React.FC<ProctorCurveChartProps> = ({
     return ticks;
   }, [yDomain]);
 
-  // Minor grid ticks: 3 equally spaced values between each pair of major ticks (4 equal subdivisions)
-  const round4 = (n: number) => Math.round(n * 10000) / 10000;
-  const dedupeSort = (arr: number[]) => {
-    const sorted = arr.slice().sort((p, q) => p - q);
-    const out: number[] = [];
-    for (let i = 0; i < sorted.length; i++) {
-      if (i === 0 || sorted[i] > sorted[i - 1]) out.push(sorted[i]);
-    }
-    return out;
-  };
-  const xTicksWithMinor = useMemo(() => {
-    const out: number[] = [];
-    const major = xTicks;
-    for (let i = 0; i < major.length; i++) {
-      out.push(round4(major[i]));
-      if (i < major.length - 1) {
-        const a = major[i];
-        const b = major[i + 1];
-        const step = (b - a) / 4;
-        out.push(round4(a + step), round4(a + 2 * step), round4(a + 3 * step));
-      }
-    }
-    return dedupeSort(out);
-  }, [xTicks]);
-
-  const yTicksWithMinor = useMemo(() => {
-    const out: number[] = [];
-    const major = yTicks;
-    for (let i = 0; i < major.length; i++) {
-      out.push(round4(major[i]));
-      if (i < major.length - 1) {
-        const a = major[i];
-        const b = major[i + 1];
-        const step = (b - a) / 4;
-        out.push(round4(a + step), round4(a + 2 * step), round4(a + 3 * step));
-      }
-    }
-    return dedupeSort(out);
-  }, [yTicks]);
 
   // Edge cases - check AFTER all hooks are called
   if (sortedProctorPoints.length < 2) {
@@ -376,41 +337,30 @@ const ProctorCurveChartInner: React.FC<ProctorCurveChartProps> = ({
 
   return (
     <div className="proctor-chart-container">
-      <ResponsiveContainer width="100%" height={500}>
+      <ResponsiveContainer width="100%" height={500} debounce={200}>
         <LineChart
           data={chartData}
           margin={{ top: 20, right: 20, left: 75, bottom: 80 }}
         >
-          {/* Grid: vertical lines clipped to displayed y range (do not extend past effectiveYMax); grey; behind curves */}
-          {xTicksWithMinor.map((v) => (
-            <ReferenceLine
-              key={`v-${v}`}
-              zIndex={0}
-              segment={[
-                { x: v, y: effectiveYDomain[0] },
-                { x: v, y: effectiveYDomain[1] }
-              ]}
-              stroke="#d0d0d0"
-              strokeWidth={1}
-            />
+          {/* Grid: major-tick lines only — stable primitives, no new objects per render */}
+          {xTicks.map((v) => (
+            <ReferenceLine key={`v-${v}`} x={v} stroke="#d0d0d0" strokeWidth={1} zIndex={0} />
           ))}
-          {yTicksWithMinor.map((v) => (
-            <ReferenceLine key={`h-${v}`} zIndex={0} y={v} stroke="#d0d0d0" strokeWidth={1} />
+          {yTicks.map((v) => (
+            <ReferenceLine key={`h-${v}`} y={v} stroke="#d0d0d0" strokeWidth={1} zIndex={0} />
           ))}
 
           <XAxis
             type="number"
             dataKey="moisture"
             domain={xDomain}
-            ticks={xTicksWithMinor}
+            ticks={xTicks}
             tick={(props) => {
               const { x, y, payload } = props;
-              const isMajor = xTicks.includes(payload.value);
-              if (!isMajor) return null;
               return (
                 <g transform={`translate(${x},${y})`}>
-                  <line x1={0} y1={0} x2={0} y2={1} stroke="#000" strokeWidth={1} />
-                  <text x={0} y={10} fill="#000" fontSize={11} fontWeight="bold" textAnchor="middle">
+                  <line x1={0} y1={0} x2={0} y2={3} stroke="#000" strokeWidth={1} />
+                  <text x={0} y={14} fill="#000" fontSize={11} fontWeight="bold" textAnchor="middle">
                     {payload.value}
                   </text>
                 </g>
@@ -624,5 +574,20 @@ const ProctorCurveChartInner: React.FC<ProctorCurveChartProps> = ({
   );
 };
 
-const ProctorCurveChart = memo(ProctorCurveChartInner);
+const arePropsEqual = (prev: ProctorCurveChartProps, next: ProctorCurveChartProps): boolean => {
+  if (prev.omc !== next.omc || prev.maxDryDensity !== next.maxDryDensity) return false;
+  if (prev.correctedPoint?.x !== next.correctedPoint?.x ||
+      prev.correctedPoint?.y !== next.correctedPoint?.y) return false;
+  if (prev.proctorPoints.length !== next.proctorPoints.length) return false;
+  for (let i = 0; i < prev.proctorPoints.length; i++) {
+    if (prev.proctorPoints[i].x !== next.proctorPoints[i].x ||
+        prev.proctorPoints[i].y !== next.proctorPoints[i].y) return false;
+  }
+  if (prev.zavPoints.length !== next.zavPoints.length) return false;
+  if (prev.zavPoints.length > 0 &&
+      (prev.zavPoints[0].y !== next.zavPoints[0].y)) return false;
+  return true;
+};
+
+const ProctorCurveChart = memo(ProctorCurveChartInner, arePropsEqual);
 export default ProctorCurveChart;
