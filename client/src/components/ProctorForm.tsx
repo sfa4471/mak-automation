@@ -56,6 +56,48 @@ interface ProctorData {
   passing200: Passing200Dish[];
 }
 
+// Isolated input cell — local state keeps typing fast; parent only re-renders on blur
+const ProctorInputCell: React.FC<{
+  value: string;
+  columnIndex: number;
+  field: keyof ProctorRow;
+  onCommit: (columnIndex: number, field: keyof ProctorRow, value: string) => void;
+  isEditable: boolean;
+  inputType?: 'text' | 'number';
+  step?: string;
+}> = React.memo(({ value, columnIndex, field, onCommit, isEditable, inputType = 'number', step }) => {
+  const [localVal, setLocalVal] = React.useState(value);
+  const focusedRef = React.useRef(false);
+
+  // Sync from parent only when the cell is not focused (e.g. after recalculation or data load)
+  React.useEffect(() => {
+    if (!focusedRef.current) setLocalVal(value);
+  }, [value]);
+
+  if (!isEditable) {
+    return <input type={inputType} value={value} readOnly className="readonly" step={step} />;
+  }
+
+  return (
+    <input
+      type={inputType}
+      value={localVal}
+      step={step}
+      onChange={(e) => setLocalVal(e.target.value)}
+      onFocus={() => { focusedRef.current = true; }}
+      onBlur={(e) => {
+        focusedRef.current = false;
+        onCommit(columnIndex, field, e.target.value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
+  );
+});
+
 const ProctorForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -123,7 +165,6 @@ const ProctorForm: React.FC = () => {
   const [error, setError] = useState('');
   const [_hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const lastSavedDataRef = useRef<string>('');
-  const recalcTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Calculation functions (defined before use in useEffect)
   const calculateWetWtSample = (wetWtMold: string, wtOfMold: string): string => {
@@ -736,21 +777,12 @@ const ProctorForm: React.FC = () => {
   };
 
   const handleColumnFieldChange = useCallback((columnIndex: number, field: keyof ProctorRow, value: string) => {
-    // Immediately update the raw value so the input feels instant
+    // Called from ProctorInputCell onBlur — do the full recalculation in one state update
     setFormData(prev => {
       const cols = [...prev.columns];
-      cols[columnIndex] = { ...cols[columnIndex], [field]: value };
+      cols[columnIndex] = recalculateColumn({ ...cols[columnIndex], [field]: value }, prev.moldVolume);
       return { ...prev, columns: cols };
     });
-    // Debounce the full recalculation (derived fields + chart re-render) by 250ms
-    if (recalcTimerRef.current) clearTimeout(recalcTimerRef.current);
-    recalcTimerRef.current = setTimeout(() => {
-      setFormData(prev => {
-        const cols = [...prev.columns];
-        cols[columnIndex] = recalculateColumn(cols[columnIndex], prev.moldVolume);
-        return { ...prev, columns: cols };
-      });
-    }, 250);
   }, []);
 
   const handleAtterbergFieldChange = (dishIndex: number, field: keyof AtterbergDish, value: string) => {
@@ -1398,12 +1430,13 @@ const ProctorForm: React.FC = () => {
                 <td colSpan={2}></td>
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
-                    <input
-                      type="text"
+                    <ProctorInputCell
                       value={col.panNumber}
-                      onChange={(e) => handleColumnFieldChange(idx, 'panNumber', e.target.value)}
-                      readOnly={!isEditable}
-                      className={!isEditable ? 'readonly' : ''}
+                      columnIndex={idx}
+                      field="panNumber"
+                      onCommit={handleColumnFieldChange}
+                      isEditable={isEditable}
+                      inputType="text"
                     />
                   </td>
                 ))}
@@ -1421,13 +1454,13 @@ const ProctorForm: React.FC = () => {
                 <td>lbs</td>
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
-                    <input
-                      type="number"
+                    <ProctorInputCell
                       value={col.wetWtMold}
-                      onChange={(e) => handleColumnFieldChange(idx, 'wetWtMold', e.target.value)}
+                      columnIndex={idx}
+                      field="wetWtMold"
+                      onCommit={handleColumnFieldChange}
+                      isEditable={isEditable}
                       step="0.001"
-                      readOnly={!isEditable}
-                      className={!isEditable ? 'readonly' : ''}
                     />
                   </td>
                 ))}
@@ -1440,13 +1473,13 @@ const ProctorForm: React.FC = () => {
                 <td>lbs</td>
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
-                    <input
-                      type="number"
+                    <ProctorInputCell
                       value={col.wtOfMold}
-                      onChange={(e) => handleColumnFieldChange(idx, 'wtOfMold', e.target.value)}
+                      columnIndex={idx}
+                      field="wtOfMold"
+                      onCommit={handleColumnFieldChange}
+                      isEditable={isEditable}
                       step="0.001"
-                      readOnly={!isEditable}
-                      className={!isEditable ? 'readonly' : ''}
                     />
                   </td>
                 ))}
@@ -1498,13 +1531,13 @@ const ProctorForm: React.FC = () => {
                 <td>g</td>
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
-                    <input
-                      type="number"
+                    <ProctorInputCell
                       value={col.wetWtPan}
-                      onChange={(e) => handleColumnFieldChange(idx, 'wetWtPan', e.target.value)}
+                      columnIndex={idx}
+                      field="wetWtPan"
+                      onCommit={handleColumnFieldChange}
+                      isEditable={isEditable}
                       step="0.01"
-                      readOnly={!isEditable}
-                      className={!isEditable ? 'readonly' : ''}
                     />
                   </td>
                 ))}
@@ -1517,13 +1550,13 @@ const ProctorForm: React.FC = () => {
                 <td>g</td>
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
-                    <input
-                      type="number"
+                    <ProctorInputCell
                       value={col.dryWtPan}
-                      onChange={(e) => handleColumnFieldChange(idx, 'dryWtPan', e.target.value)}
+                      columnIndex={idx}
+                      field="dryWtPan"
+                      onCommit={handleColumnFieldChange}
+                      isEditable={isEditable}
                       step="0.01"
-                      readOnly={!isEditable}
-                      className={!isEditable ? 'readonly' : ''}
                     />
                   </td>
                 ))}
@@ -1553,13 +1586,13 @@ const ProctorForm: React.FC = () => {
                 <td>g</td>
                 {formData.columns.map((col, idx) => (
                   <td key={idx}>
-                    <input
-                      type="number"
+                    <ProctorInputCell
                       value={col.wtOfPan}
-                      onChange={(e) => handleColumnFieldChange(idx, 'wtOfPan', e.target.value)}
+                      columnIndex={idx}
+                      field="wtOfPan"
+                      onCommit={handleColumnFieldChange}
+                      isEditable={isEditable}
                       step="0.01"
-                      readOnly={!isEditable}
-                      className={!isEditable ? 'readonly' : ''}
                     />
                   </td>
                 ))}
