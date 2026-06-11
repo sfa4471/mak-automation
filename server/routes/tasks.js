@@ -1669,10 +1669,11 @@ router.put('/:id/status', authenticate, requireTenant, [
       updatedAt: new Date().toISOString()
     };
 
-    // Mark report as submitted when status becomes READY_FOR_REVIEW
+    // Mark report as submitted and field work complete when status becomes READY_FOR_REVIEW
     if (status === 'READY_FOR_REVIEW') {
       updateData.reportSubmitted = 1;
-      // Note: submittedAt column doesn't exist in schema, using lastEditedAt instead
+      updateData.fieldCompleted = 1;
+      updateData.fieldCompletedAt = new Date().toISOString();
     }
 
     // Update task
@@ -1684,7 +1685,7 @@ router.put('/:id/status', authenticate, requireTenant, [
       const technicianName = technician?.name || technician?.email || 'Technician';
       
       // Log history: Technician submitted report
-      await logTaskHistory(taskId, req.tenantId, req.user.role, technicianName, req.user.id, 'SUBMITTED', null);
+      await logTaskHistory(taskId, req.tenantId, req.user.role, technicianName, req.user.id, 'SUBMITTED', 'Report submitted for admin review');
       
       const taskTypeLabels = {
         'COMPRESSIVE_STRENGTH': 'Compressive Strength',
@@ -1702,7 +1703,7 @@ router.put('/:id/status', authenticate, requireTenant, [
       if (req.tenantId != null) adminConditions.tenantId = req.tenantId;
       const admins = await db.all('users', adminConditions);
       if (admins && admins.length > 0) {
-        const message = `${technicianName} completed ${taskLabel} for Project ${task.projectNumber}`;
+        const message = `${technicianName} has submitted the ${taskLabel} report for Project ${task.projectNumber} for your review`;
         await Promise.all(admins.map(admin =>
           createNotification(admin.id, message, 'info', null, projectId, taskId, req.tenantId ?? null)
         ));

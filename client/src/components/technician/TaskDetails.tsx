@@ -195,7 +195,7 @@ const TaskDetails: React.FC = () => {
     const statusMap: { [key: string]: string } = {
       'ASSIGNED': 'Assigned',
       'IN_PROGRESS_TECH': 'In Progress',
-      'READY_FOR_REVIEW': 'Under review (PM / Admin)',
+      'READY_FOR_REVIEW': 'Submitted for Admin Review',
       'APPROVED': 'Approved',
       'REJECTED_NEEDS_FIX': 'Rejected - Needs Fix'
     };

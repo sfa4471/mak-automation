@@ -229,8 +229,8 @@ const RebarForm: React.FC = () => {
   const handleSendToAdmin = async () => {
     if (!formData || !task) return;
     const ok = await showConfirm(
-      'Send this report to the administrator for review? You will not be able to edit it until an administrator responds.',
-      'Submit for review'
+      'Once submitted, you will no longer be able to edit this report and it will be marked as complete. Your administrator will be notified for review. Do you want to proceed?',
+      'Submit report for review'
     );
     if (!ok) return;
     setSaving(true);

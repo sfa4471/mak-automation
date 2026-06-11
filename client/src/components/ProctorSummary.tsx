@@ -472,8 +472,8 @@ const ProctorSummary: React.FC = () => {
   const handleSendToAdmin = async () => {
     if (!task || isStaffReviewer()) return;
     const sendOk = await showConfirm(
-      'Send this Proctor report to the administrator for review? You will not be able to edit it until an administrator responds.',
-      'Submit for review'
+      'Once submitted, you will no longer be able to edit this report and it will be marked as complete. Your administrator will be notified for review. Do you want to proceed?',
+      'Submit report for review'
     );
     if (!sendOk) return;
     setSaving(true);

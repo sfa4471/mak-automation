@@ -254,7 +254,7 @@ const TechnicianDashboard: React.FC = () => {
     const map: Record<string, string> = {
       ASSIGNED: 'Assigned',
       IN_PROGRESS_TECH: 'In Progress',
-      READY_FOR_REVIEW: 'Under review (PM / Admin)',
+      READY_FOR_REVIEW: 'Submitted for Admin Review',
       APPROVED: 'Approved',
       REJECTED_NEEDS_FIX: 'Rejected – Needs Fix',
     };
@@ -292,7 +292,7 @@ const TechnicianDashboard: React.FC = () => {
             >
               Task Detail
             </button>
-            {task.fieldCompleted ? (
+            {task.reportSubmitted ? null : task.fieldCompleted ? (
               <button
                 type="button"
                 className="sched-btn sched-btn--continue"

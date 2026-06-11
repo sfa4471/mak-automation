@@ -831,8 +831,8 @@ const WP1Form: React.FC = () => {
   const handleSendUpdateToAdmin = async () => {
     // Technician: Save and set status to READY_FOR_REVIEW
     const sendOk = await showConfirm(
-      'Send this work package to the administrator for review? You will not be able to edit it after submitting.',
-      'Submit for review'
+      'Once submitted, you will no longer be able to edit this report and it will be marked as complete. Your administrator will be notified for review. Do you want to proceed?',
+      'Submit report for review'
     );
     if (!sendOk) return;
     setSaving(true);
@@ -855,7 +855,7 @@ const WP1Form: React.FC = () => {
       setSaveStatus('saved');
       setLastSaved(new Date());
       setTimeout(() => setSaveStatus('idle'), 2000);
-      await showAlert('Your work package has been sent for administrator review.', 'Submitted');
+      await showAlert('Your report has been successfully submitted for admin review.', 'Report submitted');
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to send update');
