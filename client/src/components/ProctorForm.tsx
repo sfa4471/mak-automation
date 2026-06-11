@@ -56,6 +56,9 @@ interface ProctorData {
   passing200: Passing200Dish[];
 }
 
+// Constant defined outside the component so it's never recreated on re-render
+const ZAV_MOISTURE_VALUES = [2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43];
+
 // Isolated input cell — local state keeps typing fast; parent only re-renders on blur
 const ProctorInputCell: React.FC<{
   value: string;
@@ -163,7 +166,6 @@ const ProctorForm: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [error, setError] = useState('');
-  const [_hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const lastSavedDataRef = useRef<string>('');
 
   // Calculation functions (defined before use in useEffect)
@@ -244,8 +246,7 @@ const ProctorForm: React.FC = () => {
     return zav.toFixed(1);
   };
 
-  // Fixed moisture content values for ZAV table
-  const zavMoistureValues = [2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43];
+  // ZAV_MOISTURE_VALUES is defined at module level above
 
   // Round a value to nearest whole number
   const roundToWholeNumber = (value: string): string => {
@@ -501,6 +502,28 @@ const ProctorForm: React.FC = () => {
     return { x: correctedMoisture, y: correctedDensity };
   }, [applyCorrectionFactor, correctedDryDensity, correctedMoistureContent]);
 
+  // Pre-computed ZAV table rows — avoids calling calculateZAVDryDensity 43× on every render
+  const zavTableRows = useMemo(() => {
+    const optimumMoistureNum = optimumMoisture ? parseFloat(optimumMoisture) : null;
+    let closestIndex = -1;
+    if (optimumMoistureNum !== null) {
+      let minDiff = Infinity;
+      ZAV_MOISTURE_VALUES.forEach((m, i) => {
+        const diff = Math.abs(m - optimumMoistureNum);
+        if (diff < minDiff) { minDiff = diff; closestIndex = i; }
+      });
+    }
+    return ZAV_MOISTURE_VALUES.map((moisture, i) => ({
+      moisture,
+      zavDensity: (() => {
+        const sg = formData.specificGravity;
+        if (!sg || sg <= 0 || isNaN(sg)) return '';
+        return ((sg * 62.4) / (1 + (moisture / 100) * sg)).toFixed(1);
+      })(),
+      shouldHighlight: i === closestIndex,
+    }));
+  }, [formData.specificGravity, optimumMoisture]);
+
   // Recalculate all columns on initial mount with sample data
   useEffect(() => {
     setFormData(prev => {
@@ -540,10 +563,8 @@ const ProctorForm: React.FC = () => {
         if (savedProctorData) {
           setSoilClassification(savedProctorData.soilClassification || '');
           setApplyCorrectionFactor((savedProctorData as any).applyCorrectionFactor || false);
-          console.log('Loaded Proctor data from database:', savedProctorData);
         }
       } catch (err) {
-        console.log('No Proctor data in database yet, will check localStorage');
       }
       
       // Load saved Proctor data from localStorage (as fallback or for additional data)
@@ -556,7 +577,6 @@ const ProctorForm: React.FC = () => {
       if (step1Data) {
         try {
           dataToUse = JSON.parse(step1Data);
-          console.log('Loading Proctor step1 data from localStorage:', dataToUse);
         } catch (e) {
           console.error('Error parsing step1 data:', e);
         }
@@ -583,7 +603,6 @@ const ProctorForm: React.FC = () => {
       if (dataToUse) {
         try {
           const saved = dataToUse;
-          console.log('Loading Proctor data:', saved);
           
           // Restore soilClassification
           if (saved.soilClassification) {
@@ -698,7 +717,6 @@ const ProctorForm: React.FC = () => {
             soilClassification: saved.soilClassification || ''
           });
           
-          console.log('Restored Atterberg limits:', recalculatedAtterberg);
         } catch (err) {
           console.error('Error parsing draft data:', err);
         }
@@ -945,24 +963,6 @@ const ProctorForm: React.FC = () => {
     return '';
   };
 
-  // Check if there are unsaved changes by comparing current state to last saved
-  const checkUnsavedChanges = useCallback(() => {
-    if (!task) return false;
-    // Compare current form data to last saved snapshot
-    const currentData = JSON.stringify({
-      formData,
-      soilClassification,
-      applyCorrectionFactor
-    });
-    return currentData !== lastSavedDataRef.current;
-  }, [formData, soilClassification, applyCorrectionFactor, task]);
-
-  // Track changes whenever form data or soil classification changes
-  useEffect(() => {
-    if (task && lastSavedDataRef.current !== '') {
-      setHasUnsavedChanges(checkUnsavedChanges());
-    }
-  }, [formData, soilClassification, checkUnsavedChanges, task]);
 
   const handleSave = async () => {
     if (!task) return;
@@ -1048,7 +1048,6 @@ const ProctorForm: React.FC = () => {
       
       // Also save to localStorage for backward compatibility
       localStorage.setItem(`proctor_draft_${task.id}`, JSON.stringify(proctorDraftData));
-      console.log('Saved Proctor draft data to database and localStorage:', proctorDraftData);
       
       // Update last saved snapshot
       lastSavedDataRef.current = JSON.stringify({
@@ -1056,7 +1055,6 @@ const ProctorForm: React.FC = () => {
         soilClassification,
         applyCorrectionFactor
       });
-      setHasUnsavedChanges(false);
       
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -1089,8 +1087,7 @@ const ProctorForm: React.FC = () => {
             dish3.massDrySampleTare,
             dish3.tareMass
           );
-          console.log('🔍 [QA] Recalculated plasticLimit from raw data:', plasticLimit);
-        }
+          }
       }
       
       // Use the calculated values (calculateFinalLiquidLimit already handles fallback)
@@ -1104,31 +1101,6 @@ const ProctorForm: React.FC = () => {
       const correctedMoistureContentValue = applyCorrectionFactor ? calculateCorrectedMoistureContent(optimumMoisture) : '';
 
       // QA: Debug logging to verify values before saving
-      console.log('🔍 [QA] ProctorForm handleNext - Values before save:', {
-        finalLiquidLimit: calculatedLL,
-        plasticLimit,
-        atterbergLimits: formData.atterbergLimits,
-        dish1LL: formData.atterbergLimits[0]?.liquidLimit,
-        dish2LL: formData.atterbergLimits[1]?.liquidLimit,
-        dish3PL: formData.atterbergLimits[2]?.plasticLimit,
-        dish1Raw: {
-          wet: formData.atterbergLimits[0]?.massWetSampleTare,
-          dry: formData.atterbergLimits[0]?.massDrySampleTare,
-          tare: formData.atterbergLimits[0]?.tareMass,
-          blows: formData.atterbergLimits[0]?.numberOfBlows
-        },
-        dish2Raw: {
-          wet: formData.atterbergLimits[1]?.massWetSampleTare,
-          dry: formData.atterbergLimits[1]?.massDrySampleTare,
-          tare: formData.atterbergLimits[1]?.tareMass,
-          blows: formData.atterbergLimits[1]?.numberOfBlows
-        },
-        dish3Raw: {
-          wet: formData.atterbergLimits[2]?.massWetSampleTare,
-          dry: formData.atterbergLimits[2]?.massDrySampleTare,
-          tare: formData.atterbergLimits[2]?.tareMass
-        }
-      });
 
       // Prepare data for database (using API format with canonical keys)
       const proctorAPIData = {
@@ -1173,12 +1145,6 @@ const ProctorForm: React.FC = () => {
       // Save to database BEFORE navigating
       await proctorAPI.saveByTask(task.id, proctorAPIData);
       
-      // QA: Debug logging to verify what was saved
-      console.log('🔍 [QA] ProctorForm handleNext - Data saved to database:', {
-        liquidLimitLL: proctorAPIData.liquidLimitLL,
-        plasticLimit: proctorAPIData.plasticLimit,
-        plasticityIndex: proctorAPIData.plasticityIndex
-      });
       
       // Also save to localStorage for backward compatibility
       const proctorStep1Data = {
@@ -1207,7 +1173,6 @@ const ProctorForm: React.FC = () => {
         zavPoints: zavPoints
       };
       
-      console.log('Saving Proctor step1 data to database and localStorage:', proctorStep1Data);
       localStorage.setItem(`proctor_step1_${task.id}`, JSON.stringify(proctorStep1Data));
       
       // Also update the draft data to keep it in sync
@@ -1223,7 +1188,6 @@ const ProctorForm: React.FC = () => {
         soilClassification,
         applyCorrectionFactor
       });
-      setHasUnsavedChanges(false);
       
       // Navigate to Step 2
       navigate(`/task/${id}/proctor/summary`);
@@ -1344,21 +1308,16 @@ const ProctorForm: React.FC = () => {
         </div>
 
         {/* Summary Results */}
-        {(() => {
-          const { maxDensity, optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
-          return (
-            <div className="proctor-summary">
-              <div className="summary-field">
-                <label>Maximum Density (PCF):</label>
-                <div className="summary-value">{maxDensity || '—'}</div>
-              </div>
-              <div className="summary-field">
-                <label>Optimum Moisture Content (%):</label>
-                <div className="summary-value">{optimumMoisture || '—'}</div>
-              </div>
-            </div>
-          );
-        })()}
+        <div className="proctor-summary">
+          <div className="summary-field">
+            <label>Maximum Density (PCF):</label>
+            <div className="summary-value">{maxDensity || '—'}</div>
+          </div>
+          <div className="summary-field">
+            <label>Optimum Moisture Content (%):</label>
+            <div className="summary-value">{optimumMoisture || '—'}</div>
+          </div>
+        </div>
 
         {/* Specific Gravity Input */}
         <div className="specific-gravity-input">
@@ -1999,47 +1958,42 @@ const ProctorForm: React.FC = () => {
                 </select>
               </label>
             </div>
-            {applyCorrectionFactor && (() => {
-              const { maxDensity, optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
-              const correctedDryDensity = calculateCorrectedDryDensity(maxDensity);
-              const correctedMoistureContent = calculateCorrectedMoistureContent(optimumMoisture);
-              return (
-                <table className="atterberg-table" style={{ marginTop: '10px' }}>
-                  <thead>
-                    <tr>
-                      <th>Field</th>
-                      <th>Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>Corrected Dry Density (pcf)</td>
-                      <td>
-                        <input
-                          type="text"
-                          value={correctedDryDensity}
-                          readOnly
-                          className="calculated"
-                          title="Formula: (0.81*Maximum Density (PCF)+0.19*2.7*62.4)/(0.81+0.19)"
-                        />
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Corrected Moisture Content (%)</td>
-                      <td>
-                        <input
-                          type="text"
-                          value={correctedMoistureContent}
-                          readOnly
-                          className="calculated"
-                          title="Formula: 0.81*Optimum Moisture Content/(0.81+0.19)"
-                        />
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              );
-            })()}
+            {applyCorrectionFactor && (
+              <table className="atterberg-table" style={{ marginTop: '10px' }}>
+                <thead>
+                  <tr>
+                    <th>Field</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Corrected Dry Density (pcf)</td>
+                    <td>
+                      <input
+                        type="text"
+                        value={correctedDryDensity}
+                        readOnly
+                        className="calculated"
+                        title="Formula: (0.81*Maximum Density (PCF)+0.19*2.7*62.4)/(0.81+0.19)"
+                      />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Corrected Moisture Content (%)</td>
+                    <td>
+                      <input
+                        type="text"
+                        value={correctedMoistureContent}
+                        readOnly
+                        className="calculated"
+                        title="Formula: 0.81*Optimum Moisture Content/(0.81+0.19)"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
           </div>
 
           {/* Zero Air Voids (ZAV) Curve Data Table */}
@@ -2054,35 +2008,12 @@ const ProctorForm: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {(() => {
-                    const { optimumMoisture } = calculateMaxDensityAndOptimumMoisture(formData.columns);
-                    const optimumMoistureNum = optimumMoisture ? parseFloat(optimumMoisture) : null;
-                    
-                    // Find the index of the moisture value closest to OMC
-                    let closestIndex = -1;
-                    if (optimumMoistureNum !== null) {
-                      let minDiff = Infinity;
-                      zavMoistureValues.forEach((moisture, index) => {
-                        const diff = Math.abs(moisture - optimumMoistureNum);
-                        if (diff < minDiff) {
-                          minDiff = diff;
-                          closestIndex = index;
-                        }
-                      });
-                    }
-                    
-                    return zavMoistureValues.map((moisture, index) => {
-                      const zavDensity = calculateZAVDryDensity(formData.specificGravity, moisture);
-                      const shouldHighlight = index === closestIndex;
-                      
-                      return (
-                        <tr key={moisture} className={shouldHighlight ? 'zav-highlight' : ''}>
-                          <td>{moisture}</td>
-                          <td>{zavDensity || '—'}</td>
-                        </tr>
-                      );
-                    });
-                  })()}
+                  {zavTableRows.map(({ moisture, zavDensity, shouldHighlight }) => (
+                    <tr key={moisture} className={shouldHighlight ? 'zav-highlight' : ''}>
+                      <td>{moisture}</td>
+                      <td>{zavDensity || '—'}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
