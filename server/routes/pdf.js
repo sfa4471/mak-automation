@@ -616,7 +616,7 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
         );
         
         if (saveInfo.saved) {
-          console.log(`PDF saved: ${saveInfo.filePath}`);
+          console.log(`PDF saved: ${saveInfo.savedPath}`);
         } else if (saveInfo.saveError) {
           console.error('Error saving PDF to file:', saveInfo.saveError);
           saveError = saveInfo.saveError;
@@ -1484,7 +1484,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
           );
           
           if (saveInfo.saved) {
-            console.log(`PDF saved: ${saveInfo.filePath}`);
+            console.log(`PDF saved: ${saveInfo.savedPath}`);
           } else if (saveInfo.saveError) {
             console.error('Error saving PDF to file:', saveInfo.saveError);
             saveError = saveInfo.saveError;
@@ -1754,7 +1754,7 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
             );
             
             if (saveInfo.saved) {
-              console.log(`PDF saved: ${saveInfo.filePath}`);
+              console.log(`PDF saved: ${saveInfo.savedPath}`);
             } else if (saveInfo.saveError) {
               console.error('Error saving PDF to file:', saveInfo.saveError);
               saveError = saveInfo.saveError;
