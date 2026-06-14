@@ -1,27 +1,33 @@
 /**
  * Debounced batch assignment email sender.
  *
- * Polls the `pending_notifications` table every 2 minutes.
- * For each technician with unsent rows, if their LAST queued notification is
- * older than DEBOUNCE_MINUTES (3 min), send ONE consolidated email covering
- * all pending tasks, then mark those rows sent.
- *
- * This means:
- *   - Admin assigns 8 tasks in 90 seconds → tech gets 1 email, not 8.
- *   - 3-minute window resets each time admin adds another assignment.
+ * Polls `pending_notifications` every 2 minutes.
+ * For each technician, waits DEBOUNCE_MINUTES after the last queued row,
+ * then sends emails — ONE per workorder (dispatch format) or ONE consolidated
+ * project-grouped email for legacy tasks without a workorder.
  */
 
 const { supabase, isAvailable } = require('../db/supabase');
 const emailService = require('../services/email');
 
-const DEBOUNCE_MINUTES = 3;
-const POLL_INTERVAL_MS = 2 * 60 * 1000;
+const DEBOUNCE_MINUTES  = 3;
+const POLL_INTERVAL_MS  = 2 * 60 * 1000;
 
 let _sending = false;
 
+// "07:30:00" → "7:30 AM"
+function formatTime(hhmm) {
+  if (!hhmm) return '';
+  const [h, m] = String(hhmm).split(':').map(Number);
+  if (isNaN(h)) return hhmm;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour   = h % 12 || 12;
+  return `${hour}:${String(m ?? 0).padStart(2, '0')} ${period}`;
+}
+
 async function processPendingNotifications() {
-  if (_sending) { console.log('[notificationBatch] Send in progress, skipping poll'); return; }
-  if (!isAvailable()) return;
+  if (_sending)          { console.log('[notificationBatch] Send in progress, skipping poll'); return; }
+  if (!isAvailable())    return;
   if (!emailService.isConfigured()) return;
 
   let pending;
@@ -31,7 +37,6 @@ async function processPendingNotifications() {
       .select('*')
       .eq('sent', false)
       .order('created_at', { ascending: true });
-
     if (error) throw error;
     pending = data || [];
   } catch (err) {
@@ -42,7 +47,7 @@ async function processPendingNotifications() {
   console.log(`[notificationBatch] Poll: ${pending.length} unsent row(s) found`);
   if (pending.length === 0) return;
 
-  // Group by technician_id; track max created_at per group
+  // Group by technician → track max created_at for debounce
   const byTech = new Map();
   for (const row of pending) {
     if (!byTech.has(row.technician_id)) {
@@ -58,23 +63,64 @@ async function processPendingNotifications() {
   const now = Date.now();
 
   for (const [techId, group] of byTech) {
-    const ageMs = now - group.maxCreatedAt;
+    const ageMs    = now - group.maxCreatedAt;
     const remainMs = debounceMs - ageMs;
 
-    // Skip if admin is still actively assigning (last assignment < debounce window)
     if (remainMs > 0) {
-      console.log(`[notificationBatch] Tech ${techId}: debouncing, ${Math.ceil(remainMs / 1000)}s left (last row age: ${Math.floor(ageMs / 1000)}s, maxCreatedAt: ${new Date(group.maxCreatedAt).toISOString()})`);
+      console.log(`[notificationBatch] Tech ${techId}: debouncing, ${Math.ceil(remainMs / 1000)}s left`);
       continue;
     }
 
     const email = group.rows[0].technician_email;
-    const ids = group.rows.map((r) => r.id);
-    console.log(`[notificationBatch] Tech ${techId}: ready, sending ${ids.length} task(s) to ${email}`);
+    const ids   = group.rows.map(r => r.id);
 
     _sending = true;
     try {
-      await emailService.sendTaskAssignmentBatchEmail(email, group.rows);
+      // Split rows: those with a workorder_id vs. legacy (no workorder_id)
+      const woRows     = group.rows.filter(r => r.workorder_id);
+      const legacyRows = group.rows.filter(r => !r.workorder_id);
 
+      // ── Send one dispatch email per workorder ────────────────────────────
+      const woGroups = new Map();
+      for (const r of woRows) {
+        if (!woGroups.has(r.workorder_id)) {
+          woGroups.set(r.workorder_id, {
+            workorder: {
+              workorder_number: r.workorder_number,
+              scheduled_date:   r.scheduled_start_date,  // date comes from the task row
+              scheduled_time:   r.scheduled_time,
+              site_location:    r.site_location,
+              project_number:   r.project_number,
+              project_name:     r.project_name,
+            },
+            tasks: [],
+          });
+        }
+        woGroups.get(r.workorder_id).tasks.push({
+          task_type:       r.task_type,
+          task_label:      r.task_label,
+          location_name:   r.location_name,
+          engagement_notes: r.engagement_notes,
+        });
+      }
+
+      for (const [woId, { workorder, tasks }] of woGroups) {
+        const assignedByName = woRows.find(r => r.workorder_id === woId)?.assigned_by_name || 'Admin';
+        // Enrich subject with report time if available
+        const timeStr = workorder.scheduled_time ? ` · ${formatTime(workorder.scheduled_time)}` : '';
+        const woNum   = workorder.workorder_number || `WO-${woId}`;
+        const dateStr = workorder.scheduled_date   || '';
+        console.log(`[notificationBatch] Sending dispatch email for WO ${woNum} to ${email}`);
+        await emailService.sendWorkorderDispatchEmail(email, workorder, tasks, assignedByName);
+      }
+
+      // ── Legacy: no workorder — send old project-grouped email ────────────
+      if (legacyRows.length > 0) {
+        console.log(`[notificationBatch] Sending legacy task batch (${legacyRows.length} tasks) to ${email}`);
+        await emailService.sendTaskAssignmentBatchEmail(email, legacyRows);
+      }
+
+      // Mark all rows sent
       const { error: markErr } = await supabase
         .from('pending_notifications')
         .update({ sent: true, sent_at: new Date().toISOString() })
@@ -83,12 +129,11 @@ async function processPendingNotifications() {
       if (markErr) {
         console.error(`[notificationBatch] Failed to mark rows sent for tech ${techId}:`, markErr.message);
       } else {
-        console.log(`[notificationBatch] Sent batch (${ids.length} tasks) to ${email}`);
+        console.log(`[notificationBatch] Marked ${ids.length} row(s) sent for tech ${techId}`);
       }
     } catch (err) {
-      const code = err.responseCode || err.code || '';
       const detail = err.response || err.message;
-      console.error(`[notificationBatch] Email send failed for ${email} (${code}): ${detail}`);
+      console.error(`[notificationBatch] Email send failed for ${email}: ${detail}`);
     } finally {
       _sending = false;
     }
@@ -102,14 +147,10 @@ function startNotificationBatchSender() {
   console.log('[notificationBatch] Batch sender started (poll every 2 min, debounce 3 min)');
 
   const tick = async () => {
-    try {
-      await processPendingNotifications();
-    } catch (err) {
-      console.error('[notificationBatch] Unexpected error in tick:', err);
-    }
+    try { await processPendingNotifications(); }
+    catch (err) { console.error('[notificationBatch] Unexpected error in tick:', err); }
   };
 
-  // First poll after one interval (not immediately on boot)
   setTimeout(function schedule() {
     tick().finally(() => setTimeout(schedule, POLL_INTERVAL_MS));
   }, POLL_INTERVAL_MS);

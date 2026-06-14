@@ -10,8 +10,9 @@ const TASK_TYPE_LABELS = {
 
 /**
  * Queue a task assignment for consolidated email delivery.
- * The batch sender job fires one email per technician after admin stops assigning (3-min debounce).
- * Errors are swallowed so they never break the HTTP response.
+ * If workorderId is provided the batch sender will group all tasks for that
+ * workorder into a single dispatch email. Without workorderId the legacy
+ * project-grouped email is used (backward compat for old tasks).
  */
 async function queueAssignmentNotification({
   tenantId,
@@ -27,24 +28,34 @@ async function queueAssignmentNotification({
   locationName,
   engagementNotes,
   assignedByName,
+  // workorder fields (optional — omit for legacy tasks)
+  workorderId,
+  workorderNumber,
+  scheduledTime,
+  siteLocation,
 }) {
   if (!isAvailable() || !technicianEmail) return;
   try {
     const { error } = await supabase.from('pending_notifications').insert({
-      tenant_id: tenantId,
-      technician_id: technicianId,
-      technician_email: technicianEmail,
-      task_id: taskId,
-      task_type: taskType,
-      task_label: TASK_TYPE_LABELS[taskType] || taskType,
-      project_id: projectId,
-      project_number: projectNumber || null,
-      project_name: projectName || null,
+      tenant_id:           tenantId,
+      technician_id:       technicianId,
+      technician_email:    technicianEmail,
+      task_id:             taskId,
+      task_type:           taskType,
+      task_label:          TASK_TYPE_LABELS[taskType] || taskType,
+      project_id:          projectId,
+      project_number:      projectNumber   || null,
+      project_name:        projectName     || null,
       scheduled_start_date: scheduledStartDate || null,
       scheduled_start_time: scheduledStartTime || null,
-      location_name: locationName || null,
-      engagement_notes: engagementNotes || null,
-      assigned_by_name: assignedByName || null,
+      location_name:       locationName    || null,
+      engagement_notes:    engagementNotes || null,
+      assigned_by_name:    assignedByName  || null,
+      // workorder dispatch fields
+      workorder_id:        workorderId     || null,
+      workorder_number:    workorderNumber || null,
+      scheduled_time:      scheduledTime   || null,
+      site_location:       siteLocation    || null,
     });
     if (error) throw error;
   } catch (err) {

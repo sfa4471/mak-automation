@@ -1193,6 +1193,20 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       createNotification(assignedTechnicianId, message, 'info', null, projectId, taskId, tenantId).catch(console.error);
       if (assignedTech && assignedTech.email) {
         const adminName = req.user.name || req.user.email || 'Admin';
+
+        // Load workorder data if this task belongs to one (for dispatch email)
+        let wo = null;
+        if (workorderId) {
+          try {
+            const { data: woRow } = await supabase
+              .from('workorders')
+              .select('id, workorder_number, scheduled_date, scheduled_time, site_location')
+              .eq('id', workorderId)
+              .single();
+            wo = woRow;
+          } catch (_) {}
+        }
+
         queueAssignmentNotification({
           tenantId,
           technicianId: assignedTechnicianId,
@@ -1207,6 +1221,11 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
           locationName: locationName || null,
           engagementNotes: engagementNotes || null,
           assignedByName: adminName,
+          // workorder dispatch fields
+          workorderId: wo ? wo.id : null,
+          workorderNumber: wo ? wo.workorder_number : null,
+          scheduledTime: wo ? wo.scheduled_time : null,
+          siteLocation: wo ? wo.site_location : null,
         });
       }
     }

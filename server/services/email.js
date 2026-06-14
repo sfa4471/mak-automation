@@ -257,19 +257,22 @@ async function sendWorkorderDispatchEmail(to, workorder, tasks, assignedByName) 
 
   const woNumber  = workorder.workorder_number || workorder.workorderNumber || '';
   const woDate    = workorder.scheduled_date   || workorder.scheduledDate   || '';
+  const woTime    = workorder.scheduled_time   || workorder.scheduledTime   || '';
   const woSite    = workorder.site_location    || workorder.siteLocation    || '—';
   const projNum   = workorder.project_number   || workorder.projectNumber   || '';
   const projName  = workorder.project_name     || workorder.projectName     || '';
   const woDesc    = workorder.description      || '';
 
-  const subject = `New Dispatch — ${woNumber} (${woDate || 'TBD'})`;
+  const timePart  = woTime ? ` · Report at ${formatTime(woTime)}` : '';
+  const subject   = `New Dispatch — ${woNumber}${woDate ? ' · ' + woDate : ''}${timePart}`;
 
   // Plain text
   let text = `Hello,\n\n${assigner} has dispatched you for the following site visit:\n\n`;
-  text += `PROJECT: ${projNum}${projName ? ' — ' + projName : ''}\n`;
-  text += `WORKORDER: ${woNumber}${woDesc ? ' — ' + woDesc : ''}\n`;
-  text += `DATE: ${fmtDate(woDate)}\n`;
-  text += `SITE: ${woSite}\n`;
+  text += `PROJECT:     ${projNum}${projName ? ' — ' + projName : ''}\n`;
+  text += `WORKORDER:   ${woNumber}${woDesc ? ' — ' + woDesc : ''}\n`;
+  text += `DATE:        ${fmtDate(woDate)}\n`;
+  if (woTime) text += `REPORT TIME: ${formatTime(woTime)}  ← be on-site by this time\n`;
+  text += `SITE:        ${woSite}\n`;
   if (tasks && tasks.length > 0) {
     text += '\nTASKS:\n';
     for (const t of tasks) {
@@ -309,9 +312,10 @@ async function sendWorkorderDispatchEmail(to, workorder, tasks, assignedByName) 
         <p style="margin:0 0 12px;">Hello,</p>
         <p style="margin:0 0 18px;"><strong>${escHtml(assigner)}</strong> has dispatched you for a site visit:</p>
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:8px;">
-          <tr><td style="padding:6px 0;color:#6b7280;width:100px;vertical-align:top;">Project</td><td style="padding:6px 0;font-weight:600;">${projDisplay}</td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280;width:110px;vertical-align:top;">Project</td><td style="padding:6px 0;font-weight:600;">${projDisplay}</td></tr>
           <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top;">Workorder</td><td style="padding:6px 0;font-weight:600;">${woDisplay}</td></tr>
           <tr><td style="padding:6px 0;color:#6b7280;">Date</td><td style="padding:6px 0;">${escHtml(fmtDate(woDate))}</td></tr>
+          ${woTime ? `<tr><td style="padding:6px 0;color:#6b7280;">Report Time</td><td style="padding:6px 0;font-weight:700;font-size:16px;color:#1d4ed8;">${escHtml(formatTime(woTime))}</td></tr>` : ''}
           <tr><td style="padding:6px 0;color:#6b7280;">Site</td><td style="padding:6px 0;">${escHtml(woSite)}</td></tr>
         </table>
         ${taskRowsHtml}
