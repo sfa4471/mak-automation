@@ -246,6 +246,11 @@ function normalizeSupabaseTaskRow(task) {
     pmReviewCompletedAt: task.pm_review_completed_at ?? task.pmReviewCompletedAt,
     pmReviewerUserId: task.pm_reviewer_user_id ?? task.pmReviewerUserId,
     tenantId: task.tenant_id ?? task.tenantId,
+    workorderId: task.workorder_id ?? task.workorderId ?? null,
+    clockIn: task.clock_in ?? task.clockIn ?? null,
+    clockOut: task.clock_out ?? task.clockOut ?? null,
+    breakMinutes: task.break_minutes ?? task.breakMinutes ?? 0,
+    miles: task.miles ?? null,
     users: undefined,
     projects: undefined
   };
@@ -799,7 +804,8 @@ router.put('/:id', authenticate, [
   body('scheduledEndDate').optional(),
   body('locationName').optional(),
   body('locationNotes').optional(),
-  body('engagementNotes').optional()
+  body('engagementNotes').optional(),
+  body('workorderId').optional({ nullable: true }).isInt(),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -816,7 +822,8 @@ router.put('/:id', authenticate, [
       scheduledEndDate,
       locationName,
       locationNotes,
-      engagementNotes
+      engagementNotes,
+      workorderId,
     } = req.body;
 
     // Check access and get task
@@ -884,6 +891,7 @@ router.put('/:id', authenticate, [
     if (locationName !== undefined) updateData.locationName = locationName || null;
     if (locationNotes !== undefined) updateData.locationNotes = locationNotes || null;
     if (engagementNotes !== undefined) updateData.engagementNotes = engagementNotes || null;
+    if (workorderId !== undefined) updateData.workorderId = workorderId || null;
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
@@ -999,6 +1007,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
   body('projectId').isInt(),
   body('taskType').isIn(['DENSITY_MEASUREMENT', 'PROCTOR', 'REBAR', 'COMPRESSIVE_STRENGTH', 'CYLINDER_PICKUP']),
   body('assignedTechnicianId').optional().isInt(),
+  body('workorderId').optional().isInt(),
   body('dueDate').optional(),
   body('scheduledStartDate').optional(),
   body('scheduledStartTime').optional(),
@@ -1017,6 +1026,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       projectId,
       taskType,
       assignedTechnicianId,
+      workorderId,
       dueDate,
       scheduledStartDate,
       scheduledStartTime,
@@ -1115,6 +1125,7 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
       taskType,
       status: 'ASSIGNED',
       assignedTechnicianId: assignedTechnicianId || null,
+      workorderId: workorderId || null,
       dueDate: normalizedDueDate,
       locationName: locationName || null,
       locationNotes: locationNotes || null,
@@ -1256,6 +1267,11 @@ router.post('/', authenticate, requireTenant, requireAdmin, [
 // Update task (Admin only - allows editing all task fields, tenant-scoped)
 router.put('/:id', authenticate, requireTenant, requireAdmin, [
   body('assignedTechnicianId').optional().isInt().withMessage('assignedTechnicianId must be an integer'),
+  body('workorderId').optional({ nullable: true }).isInt().withMessage('workorderId must be an integer'),
+  body('clockIn').optional({ nullable: true }).isISO8601().withMessage('clockIn must be ISO 8601'),
+  body('clockOut').optional({ nullable: true }).isISO8601().withMessage('clockOut must be ISO 8601'),
+  body('breakMinutes').optional({ nullable: true }).isInt({ min: 0 }),
+  body('miles').optional({ nullable: true }).isFloat({ min: 0 }),
   body('dueDate').optional().matches(/^\d{4}-\d{2}-\d{2}$|^$/).withMessage('dueDate must be in YYYY-MM-DD format'),
   body('scheduledStartDate').optional().matches(/^\d{4}-\d{2}-\d{2}$|^$/).withMessage('scheduledStartDate must be in YYYY-MM-DD format'),
   body('scheduledEndDate').optional().matches(/^\d{4}-\d{2}-\d{2}$|^$/).withMessage('scheduledEndDate must be in YYYY-MM-DD format'),
@@ -1273,6 +1289,11 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
     const taskId = parseInt(req.params.id);
     const {
       assignedTechnicianId,
+      workorderId,
+      clockIn,
+      clockOut,
+      breakMinutes,
+      miles,
       dueDate,
       scheduledStartDate,
       scheduledEndDate,
@@ -1414,6 +1435,20 @@ router.put('/:id', authenticate, requireTenant, requireAdmin, [
       updateData.taskType = taskType;
       changes.push(`task type changed from ${oldTask.taskType} to ${taskType}`);
     }
+
+    if (workorderId !== undefined) {
+      const oldWo = oldTask.workorder_id ?? oldTask.workorderId ?? null;
+      if ((workorderId || null) !== oldWo) {
+        updateData.workorderId = workorderId || null;
+        changes.push(workorderId ? `assigned to workorder ${workorderId}` : 'removed from workorder');
+      }
+    }
+
+    // Admin clock overrides
+    if (clockIn  !== undefined) { updateData.clockIn      = clockIn  || null; changes.push('clock-in updated'); }
+    if (clockOut !== undefined) { updateData.clockOut     = clockOut || null; changes.push('clock-out updated'); }
+    if (breakMinutes !== undefined) { updateData.breakMinutes = breakMinutes ?? 0; changes.push(`break set to ${breakMinutes}m`); }
+    if (miles    !== undefined) { updateData.miles        = miles    ?? 0;   changes.push(`miles set to ${miles}`); }
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
@@ -1584,9 +1619,71 @@ router.delete('/:id', authenticate, requireTenant, requireAdmin, async (req, res
   }
 });
 
+// Clock in / clock out — technician records time on their own task
+// PUT /api/tasks/:id/time  { clockIn?, clockOut?, breakMinutes?, miles? }
+router.put('/:id/time', authenticate, requireTenant, [
+  body('clockIn').optional({ nullable: true }).isISO8601().withMessage('clockIn must be ISO 8601'),
+  body('clockOut').optional({ nullable: true }).isISO8601().withMessage('clockOut must be ISO 8601'),
+  body('breakMinutes').optional({ nullable: true }).isInt({ min: 0 }),
+  body('miles').optional({ nullable: true }).isFloat({ min: 0 }),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const taskId = parseInt(req.params.id, 10);
+    if (!db.isSupabase()) {
+      return res.status(400).json({ error: 'Clock-in/out requires Supabase.' });
+    }
+
+    const { data: task, error: fetchErr } = await supabase
+      .from('tasks')
+      .select('id, tenant_id, assigned_technician_id, clock_in, clock_out')
+      .eq('id', taskId)
+      .single();
+
+    if (fetchErr || !task) return res.status(404).json({ error: 'Task not found' });
+    if (Number(task.tenant_id) !== req.tenantId) return res.status(403).json({ error: 'Access denied' });
+
+    const isTech = req.user.role === 'TECHNICIAN';
+    if (isTech && task.assigned_technician_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { clockIn, clockOut, breakMinutes, miles } = req.body;
+
+    if (clockOut && clockIn == null && !task.clock_in) {
+      return res.status(400).json({ error: 'Cannot clock out before clocking in.' });
+    }
+    const effectiveClockIn = clockIn !== undefined ? clockIn : task.clock_in;
+    if (clockOut && effectiveClockIn && new Date(clockOut) <= new Date(effectiveClockIn)) {
+      return res.status(400).json({ error: 'Clock-out must be after clock-in.' });
+    }
+
+    const updates = { updated_at: new Date().toISOString() };
+    if (clockIn  !== undefined) updates.clock_in      = clockIn  || null;
+    if (clockOut !== undefined) updates.clock_out     = clockOut || null;
+    if (breakMinutes !== undefined) updates.break_minutes = breakMinutes ?? 0;
+    if (miles    !== undefined) updates.miles         = miles ?? 0;
+
+    const { data: updated, error: upErr } = await supabase
+      .from('tasks')
+      .update(updates)
+      .eq('id', taskId)
+      .select()
+      .single();
+
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    res.json({ ok: true, task: keysToCamelCase(updated) });
+  } catch (err) {
+    console.error('Error updating task time:', err);
+    res.status(500).json({ error: err.message || 'Database error' });
+  }
+});
+
 // Update task status
 router.put('/:id/status', authenticate, requireTenant, [
-  body('status').isIn(['ASSIGNED', 'IN_PROGRESS_TECH', 'READY_FOR_REVIEW', 'APPROVED', 'REJECTED_NEEDS_FIX'])
+  body('status').isIn(['ASSIGNED', 'IN_PROGRESS_TECH', 'READY_FOR_REVIEW', 'APPROVED', 'REJECTED_NEEDS_FIX', 'COULD_NOT_ACCESS'])
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -1648,8 +1745,8 @@ router.put('/:id/status', authenticate, requireTenant, [
       if (assignedId !== req.user.id) {
         return res.status(403).json({ error: 'Access denied' });
       }
-      if (status !== 'IN_PROGRESS_TECH' && status !== 'READY_FOR_REVIEW') {
-        return res.status(403).json({ error: 'Technicians can only set status to IN_PROGRESS_TECH or READY_FOR_REVIEW' });
+      if (status !== 'IN_PROGRESS_TECH' && status !== 'READY_FOR_REVIEW' && status !== 'COULD_NOT_ACCESS') {
+        return res.status(403).json({ error: 'Technicians can only set status to IN_PROGRESS_TECH, READY_FOR_REVIEW, or COULD_NOT_ACCESS' });
       }
     }
 
@@ -2893,15 +2990,25 @@ router.get('/dashboard/technician/open-reports', authenticate, requireTenant, as
       const { data, error } = await query;
       
       if (error) throw error;
-      
-      // Filter for reports not submitted
+
+      // Include: unsubmitted reports + rejected (need fixing) + under review (READY_FOR_REVIEW)
+      // Exclude: only fully APPROVED tasks (already handled above with .neq)
       tasks = (data || []).filter(task => {
         const reportSubmitted = task.report_submitted;
+        const status = task.status;
+        // Always show rejected — tech needs to fix regardless of submitted flag
+        if (status === 'REJECTED_NEEDS_FIX') return true;
+        // Always show under review — tech needs visibility while waiting
+        if (status === 'READY_FOR_REVIEW') return true;
+        // Show unsubmitted field-complete tasks
         return reportSubmitted === 0 || reportSubmitted === null || reportSubmitted === false;
       }).map(normalizeSupabaseTaskRow);
-      
-      // Sort: dueDate nulls last, then by dueDate ASC, then fieldCompletedAt DESC
+
+      // Sort: rejected first (urgent), then under review, then unsubmitted; within each group by dueDate
+      const statusPriority = (s) => s === 'REJECTED_NEEDS_FIX' ? 0 : s === 'READY_FOR_REVIEW' ? 1 : 2;
       tasks.sort((a, b) => {
+        const pa = statusPriority(a.status), pb = statusPriority(b.status);
+        if (pa !== pb) return pa - pb;
         if (!a.dueDate && b.dueDate) return 1;
         if (a.dueDate && !b.dueDate) return -1;
         if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) {

@@ -8,16 +8,31 @@ import { getApiPathPrefix } from '../../api/api';
 import { useAppDialog } from '../../context/AppDialogContext';
 import './TaskDetails.css';
 
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function billableMinutes(task: Task): number {
+  if (!task.clockIn || !task.clockOut) return 0;
+  const diff = (new Date(task.clockOut).getTime() - new Date(task.clockIn).getTime()) / 60000;
+  return Math.max(0, diff - (task.breakMinutes ?? 0));
+}
+
 const TaskDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { showAlert } = useAppDialog();
+  const { showAlert, showConfirm } = useAppDialog();
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [project, setProject] = useState<Project | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
+  const [clockSaving, setClockSaving] = useState(false);
+  const [milesInput, setMilesInput] = useState('');
+  const [breakInput, setBreakInput] = useState('');
 
   useEffect(() => {
     loadTask();
@@ -35,6 +50,8 @@ const TaskDetails: React.FC = () => {
       }
       
       setTask(taskData);
+      setMilesInput(taskData.miles != null ? String(taskData.miles) : '');
+      setBreakInput(taskData.breakMinutes != null ? String(taskData.breakMinutes) : '0');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to load task details');
     } finally {
@@ -65,6 +82,70 @@ const TaskDetails: React.FC = () => {
       cancelled = true;
     };
   }, [task?.projectId]);
+
+  const handleClockIn = async () => {
+    if (!task) return;
+    setClockSaving(true);
+    try {
+      const updated = await tasksAPI.updateTime(task.id, { clockIn: new Date().toISOString() });
+      setTask(updated);
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'Failed to clock in', 'Error');
+    } finally {
+      setClockSaving(false);
+    }
+  };
+
+  const handleClockOut = async () => {
+    if (!task) return;
+    setClockSaving(true);
+    try {
+      const updated = await tasksAPI.updateTime(task.id, {
+        clockOut: new Date().toISOString(),
+        breakMinutes: parseInt(breakInput || '0', 10),
+        miles: parseFloat(milesInput || '0'),
+      });
+      setTask(updated);
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'Failed to clock out', 'Error');
+    } finally {
+      setClockSaving(false);
+    }
+  };
+
+  const handleSaveTime = async () => {
+    if (!task) return;
+    setClockSaving(true);
+    try {
+      const updated = await tasksAPI.updateTime(task.id, {
+        breakMinutes: parseInt(breakInput || '0', 10),
+        miles: parseFloat(milesInput || '0'),
+      });
+      setTask(updated);
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'Failed to save', 'Error');
+    } finally {
+      setClockSaving(false);
+    }
+  };
+
+  const handleCouldNotAccess = async () => {
+    if (!task) return;
+    const ok = await showConfirm(
+      'Mark this task as "Could Not Access"?\n\nUse this when you arrived on site but couldn\'t perform the work — locked gate, pour delayed, area not ready, etc. Admin will be notified and can decide whether to charge a trip fee.',
+    );
+    if (!ok) return;
+    setClockSaving(true);
+    try {
+      await tasksAPI.updateStatus(task.id, 'COULD_NOT_ACCESS');
+      const updated = await tasksAPI.get(task.id);
+      setTask(updated);
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'Failed to update status', 'Error');
+    } finally {
+      setClockSaving(false);
+    }
+  };
 
   const openPdfBlob = (blob: Blob, filename: string) => {
     const blobUrl = window.URL.createObjectURL(blob);
@@ -197,7 +278,8 @@ const TaskDetails: React.FC = () => {
       'IN_PROGRESS_TECH': 'In Progress',
       'READY_FOR_REVIEW': 'Submitted for Admin Review',
       'APPROVED': 'Approved',
-      'REJECTED_NEEDS_FIX': 'Rejected - Needs Fix'
+      'REJECTED_NEEDS_FIX': 'Rejected - Needs Fix',
+      'COULD_NOT_ACCESS': 'Could Not Access Site',
     };
     return statusMap[status] || status;
   };
@@ -342,6 +424,124 @@ const TaskDetails: React.FC = () => {
             )}
           </div>
         )}
+
+        <div className="task-details-section">
+          <h2>Time Tracking</h2>
+          {task.status === 'COULD_NOT_ACCESS' ? (
+            <div style={{
+              background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '6px',
+              padding: '12px 16px', color: '#856404',
+            }}>
+              <strong>Could Not Access Site</strong>
+              <p style={{ margin: '4px 0 0', fontSize: '13px' }}>
+                This task was marked as site not accessible. Admin will review and determine if a trip charge applies.
+              </p>
+            </div>
+          ) : !task.clockIn ? (
+            <div style={{ marginBottom: '12px' }}>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button
+                  onClick={handleClockIn}
+                  disabled={clockSaving}
+                  style={{
+                    background: '#28a745', color: '#fff', border: 'none',
+                    padding: '10px 20px', borderRadius: '4px', cursor: 'pointer',
+                    fontSize: '14px', fontWeight: 600,
+                  }}
+                >
+                  {clockSaving ? 'Saving…' : 'Clock In'}
+                </button>
+                <button
+                  onClick={handleCouldNotAccess}
+                  disabled={clockSaving}
+                  style={{
+                    background: '#fff', color: '#856404', border: '1px solid #ffc107',
+                    padding: '10px 16px', borderRadius: '4px', cursor: 'pointer',
+                    fontSize: '13px', fontWeight: 500,
+                  }}
+                >
+                  Could Not Access Site
+                </button>
+              </div>
+              <small style={{ display: 'block', marginTop: '6px', color: '#666' }}>
+                Clock in when you arrive. Use "Could Not Access" if the site is locked or work cannot proceed.
+              </small>
+            </div>
+          ) : (
+            <>
+              <div className="detail-row">
+                <span className="detail-label">Clocked In:</span>
+                <span className="detail-value">{new Date(task.clockIn).toLocaleTimeString()}</span>
+              </div>
+              {task.clockOut ? (
+                <>
+                  <div className="detail-row">
+                    <span className="detail-label">Clocked Out:</span>
+                    <span className="detail-value">{new Date(task.clockOut).toLocaleTimeString()}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Billable Time:</span>
+                    <span className="detail-value">{formatDuration(billableMinutes(task))}</span>
+                  </div>
+                </>
+              ) : (
+                <div style={{ marginBottom: '12px' }}>
+                  <button
+                    onClick={handleClockOut}
+                    disabled={clockSaving}
+                    style={{
+                      background: '#dc3545', color: '#fff', border: 'none',
+                      padding: '10px 20px', borderRadius: '4px', cursor: 'pointer',
+                      fontSize: '14px', fontWeight: 600,
+                    }}
+                  >
+                    {clockSaving ? 'Saving…' : 'Clock Out'}
+                  </button>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '16px', marginTop: '10px', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#555', marginBottom: '4px' }}>
+                    Break (min)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={breakInput}
+                    onChange={(e) => setBreakInput(e.target.value)}
+                    style={{ width: '80px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#555', marginBottom: '4px' }}>
+                    Miles driven
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={milesInput}
+                    onChange={(e) => setMilesInput(e.target.value)}
+                    style={{ width: '90px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                  <button
+                    onClick={handleSaveTime}
+                    disabled={clockSaving}
+                    style={{
+                      background: '#007bff', color: '#fff', border: 'none',
+                      padding: '8px 16px', borderRadius: '4px', cursor: 'pointer',
+                      fontSize: '13px',
+                    }}
+                  >
+                    {clockSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -16,11 +16,13 @@ import './App.css';
 
 // Lazy load heavy components for code splitting
 const TaskDetails = lazy(() => import('./components/technician/TaskDetails'));
+const WorkorderDetails = lazy(() => import('./components/technician/WorkorderDetails'));
 const CreateProject = lazy(() => import('./components/admin/CreateProject'));
 const ManageTechnicians = lazy(() => import('./components/admin/ManageTechnicians'));
 const AssignWorkPackage = lazy(() => import('./components/admin/AssignWorkPackage'));
 const TasksDashboard = lazy(() => import('./components/admin/TasksDashboard'));
 const CreateTask = lazy(() => import('./components/admin/CreateTask'));
+const CreateWorkorder = lazy(() => import('./components/admin/CreateWorkorder'));
 const ProjectDetails = lazy(() => import('./components/admin/ProjectDetails'));
 const WP1Form = lazy(() => import('./components/WP1Form'));
 const DensityReportForm = lazy(() => import('./components/DensityReportForm'));
@@ -240,6 +242,26 @@ function App() {
               <Suspense fallback={<LoadingSpinner fullScreen message="Loading…" />}>
                 <GaugeCheckout />
               </Suspense>
+            }
+          />
+          <Route
+            path="/technician/workorder/:id"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading workorder…" />}>
+                  <WorkorderDetails />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/projects/:id/create-workorder"
+            element={
+              <ProtectedRoute requireAdmin>
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading…" />}>
+                  <CreateWorkorder />
+                </Suspense>
+              </ProtectedRoute>
             }
           />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />

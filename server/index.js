@@ -110,6 +110,10 @@ app.use('/api/notifications', require('./routes/notifications').router);
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/gauges', require('./routes/gauges'));
+app.use('/api/workorders', require('./routes/workorders'));
+app.use('/api/dispatches', require('./routes/dispatches'));
+app.use('/api/rate-sets', require('./routes/rateSets'));
+app.use('/api/invoices', require('./routes/invoices'));
 
 // Logos, signatures, and other files under server/public (e.g. /tenants/:id/signature.png)
 app.use(express.static(path.join(__dirname, 'public')));

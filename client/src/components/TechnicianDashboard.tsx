@@ -6,6 +6,7 @@ import { useTenant } from '../context/TenantContext';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
 import gaugesApi, { NuclearGauge } from '../api/gauges';
+import { getMySchedule, WorkorderWithTasks } from '../api/invoicing';
 import TaskDetailModal from './TaskDetailModal';
 import CompletedFieldJobsLog from './CompletedFieldJobsLog';
 import './TechnicianDashboard.css';
@@ -66,6 +67,7 @@ const TechnicianDashboard: React.FC = () => {
   const navigate = useNavigate();
 
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [workorders, setWorkorders] = useState<WorkorderWithTasks[]>([]);
   const [openReports, setOpenReports] = useState<Task[]>([]);
   const [activeFilter, setActiveFilter] = useState<'schedule' | 'activity' | 'gauges'>('schedule');
   const [gauges, setGauges] = useState<NuclearGauge[]>([]);
@@ -141,15 +143,17 @@ const TechnicianDashboard: React.FC = () => {
       setOpenReports(reportsData);
 
       if (activeFilter === 'schedule') {
-        const [todayData, upcomingData] = await Promise.all([
+        const [todayData, upcomingData, scheduleData] = await Promise.all([
           tasksAPI.getTechnicianToday(asOf).catch(() => [] as Task[]),
           tasksAPI.getTechnicianUpcoming(asOf).catch(() => [] as Task[]),
+          getMySchedule().catch(() => ({ workorders: [] as WorkorderWithTasks[] })),
         ]);
         // Merge and deduplicate — today endpoint takes precedence for the same task
         const byId = new Map<number, Task>();
         todayData.forEach(t => byId.set(t.id, t));
         upcomingData.forEach(t => { if (!byId.has(t.id)) byId.set(t.id, t); });
         setTasks(Array.from(byId.values()));
+        setWorkorders(scheduleData.workorders || []);
       } else {
         const completed = await tasksAPI.getTechnicianCompletedFieldWork().catch(() => [] as Task[]);
         setTasks(completed);
@@ -335,6 +339,110 @@ const TechnicianDashboard: React.FC = () => {
     );
   };
 
+  // ── workorder card ───────────────────────────────────────────────────────────
+
+  const renderWorkorderCard = (wo: WorkorderWithTasks) => {
+    const hasClockedIn  = !!wo.clockIn;
+    const hasClockedOut = !!wo.clockOut;
+    const isCNA         = wo.status === 'could_not_access';
+
+    const fmtScheduledDate = (d?: string): string => {
+      if (!d) return '';
+      const [y, m, day] = d.split('-').map(Number);
+      return new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+
+    const clockBtnLabel = hasClockedIn && !hasClockedOut
+      ? 'Clock Out'
+      : hasClockedIn
+      ? 'View'
+      : 'Clock In';
+
+    const badgeStyle: React.CSSProperties = {
+      display: 'inline-block',
+      padding: '2px 8px',
+      borderRadius: 10,
+      fontSize: 12,
+      fontWeight: 600,
+    };
+
+    return (
+      <div key={wo.id} className="schedule-card">
+        <div className="schedule-card-top">
+          <div className="schedule-card-info">
+            <span className="schedule-card-project">{wo.workorderNumber}</span>
+            {wo.scheduledDate && (
+              <>
+                <span className="schedule-card-sep">·</span>
+                <span className="schedule-card-type">{fmtScheduledDate(wo.scheduledDate)}</span>
+              </>
+            )}
+            {(wo.siteLocation || (wo.tasks[0] as any)?.projectName) && (
+              <span className="schedule-card-projname">
+                {wo.siteLocation || (wo.tasks[0] as any)?.projectName}
+              </span>
+            )}
+            {isCNA && (
+              <span className="sched-badge sched-badge--cna">Could Not Access</span>
+            )}
+            {hasClockedIn && !hasClockedOut && !isCNA && (
+              <span className="sched-badge sched-badge--inprogress">In Progress</span>
+            )}
+            {hasClockedIn && hasClockedOut && !isCNA && (
+              <span style={{ ...badgeStyle, background: '#dcfce7', color: '#166534' }}>Complete</span>
+            )}
+          </div>
+          <div className="schedule-card-actions">
+            <button
+              type="button"
+              className="sched-btn sched-btn--detail"
+              onClick={() => navigate(`/technician/workorder/${wo.id}`)}
+            >
+              {clockBtnLabel}
+            </button>
+          </div>
+        </div>
+
+        {/* Project info */}
+        {wo.tasks.length > 0 && wo.tasks[0].projectNumber && (
+          <div className="schedule-card-meta">
+            <span className="sched-meta-loc">
+              {wo.tasks[0].projectNumber}{wo.tasks[0].projectName ? ` — ${wo.tasks[0].projectName}` : ''}
+            </span>
+          </div>
+        )}
+
+        {/* Task list */}
+        {wo.tasks.length > 0 && (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #f3f4f6' }}>
+            {wo.tasks.map(task => (
+              <div key={task.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+                <span style={{ fontSize: 13, color: '#374151' }}>
+                  • {task.taskType.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}
+                  {task.locationName ? ` — ${task.locationName}` : ''}
+                </span>
+                <button
+                  type="button"
+                  className="sched-btn sched-btn--view"
+                  onClick={() => {
+                    if (task.taskType === 'COMPRESSIVE_STRENGTH') navigate(`/task/${task.id}/wp1`);
+                    else if (task.taskType === 'DENSITY_MEASUREMENT') navigate(`/task/${task.id}/density`);
+                    else if (task.taskType === 'REBAR') navigate(`/task/${task.id}/rebar`);
+                    else if (task.taskType === 'PROCTOR') navigate(`/task/${task.id}/proctor`);
+                    else navigate(`/technician/workorder/${wo.id}`);
+                  }}
+                  style={{ fontSize: 12, padding: '3px 8px' }}
+                >
+                  Report
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ── render ───────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -482,7 +590,7 @@ const TechnicianDashboard: React.FC = () => {
 
         {/* ── My Schedule ──────────────────────────────────────────────────── */}
         {activeFilter === 'schedule' && scheduleGroups && (
-          totalScheduled === 0 ? (
+          workorders.length === 0 && totalScheduled === 0 ? (
             <div className="empty-state">
               <p>No upcoming tasks assigned to you.</p>
               <p style={{ fontSize: 14, color: '#888', marginTop: 8 }}>
@@ -491,7 +599,26 @@ const TechnicianDashboard: React.FC = () => {
             </div>
           ) : (
             <div className="schedule-view">
-              {bucketOrder.map(({ key, label, sublabel, showDate }) => {
+              {/* Workorder cards first */}
+              {workorders.length > 0 && (
+                <div className="schedule-group schedule-group--today">
+                  <div className="schedule-group-header">
+                    <div className="schedule-group-header-text">
+                      <span className="schedule-group-label">Dispatches</span>
+                      <span className="schedule-group-sublabel">Upcoming site visits</span>
+                    </div>
+                    <span className="schedule-group-count">
+                      {workorders.length} {workorders.length === 1 ? 'workorder' : 'workorders'}
+                    </span>
+                  </div>
+                  <div className="schedule-group-body">
+                    {workorders.map(wo => renderWorkorderCard(wo))}
+                  </div>
+                </div>
+              )}
+
+              {/* Legacy task-based schedule (tasks without workorders) */}
+              {totalScheduled > 0 && bucketOrder.map(({ key, label, sublabel, showDate }) => {
                 const group = scheduleGroups[key];
                 if (group.length === 0) return null;
                 return (

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { tasksAPI, TaskType, CreateTaskRequest, UpdateTaskRequest, Task, taskTypeLabel } from '../../api/tasks';
 import { authAPI, User } from '../../api/auth';
 import { projectsAPI, Project } from '../../api/projects';
+import { getWorkorders, Workorder } from '../../api/invoicing';
 import './Admin.css';
 
 const CreateTask: React.FC = () => {
@@ -21,6 +22,8 @@ const CreateTask: React.FC = () => {
   const [locationName, setLocationName] = useState('');
   const [locationNotes, setLocationNotes] = useState('');
   const [engagementNotes, setEngagementNotes] = useState('');
+  const [workorderId, setWorkorderId] = useState<number | null>(null);
+  const [workorders, setWorkorders] = useState<Workorder[]>([]);
   const [technicians, setTechnicians] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -40,7 +43,7 @@ const CreateTask: React.FC = () => {
         // Load existing task for editing
         const taskData = await tasksAPI.get(parseInt(taskId));
         setTask(taskData);
-        
+
         // Load project from task
         const projectData = await projectsAPI.get(taskData.projectId);
         setProject(projectData);
@@ -48,6 +51,7 @@ const CreateTask: React.FC = () => {
         // Pre-fill form with existing values
         setTaskType(taskData.taskType);
         setAssignedTechnicianId(taskData.assignedTechnicianId);
+        setWorkorderId(taskData.workorderId ?? null);
         setDueDate(taskData.dueDate || '');
         setScheduledStartDate(taskData.scheduledStartDate || '');
         setScheduledStartTime(taskData.scheduledStartTime || '');
@@ -56,10 +60,22 @@ const CreateTask: React.FC = () => {
         setLocationName(taskData.locationName || '');
         setLocationNotes(taskData.locationNotes || '');
         setEngagementNotes(taskData.engagementNotes || '');
+
+        // Load workorders for the project
+        try {
+          const wos = await getWorkorders(taskData.projectId);
+          setWorkorders(wos.filter(w => w.billingStatus === 'unbilled'));
+        } catch (_) {}
       } else if (projectId) {
         // Load project for creating new task
         const projectData = await projectsAPI.get(parseInt(projectId));
         setProject(projectData);
+
+        // Load workorders for the project
+        try {
+          const wos = await getWorkorders(parseInt(projectId));
+          setWorkorders(wos.filter(w => w.billingStatus === 'unbilled'));
+        } catch (_) {}
       }
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to load data');
@@ -77,6 +93,7 @@ const CreateTask: React.FC = () => {
         const updateData: UpdateTaskRequest = {
           taskType,
           assignedTechnicianId: assignedTechnicianId || undefined,
+          workorderId: workorderId ?? null,
           dueDate: dueDate ? dueDate.trim() : undefined,
           scheduledStartDate: scheduledStartDate ? scheduledStartDate.trim() : undefined,
           scheduledStartTime: scheduledStartTime || undefined,
@@ -97,6 +114,7 @@ const CreateTask: React.FC = () => {
           projectId: parseInt(projectId!),
           taskType,
           assignedTechnicianId: assignedTechnicianId || undefined,
+          workorderId: workorderId ?? null,
           dueDate: dueDate ? dueDate.trim() : undefined,
           scheduledStartDate: scheduledStartDate ? scheduledStartDate.trim() : undefined,
           scheduledStartTime: scheduledStartTime || undefined,
@@ -165,6 +183,27 @@ const CreateTask: React.FC = () => {
               ))}
             </select>
           </div>
+
+          {workorders.length > 0 && (
+            <div className="form-group">
+              <label htmlFor="workorderId">Workorder (Billing)</label>
+              <select
+                id="workorderId"
+                value={workorderId ?? ''}
+                onChange={(e) => setWorkorderId(e.target.value ? parseInt(e.target.value) : null)}
+              >
+                <option value="">— No workorder —</option>
+                {workorders.map((wo) => (
+                  <option key={wo.id} value={wo.id}>
+                    {wo.workorderNumber}{wo.description ? ` — ${wo.description}` : ''}
+                  </option>
+                ))}
+              </select>
+              <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>
+                Assign to a billing workorder for invoicing
+              </small>
+            </div>
+          )}
 
           <div className="form-group">
             <label htmlFor="dueDate">Report Due Date</label>

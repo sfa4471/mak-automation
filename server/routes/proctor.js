@@ -1181,7 +1181,12 @@ router.post('/task/:taskId', authenticate, requireTenant, [
     // Serialize arrays to JSON
     const proctorPointsJson = proctorPoints ? JSON.stringify(proctorPoints) : null;
     const zavPointsJson = zavPoints ? JSON.stringify(zavPoints) : null;
-    const passing200Json = passing200 ? JSON.stringify(passing200) : null;
+    // Only overwrite passing200 if explicitly sent with real dish data.
+    // ProctorSummary saves without it — undefined means "leave DB value alone".
+    const passing200Json = passing200 !== undefined
+      ? (passing200 ? JSON.stringify(passing200) : null)
+      : undefined;
+
     // Only overwrite atterberg_limits if the client explicitly sent the field.
     // ProctorSummary saves without it — passing undefined means "leave DB value alone".
     const atterbergLimitsJson = atterbergLimits !== undefined
@@ -1207,6 +1212,21 @@ router.post('/task/:taskId', authenticate, requireTenant, [
     const plasticityIndexFinal = existing && !hasSignOffValue(plasticityIndex) ? (existing.plasticityIndex ?? null) : (plasticityIndex || null);
     const percentPassing200Final = existing && !hasSignOffValue(percentPassing200) ? (existing.percentPassing200 ?? null) : (percentPassing200 || null);
     const passing200SummaryPctFinal = existing && !hasSignOffValue(passing200SummaryPct) ? (existing.passing200SummaryPct ?? null) : (passing200SummaryPct || null);
+
+    // Only overwrite passing200 if incoming has rows with real data; preserve existing otherwise.
+    const passing200ToSave = (() => {
+      if (passing200Json === undefined) return undefined; // not sent — leave DB alone
+      if (!passing200Json) return null; // explicitly cleared
+      let parsed;
+      try { parsed = JSON.parse(passing200Json); } catch { parsed = []; }
+      const hasRealData = Array.isArray(parsed) && parsed.some(d => d.dryWtBeforeWash || d.dryWtAfterWash);
+      if (hasRealData) return passing200Json;
+      // Incoming is empty rows — keep whatever tech saved
+      const existing200 = existing?.passing200;
+      if (Array.isArray(existing200) && existing200.length > 0) return JSON.stringify(existing200);
+      if (typeof existing200 === 'string' && existing200 !== '[]') return existing200;
+      return passing200Json; // both empty
+    })();
 
     // Only overwrite atterbergLimits if incoming data is non-empty; preserve existing dish rows otherwise.
     const atterbergToSave = (() => {
@@ -1245,7 +1265,7 @@ router.post('/task/:taskId', authenticate, requireTenant, [
       reviewedBy: reviewedByFinal,
       checkedBy: checkedByFinal,
       percentPassing200: percentPassing200Final,
-      passing200: passing200Json,
+      ...(passing200ToSave !== undefined ? { passing200: passing200ToSave } : {}),
       passing200SummaryPct: passing200SummaryPctFinal,
       ...(atterbergToSave !== undefined ? { atterbergLimits: atterbergToSave } : {}),
       specificGravityG: specificGravityG || null,

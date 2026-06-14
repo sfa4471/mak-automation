@@ -968,6 +968,22 @@ const ProjectDetails: React.FC = () => {
           <button onClick={() => navigate('/dashboard')} className="back-button">
             Back to Dashboard
           </button>
+          {isAdmin() && project?.id && (
+            <button
+              onClick={() => navigate(`/admin/projects/${project.id}/create-workorder`)}
+              style={{ marginLeft: 8, padding: '8px 16px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}
+            >
+              + Create Workorder
+            </button>
+          )}
+          {isAdmin() && project?.id && (
+            <button
+              onClick={() => navigate(`/admin/projects/${project.id}/financials`)}
+              style={{ marginLeft: 8, padding: '8px 16px', background: '#059669', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}
+            >
+              Financials
+            </button>
+          )}
         </div>
       </header>
 

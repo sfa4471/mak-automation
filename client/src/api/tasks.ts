@@ -7,12 +7,13 @@ export type TaskType =
   | 'COMPRESSIVE_STRENGTH'
   | 'CYLINDER_PICKUP';
 
-export type TaskStatus = 
+export type TaskStatus =
   | 'ASSIGNED'
   | 'IN_PROGRESS_TECH'
   | 'READY_FOR_REVIEW'
   | 'APPROVED'
-  | 'REJECTED_NEEDS_FIX';
+  | 'REJECTED_NEEDS_FIX'
+  | 'COULD_NOT_ACCESS';
 
 /** Present on approve responses (Supabase) when the server generates/stores the report PDF. */
 export interface ApprovalPdfResult {
@@ -64,6 +65,12 @@ export interface Task {
   /** Per project + task type; 1 = unnumbered label, 2+ = "Rebar 2", etc. */
   workflowInstanceNo?: number | null;
   pdf?: ApprovalPdfResult | null;
+  // Billing fields (task = dispatch)
+  workorderId?: number | null;
+  clockIn?: string | null;
+  clockOut?: string | null;
+  breakMinutes?: number;
+  miles?: number;
 }
 
 export interface ProctorTask {
@@ -76,6 +83,7 @@ export interface CreateTaskRequest {
   projectId: number;
   taskType: TaskType;
   assignedTechnicianId?: number;
+  workorderId?: number | null;
   dueDate?: string;
   scheduledStartDate?: string;
   scheduledStartTime?: string;
@@ -87,6 +95,7 @@ export interface CreateTaskRequest {
 
 export interface UpdateTaskRequest {
   assignedTechnicianId?: number;
+  workorderId?: number | null;
   dueDate?: string;
   scheduledStartDate?: string;
   scheduledStartTime?: string;
@@ -95,6 +104,13 @@ export interface UpdateTaskRequest {
   locationNotes?: string;
   engagementNotes?: string;
   taskType?: TaskType;
+}
+
+export interface UpdateTaskTimeRequest {
+  clockIn?: string | null;
+  clockOut?: string | null;
+  breakMinutes?: number;
+  miles?: number;
 }
 
 export interface RejectTaskRequest {
@@ -327,6 +343,11 @@ export const tasksAPI = {
   getProctorsForProject: async (projectId: number): Promise<ProctorTask[]> => {
     const response = await api.get<ProctorTask[]>(`/tasks/project/${projectId}/proctors`);
     return response.data;
+  },
+
+  updateTime: async (id: number, data: UpdateTaskTimeRequest): Promise<Task> => {
+    const response = await api.put<{ ok: boolean; task: Task }>(`/tasks/${id}/time`, data);
+    return response.data.task;
   },
 };
 

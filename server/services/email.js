@@ -231,8 +231,116 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Send a workorder dispatch email to a technician.
+ * @param {string} to - Recipient email
+ * @param {Object} workorder - Workorder row (workorder_number, scheduled_date, site_location, description, project_number, project_name)
+ * @param {Array} tasks - Array of task objects ({ task_type, task_label, location_name, engagement_notes })
+ * @param {string} assignedByName - Name of admin who created the dispatch
+ */
+async function sendWorkorderDispatchEmail(to, workorder, tasks, assignedByName) {
+  if (!isConfigured()) {
+    console.warn('[email] SendGrid not configured; skipping workorder dispatch email to', to);
+    return;
+  }
+  if (!workorder) return;
+
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const dashboardLink = appUrl ? `${appUrl}/technician/dashboard` : null;
+  const assigner = assignedByName || 'Admin';
+
+  const fmtDate = (d) => {
+    if (!d) return 'TBD';
+    const [y, m, day] = String(d).split('-').map(Number);
+    return new Date(y, m - 1, day).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  const woNumber  = workorder.workorder_number || workorder.workorderNumber || '';
+  const woDate    = workorder.scheduled_date   || workorder.scheduledDate   || '';
+  const woSite    = workorder.site_location    || workorder.siteLocation    || '—';
+  const projNum   = workorder.project_number   || workorder.projectNumber   || '';
+  const projName  = workorder.project_name     || workorder.projectName     || '';
+  const woDesc    = workorder.description      || '';
+
+  const subject = `New Dispatch — ${woNumber} (${woDate || 'TBD'})`;
+
+  // Plain text
+  let text = `Hello,\n\n${assigner} has dispatched you for the following site visit:\n\n`;
+  text += `PROJECT: ${projNum}${projName ? ' — ' + projName : ''}\n`;
+  text += `WORKORDER: ${woNumber}${woDesc ? ' — ' + woDesc : ''}\n`;
+  text += `DATE: ${fmtDate(woDate)}\n`;
+  text += `SITE: ${woSite}\n`;
+  if (tasks && tasks.length > 0) {
+    text += '\nTASKS:\n';
+    for (const t of tasks) {
+      const label = t.task_label || t.taskLabel || t.task_type || t.taskType || '';
+      const loc   = t.location_name || t.locationName || '';
+      text += `  • ${label}${loc ? ' — ' + loc : ''}\n`;
+    }
+  }
+  if (dashboardLink) text += `\nView your dashboard: ${dashboardLink}\n`;
+  text += '\nThis is an automated notification from CrestField.';
+
+  // HTML
+  let taskRowsHtml = '';
+  if (tasks && tasks.length > 0) {
+    const items = tasks.map(t => {
+      const label = t.task_label || t.taskLabel || t.task_type || t.taskType || '';
+      const loc   = t.location_name || t.locationName || '';
+      const notes = t.engagement_notes || t.engagementNotes || '';
+      return `<li style="margin-bottom:4px;">${escHtml(label)}${loc ? ` <span style="color:#6b7280;">— ${escHtml(loc)}</span>` : ''}${notes ? `<br><span style="color:#9ca3af;font-size:12px;">${escHtml(notes)}</span>` : ''}</li>`;
+    }).join('');
+    taskRowsHtml = `<p style="margin:16px 0 6px;font-weight:600;">Tasks to perform:</p><ul style="margin:4px 0 0;padding-left:18px;">${items}</ul>`;
+  }
+
+  const dashBtn = dashboardLink
+    ? `<p style="margin-top:24px;"><a href="${dashboardLink}" style="background:#2b6cb0;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-size:14px;">View Dashboard</a></p>`
+    : '';
+
+  const projDisplay = `${escHtml(projNum)}${projName ? ' — ' + escHtml(projName) : ''}`;
+  const woDisplay   = `${escHtml(woNumber)}${woDesc ? ' <span style="color:#6b7280;font-weight:400;">— ' + escHtml(woDesc) + '</span>' : ''}`;
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#2d3748;">
+      <div style="background:#2b6cb0;padding:18px 24px;">
+        <span style="color:#fff;font-size:18px;font-weight:bold;">CrestField</span>
+      </div>
+      <div style="padding:24px;">
+        <p style="margin:0 0 12px;">Hello,</p>
+        <p style="margin:0 0 18px;"><strong>${escHtml(assigner)}</strong> has dispatched you for a site visit:</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:8px;">
+          <tr><td style="padding:6px 0;color:#6b7280;width:100px;vertical-align:top;">Project</td><td style="padding:6px 0;font-weight:600;">${projDisplay}</td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top;">Workorder</td><td style="padding:6px 0;font-weight:600;">${woDisplay}</td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280;">Date</td><td style="padding:6px 0;">${escHtml(fmtDate(woDate))}</td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280;">Site</td><td style="padding:6px 0;">${escHtml(woSite)}</td></tr>
+        </table>
+        ${taskRowsHtml}
+        ${dashBtn}
+        <p style="margin-top:32px;font-size:12px;color:#718096;">This is an automated notification from CrestField.</p>
+      </div>
+    </div>`.trim();
+
+  try {
+    await sendGridRequest({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: FROM_EMAIL, name: FROM_NAME },
+      ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
+      subject,
+      content: [
+        { type: 'text/plain', value: text },
+        { type: 'text/html',  value: html },
+      ],
+    });
+    console.log(`[email] Workorder dispatch email sent to ${to} for WO ${woNumber}`);
+  } catch (err) {
+    console.error('[email] SendGrid API error sending dispatch email:', err.message);
+    throw err;
+  }
+}
+
 module.exports = {
   isConfigured,
   sendPasswordResetEmail,
   sendTaskAssignmentBatchEmail,
+  sendWorkorderDispatchEmail,
 };
