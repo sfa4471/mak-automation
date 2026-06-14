@@ -8,6 +8,7 @@ import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
+import { getWorkorders, Workorder } from '../api/invoicing';
 import RejectTaskModal from './RejectTaskModal';
 import UnapproveTaskModal from './UnapproveTaskModal';
 import './Dashboard.css';
@@ -20,7 +21,9 @@ const Dashboard: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [workPackages, setWorkPackages] = useState<{ [projectId: number]: WorkPackage[] }>({});
   const [tasks, setTasks] = useState<{ [projectId: number]: Task[] }>({});
+  const [workorders, setWorkorders] = useState<{ [projectId: number]: Workorder[] }>({});
   const [expandedProjects, setExpandedProjects] = useState<Set<number>>(new Set());
+  const [expandedWorkorders, setExpandedWorkorders] = useState<Set<number>>(new Set());
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -52,6 +55,17 @@ const Dashboard: React.FC = () => {
         taskMap[project.id] = taskResults[index] || [];
       });
       setTasks(taskMap);
+
+      // Load workorders per project
+      const woPromises = projectsData.map((project) =>
+        getWorkorders(project.id).catch(() => [] as Workorder[])
+      );
+      const woResults = await Promise.all(woPromises);
+      const woMap: { [projectId: number]: Workorder[] } = {};
+      projectsData.forEach((project, index) => {
+        woMap[project.id] = woResults[index] || [];
+      });
+      setWorkorders(woMap);
 
       // Also load work packages for backward compatibility
       const wpPromises = projectsData.map((project) =>
@@ -110,27 +124,65 @@ const Dashboard: React.FC = () => {
   };
 
   const getTaskSummary = (projectId: number): string => {
+    const projectWos   = workorders[projectId] || [];
     const projectTasks = tasks[projectId] || [];
-    const totalTasks = projectTasks.length;
     const readyForReview = projectTasks.filter(t => t.status === 'READY_FOR_REVIEW').length;
-    
-    if (totalTasks === 0) return 'No tasks';
-    if (readyForReview > 0) {
-      return `${totalTasks} task${totalTasks !== 1 ? 's' : ''} · ${readyForReview} ready for review`;
+
+    if (projectWos.length > 0) {
+      const woLabel = `${projectWos.length} workorder${projectWos.length !== 1 ? 's' : ''}`;
+      if (readyForReview > 0) return `${woLabel} · ${readyForReview} pending review`;
+      return woLabel;
     }
-    return `${totalTasks} task${totalTasks !== 1 ? 's' : ''}`;
+    if (projectTasks.length === 0) return 'No tasks';
+    if (readyForReview > 0) {
+      return `${projectTasks.length} task${projectTasks.length !== 1 ? 's' : ''} · ${readyForReview} ready for review`;
+    }
+    return `${projectTasks.length} task${projectTasks.length !== 1 ? 's' : ''}`;
   };
 
   const toggleProject = (projectId: number) => {
     setExpandedProjects(prev => {
       const newSet = new Set(prev);
-      if (newSet.has(projectId)) {
-        newSet.delete(projectId);
-      } else {
-        newSet.add(projectId);
-      }
+      if (newSet.has(projectId)) { newSet.delete(projectId); } else { newSet.add(projectId); }
       return newSet;
     });
+  };
+
+  const toggleWorkorder = (woId: number) => {
+    setExpandedWorkorders(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(woId)) { newSet.delete(woId); } else { newSet.add(woId); }
+      return newSet;
+    });
+  };
+
+  const fmtDate = (d?: string | null): string => {
+    if (!d) return '';
+    const [y, m, day] = d.split('-').map(Number);
+    return new Date(y, m - 1, day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  };
+
+  const fmtTime = (t?: string | null): string => {
+    if (!t) return '';
+    const [h, min] = t.split(':').map(Number);
+    const period = h >= 12 ? 'PM' : 'AM';
+    const hour = h % 12 || 12;
+    return `${hour}:${min.toString().padStart(2, '0')} ${period}`;
+  };
+
+  const woStatusBadge = (status: string) => {
+    const cfg: Record<string, { label: string; bg: string; color: string }> = {
+      open:             { label: 'Open',              bg: '#dbeafe', color: '#1e40af' },
+      complete:         { label: 'Complete',          bg: '#dcfce7', color: '#166534' },
+      approved:         { label: 'Approved',          bg: '#d1fae5', color: '#065f46' },
+      could_not_access: { label: 'Could Not Access',  bg: '#fef9c3', color: '#713f12' },
+    };
+    const s = cfg[status] || { label: status, bg: '#f3f4f6', color: '#374151' };
+    return (
+      <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color, whiteSpace: 'nowrap' }}>
+        {s.label}
+      </span>
+    );
   };
 
   const handleWorkPackageClick = (wp: WorkPackage) => {
@@ -492,11 +544,11 @@ const Dashboard: React.FC = () => {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                navigate(`/admin/create-task/${project.id}`);
+                                navigate(`/admin/projects/${project.id}/create-workorder`);
                               }}
                               className="create-task-button-primary"
                             >
-                              Create Task
+                              Create Workorder
                             </button>
                           )}
                         </>
@@ -506,14 +558,157 @@ const Dashboard: React.FC = () => {
                   
                   {isExpanded && (
                     <div className="project-content">
-                      {projectTasks.length > 0 ? (
+                      {/* ── Workorder accordion ── */}
+                      {(workorders[project.id] || []).length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {(workorders[project.id] || []).map(wo => {
+                            const isWoExpanded = expandedWorkorders.has(wo.id);
+                            const woTasks = projectTasks.filter(
+                              t => (t as any).workorderId === wo.id || (t as any).workorder_id === wo.id
+                            );
+                            return (
+                              <div key={wo.id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                                {/* Workorder header row */}
+                                <div
+                                  style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', background: isWoExpanded ? '#f0f9ff' : '#f9fafb', cursor: 'pointer', gap: 10, borderBottom: isWoExpanded ? '1px solid #e5e7eb' : 'none' }}
+                                  onClick={() => toggleWorkorder(wo.id)}
+                                >
+                                  <span style={{ color: '#6b7280', fontSize: 11, width: 12 }}>{isWoExpanded ? '▼' : '▶'}</span>
+
+                                  <span style={{ fontWeight: 700, fontSize: 13, color: '#111827', minWidth: 70 }}>
+                                    {wo.workorderNumber}
+                                  </span>
+
+                                  {/* Date + Report Time */}
+                                  {(wo.scheduledDate || (wo as any).scheduled_date) && (
+                                    <span style={{ fontSize: 13, color: '#374151', fontWeight: 500 }}>
+                                      {fmtDate(wo.scheduledDate || (wo as any).scheduled_date)}
+                                      {(wo.scheduledTime || (wo as any).scheduled_time) && (
+                                        <span style={{ color: '#2563eb', fontWeight: 700, marginLeft: 4 }}>
+                                          · {fmtTime(wo.scheduledTime || (wo as any).scheduled_time)}
+                                        </span>
+                                      )}
+                                    </span>
+                                  )}
+
+                                  {/* Site location */}
+                                  {wo.siteLocation && (
+                                    <span style={{ fontSize: 12, color: '#6b7280', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      · {wo.siteLocation}
+                                    </span>
+                                  )}
+
+                                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {/* Tech name */}
+                                    {wo.assignedTechnicianName && (
+                                      <span style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                                        {wo.assignedTechnicianName}
+                                      </span>
+                                    )}
+
+                                    {/* Task count chip */}
+                                    {woTasks.length > 0 && (
+                                      <span style={{ fontSize: 11, background: '#e0f2fe', color: '#0369a1', borderRadius: 10, padding: '1px 7px', fontWeight: 600 }}>
+                                        {woTasks.length} {woTasks.length === 1 ? 'task' : 'tasks'}
+                                      </span>
+                                    )}
+
+                                    {woStatusBadge(wo.status)}
+
+                                    {/* Clock status indicator */}
+                                    {wo.clockIn && !wo.clockOut && (
+                                      <span style={{ fontSize: 11, background: '#dcfce7', color: '#166534', borderRadius: 10, padding: '1px 7px', fontWeight: 700 }}>
+                                        Clocked In
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Tasks under this workorder */}
+                                {isWoExpanded && (
+                                  <div style={{ padding: '4px 0' }}>
+                                    {woTasks.length === 0 ? (
+                                      <div style={{ padding: '10px 40px', color: '#9ca3af', fontSize: 13 }}>
+                                        No tasks in this workorder.
+                                        {isAdmin() && (
+                                          <button
+                                            onClick={() => navigate(`/admin/create-task/${project.id}`, { state: { workorderId: wo.id } })}
+                                            style={{ marginLeft: 10, background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: 13, textDecoration: 'underline' }}
+                                          >
+                                            Add task
+                                          </button>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      woTasks.map(task => (
+                                        <div
+                                          key={task.id}
+                                          className="task-item"
+                                          style={{ paddingLeft: 40 }}
+                                          onClick={() => handleTaskClick(task)}
+                                        >
+                                          <div className="task-status-badge-container">
+                                            <span className={`task-status-badge ${getStatusClass(task.status)}`}>
+                                              {getStatusLabel(task.status)}
+                                            </span>
+                                          </div>
+                                          <div className="task-info">
+                                            <span className="task-name">{taskTypeLabel(task)}</span>
+                                          </div>
+                                          {isStaffReviewer() && (
+                                            <>
+                                              {isAdmin() && task.status !== 'APPROVED' && (
+                                                <button
+                                                  className="edit-task-button-secondary"
+                                                  style={{ background: '#6c757d', color: 'white', borderColor: '#6c757d' }}
+                                                  onClick={(e) => handleDeleteTask(task, e)}
+                                                >
+                                                  Delete
+                                                </button>
+                                              )}
+                                              {task.status === 'READY_FOR_REVIEW' && isReportTask(task) && (
+                                                <>
+                                                  <button
+                                                    className="edit-task-button-secondary"
+                                                    style={{ background: '#28a745', color: 'white', borderColor: '#28a745' }}
+                                                    onClick={(e) => handleApprove(task.id, e)}
+                                                  >
+                                                    Approve
+                                                  </button>
+                                                  <button
+                                                    className="edit-task-button-secondary"
+                                                    style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
+                                                    onClick={(e) => handleRejectClick(task, e)}
+                                                  >
+                                                    Reject
+                                                  </button>
+                                                </>
+                                              )}
+                                              {task.status === 'APPROVED' && isReportTask(task) && (
+                                                <button
+                                                  className="edit-task-button-secondary"
+                                                  style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
+                                                  onClick={(e) => void handleUnapproveClick(task, e)}
+                                                >
+                                                  Unapprove
+                                                </button>
+                                              )}
+                                            </>
+                                          )}
+                                        </div>
+                                      ))
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : projectTasks.length > 0 ? (
+                        /* Legacy: tasks not linked to a workorder */
                         <div className="tasks-list">
                           {projectTasks.map((task) => (
-                            <div
-                              key={task.id}
-                              className="task-item"
-                              onClick={() => handleTaskClick(task)}
-                            >
+                            <div key={task.id} className="task-item" onClick={() => handleTaskClick(task)}>
                               <div className="task-status-badge-container">
                                 <span className={`task-status-badge ${getStatusClass(task.status)}`}>
                                   {getStatusLabel(task.status)}
@@ -531,10 +726,7 @@ const Dashboard: React.FC = () => {
                                     <>
                                       <button
                                         className="edit-task-button-secondary"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          navigate(`/task/${task.id}/edit`, { state: { returnPath: '/dashboard' } });
-                                        }}
+                                        onClick={(e) => { e.stopPropagation(); navigate(`/task/${task.id}/edit`, { state: { returnPath: '/dashboard' } }); }}
                                       >
                                         Edit Task
                                       </button>
@@ -551,30 +743,12 @@ const Dashboard: React.FC = () => {
                                   )}
                                   {task.status === 'READY_FOR_REVIEW' && isReportTask(task) && (
                                     <>
-                                      <button
-                                        className="edit-task-button-secondary"
-                                        style={{ background: '#28a745', color: 'white', borderColor: '#28a745' }}
-                                        onClick={(e) => handleApprove(task.id, e)}
-                                      >
-                                        Approve
-                                      </button>
-                                      <button
-                                        className="edit-task-button-secondary"
-                                        style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
-                                        onClick={(e) => handleRejectClick(task, e)}
-                                      >
-                                        Reject
-                                      </button>
+                                      <button className="edit-task-button-secondary" style={{ background: '#28a745', color: 'white', borderColor: '#28a745' }} onClick={(e) => handleApprove(task.id, e)}>Approve</button>
+                                      <button className="edit-task-button-secondary" style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }} onClick={(e) => handleRejectClick(task, e)}>Reject</button>
                                     </>
                                   )}
                                   {task.status === 'APPROVED' && isReportTask(task) && (
-                                    <button
-                                      className="edit-task-button-secondary"
-                                      style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
-                                      onClick={(e) => void handleUnapproveClick(task, e)}
-                                    >
-                                      Unapprove
-                                    </button>
+                                    <button className="edit-task-button-secondary" style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }} onClick={(e) => void handleUnapproveClick(task, e)}>Unapprove</button>
                                   )}
                                 </>
                               )}
@@ -583,7 +757,7 @@ const Dashboard: React.FC = () => {
                         </div>
                       ) : (
                         <div className="no-tasks-message">
-                          No tasks yet. {isAdmin() ? 'Click "Create Task" to add one.' : ''}
+                          No workorders yet. {isAdmin() ? 'Click "Create Workorder" to dispatch a technician.' : ''}
                         </div>
                       )}
                     </div>

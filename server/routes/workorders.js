@@ -167,12 +167,13 @@ router.post('/', adminAuth, [
   body('description').optional().trim(),
   body('assignedTechnicianId').optional().isInt(),
   body('scheduledDate').optional().isDate(),
+  body('scheduledTime').optional().trim(),
   body('siteLocation').optional().trim(),
 ], async (req, res) => {
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errors: errs.array() });
 
-  const { projectId, workorderNumber, description, assignedTechnicianId, scheduledDate, siteLocation } = req.body;
+  const { projectId, workorderNumber, description, assignedTechnicianId, scheduledDate, scheduledTime, siteLocation } = req.body;
 
   try {
     const { data, error } = await supabase
@@ -186,6 +187,7 @@ router.post('/', adminAuth, [
         billing_status:          'unbilled',
         assigned_technician_id:  assignedTechnicianId || null,
         scheduled_date:          scheduledDate || null,
+        scheduled_time:          scheduledTime || null,
         site_location:           siteLocation || null,
       })
       .select()
@@ -212,6 +214,7 @@ router.put('/:id', adminAuth, [
   body('status').optional().isIn(['open', 'complete', 'approved', 'could_not_access']),
   body('assignedTechnicianId').optional().isInt(),
   body('scheduledDate').optional().isDate(),
+  body('scheduledTime').optional().trim(),
   body('siteLocation').optional().trim(),
   body('clockIn').optional(),
   body('clockOut').optional(),
@@ -236,6 +239,7 @@ router.put('/:id', adminAuth, [
   if (req.body.status                !== undefined) updates.status                 = req.body.status;
   if (req.body.assignedTechnicianId  !== undefined) updates.assigned_technician_id = req.body.assignedTechnicianId || null;
   if (req.body.scheduledDate         !== undefined) updates.scheduled_date         = req.body.scheduledDate || null;
+  if (req.body.scheduledTime         !== undefined) updates.scheduled_time         = req.body.scheduledTime || null;
   if (req.body.siteLocation          !== undefined) updates.site_location          = req.body.siteLocation || null;
   if (req.body.clockIn               !== undefined) updates.clock_in               = req.body.clockIn || null;
   if (req.body.clockOut              !== undefined) updates.clock_out              = req.body.clockOut || null;

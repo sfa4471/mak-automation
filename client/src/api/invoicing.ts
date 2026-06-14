@@ -61,6 +61,7 @@ export interface Workorder {
   assignedTechnicianId?: number;
   assignedTechnicianName?: string;
   scheduledDate?: string;
+  scheduledTime?: string | null;
   siteLocation?: string;
   clockIn?: string | null;
   clockOut?: string | null;
@@ -182,6 +183,7 @@ export async function createWorkorder(payload: {
   description?: string;
   assignedTechnicianId?: number;
   scheduledDate?: string;
+  scheduledTime?: string;
   siteLocation?: string;
 }): Promise<Workorder> {
   const { data } = await api.post('/workorders', payload);
