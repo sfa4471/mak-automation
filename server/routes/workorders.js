@@ -317,6 +317,7 @@ router.post('/:id/clock-out', auth, [
 
     const updates = {
       clock_out:     new Date().toISOString(),
+      status:        'complete',
       updated_at:    new Date().toISOString(),
     };
     if (req.body.breakMinutes !== undefined) updates.break_minutes = parseInt(req.body.breakMinutes, 10) || 0;

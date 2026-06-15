@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import QboSettings from './QboSettings';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { settingsAPI, WorkflowStatusResponse } from '../../api/settings';
@@ -420,6 +421,13 @@ const Settings: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* QuickBooks Integration */}
+        <div className="settings-section">
+          <h2 className="settings-section-title">QuickBooks Integration</h2>
+          <QboSettings />
+        </div>
+
       </div>
     </div>
   );

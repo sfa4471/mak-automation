@@ -131,6 +131,9 @@ export interface Invoice {
   idempotencyKey?: string;
   notes?: string;
   invoiceLines?: InvoiceLine[];
+  qboInvoiceId?: string;
+  qboInvoiceNumber?: string;
+  pushedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

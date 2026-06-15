@@ -156,16 +156,22 @@ router.post('/generate', adminAuth, [
 
     const idempotencyKey = `${req.tenantId}:${projectId}:${workorderIds.sort().join('-')}:v${rateSet.version}`;
 
-    // Check for existing draft with same key
+    // Check for any existing invoice with the same key (including voided ones)
     const { data: existing } = await supabase
       .from('invoices')
-      .select('id')
+      .select('id, status')
       .eq('idempotency_key', idempotencyKey)
-      .eq('status', 'draft')
-      .single();
+      .maybeSingle();
 
     if (existing) {
-      return res.status(409).json({ error: 'A draft invoice already exists for these workorders.', invoiceId: existing.id });
+      if (existing.status === 'void') {
+        // Clear the key on the old void so the unique constraint doesn't block re-invoicing
+        await supabase.from('invoices').update({ idempotency_key: null }).eq('id', existing.id);
+      } else if (existing.status === 'draft') {
+        return res.status(409).json({ error: 'A draft invoice already exists for these workorders.', invoiceId: existing.id });
+      } else {
+        return res.status(409).json({ error: `These workorders are already on an ${existing.status} invoice (Invoice #${existing.id}).` });
+      }
     }
 
     const totalCents = subtotalCents; // Tax support can be added later
@@ -293,7 +299,7 @@ router.post('/:id/void', adminAuth, async (req, res) => {
 
     const { data, error } = await supabase
       .from('invoices')
-      .update({ status: 'void', updated_at: new Date().toISOString() })
+      .update({ status: 'void', idempotency_key: null, updated_at: new Date().toISOString() })
       .eq('id', invoice.id)
       .select()
       .single();

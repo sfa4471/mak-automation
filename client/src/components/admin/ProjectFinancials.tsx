@@ -10,6 +10,7 @@ import {
   formatCents, sourceTypeLabel,
   RateSet, RateSetInput, Workorder, Invoice, InvoiceLine, FinancialSummary, InvoicePreview,
 } from '../../api/invoicing';
+import { pushInvoiceToQbo } from '../../api/qbo';
 import { tasksAPI, Task, taskTypeLabel } from '../../api/tasks';
 
 // ---------------------------------------------------------------------------
@@ -112,10 +113,10 @@ export default function ProjectFinancials() {
   const [previewing, setPreviewing] = useState(false);
   const [previewData, setPreviewData] = useState<InvoicePreview | null>(null);
 
-  // Admin clock-time editing
-  const [editTimeTaskId, setEditTimeTaskId] = useState<number | null>(null);
-  const [editTimeForm, setEditTimeForm] = useState({ clockIn: '', clockOut: '', breakMinutes: '0', miles: '0' });
-  const [timeSaving, setTimeSaving] = useState(false);
+  // Admin workorder time editing
+  const [editWoId, setEditWoId] = useState<number | null>(null);
+  const [editWoForm, setEditWoForm] = useState({ clockIn: '', clockOut: '', breakMinutes: '0', miles: '0' });
+  const [woTimeSaving, setWoTimeSaving] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Load
@@ -178,9 +179,9 @@ export default function ProjectFinancials() {
   }, [loadProject]);
 
   useEffect(() => {
-    if (tab === 'overview') loadSummary();
+    if (tab === 'overview') { loadSummary(); loadWorkorders(); }
     if (tab === 'rates') loadRateSets();
-  }, [tab, loadSummary, loadRateSets]);
+  }, [tab, loadSummary, loadRateSets, loadWorkorders]);
 
   // Load tasks when workorder expands
   useEffect(() => {
@@ -237,44 +238,43 @@ export default function ProjectFinancials() {
   }
 
   // ---------------------------------------------------------------------------
-  // Admin time edit
+  // Admin workorder time edit
   // ---------------------------------------------------------------------------
 
-  function openTimeEdit(t: Task) {
+  function openWoTimeEdit(wo: Workorder) {
     const toLocalDatetime = (iso?: string | null) => {
       if (!iso) return '';
       const d = new Date(iso);
       const pad = (n: number) => String(n).padStart(2, '0');
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     };
-    setEditTimeForm({
-      clockIn:      toLocalDatetime(t.clockIn),
-      clockOut:     toLocalDatetime(t.clockOut),
-      breakMinutes: String(t.breakMinutes ?? 0),
-      miles:        String(t.miles ?? 0),
+    setEditWoForm({
+      clockIn:      toLocalDatetime(wo.clockIn),
+      clockOut:     toLocalDatetime(wo.clockOut),
+      breakMinutes: String(wo.breakMinutes ?? 0),
+      miles:        String(wo.miles ?? 0),
     });
-    setEditTimeTaskId(t.id);
+    setEditWoId(wo.id);
   }
 
-  async function handleAdminSaveTime(woId: number) {
-    if (editTimeTaskId == null) return;
-    setTimeSaving(true);
+  async function handleSaveWoTime() {
+    if (editWoId == null) return;
+    setWoTimeSaving(true);
     try {
-      const toISO = (local: string) => local ? new Date(local).toISOString() : null;
-      await tasksAPI.updateTime(editTimeTaskId, {
-        clockIn:      toISO(editTimeForm.clockIn),
-        clockOut:     toISO(editTimeForm.clockOut),
-        breakMinutes: parseInt(editTimeForm.breakMinutes || '0', 10),
-        miles:        parseFloat(editTimeForm.miles || '0'),
+      const toISO = (local: string) => local ? new Date(local).toISOString() : undefined;
+      await updateWorkorder(editWoId, {
+        clockIn:      toISO(editWoForm.clockIn) ?? null,
+        clockOut:     toISO(editWoForm.clockOut) ?? null,
+        breakMinutes: parseInt(editWoForm.breakMinutes || '0', 10),
+        miles:        parseFloat(editWoForm.miles || '0'),
       });
-      setEditTimeTaskId(null);
-      // Reload tasks for this workorder
-      const allTasks = await tasksAPI.getByProject(projectId);
-      setTasksByWo(prev => ({ ...prev, [woId]: allTasks.filter(t => t.workorderId === woId) }));
+      setEditWoId(null);
+      loadWorkorders();
+      loadSummary();
     } catch (e: any) {
       showAlert(e?.response?.data?.error || e.message, 'Error');
     } finally {
-      setTimeSaving(false);
+      setWoTimeSaving(false);
     }
   }
 
@@ -393,6 +393,22 @@ export default function ProjectFinancials() {
     }
   }
 
+  async function handlePush(inv: Invoice) {
+    const ok = await showConfirm(
+      `Push invoice #${inv.id} (${formatCents(inv.totalCents)}) to QuickBooks?\n\n` +
+      `This creates a QBO invoice and marks the workorders as Billed. This cannot be undone from here.`
+    );
+    if (!ok) return;
+    try {
+      const { qboInvoiceNumber } = await pushInvoiceToQbo(inv.id);
+      await loadSummary();
+      await loadWorkorders();
+      showAlert(`Invoice pushed to QuickBooks as ${qboInvoiceNumber}.`, 'Pushed to QuickBooks');
+    } catch (e: any) {
+      showAlert(e?.response?.data?.error || e.message, 'Error');
+    }
+  }
+
   async function handleRegenerate(inv: Invoice) {
     const ok = await showConfirm(`Regenerate draft invoice #${inv.id}? This re-calculates line items against the current rate set.`);
     if (!ok) return;
@@ -409,9 +425,7 @@ export default function ProjectFinancials() {
   // Render
   // ---------------------------------------------------------------------------
 
-  const unbilledComplete = workorders.filter(
-    w => w.billingStatus === 'unbilled' && w.status !== 'open'
-  );
+  const unbilledComplete = workorders.filter(w => w.billingStatus === 'unbilled');
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 16px' }}>
@@ -468,23 +482,104 @@ export default function ProjectFinancials() {
                     <SummaryCard label="Unbilled WIP" value={formatCents(summary.wipCents)} color="#d97706" />
                     <SummaryCard label="Total (Billed + WIP)" value={formatCents(summary.billedCents + summary.wipCents)} color="#2563eb" />
                   </div>
-                  {summary.warnings && summary.warnings.length > 0 && (
-                    <div style={{ marginBottom: 20, padding: '10px 14px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 6, fontSize: 13, color: '#92400e' }}>
-                      <strong>Why is WIP $0.00?</strong>
-                      <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-                        {summary.warnings.map((w, i) => <li key={i}>{w}</li>)}
-                      </ul>
-                    </div>
-                  )}
                 </>
               )}
 
+              {/* ── Workorder time & mileage (admin edit) ── */}
+              {workorders.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  <h3 style={{ margin: '0 0 10px 0', fontSize: 15, color: '#111827' }}>Workorder Time &amp; Mileage</h3>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: '#f3f4f6' }}>
+                          <th style={th}>WO #</th>
+                          <th style={th}>Date</th>
+                          <th style={th}>Technician</th>
+                          <th style={th}>Clock In</th>
+                          <th style={th}>Clock Out</th>
+                          <th style={th}>Break</th>
+                          <th style={th}>Miles</th>
+                          <th style={th}>Status</th>
+                          <th style={th}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {workorders.map(wo => (
+                          <React.Fragment key={wo.id}>
+                            <tr style={{ borderBottom: editWoId === wo.id ? 'none' : '1px solid #f3f4f6' }}>
+                              <td style={td}><strong>{wo.workorderNumber}</strong></td>
+                              <td style={td}>{fmtDate(wo.scheduledDate)}</td>
+                              <td style={td}>{wo.assignedTechnicianName || '—'}</td>
+                              <td style={td}>{wo.clockIn ? new Date(wo.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                              <td style={td}>{wo.clockOut ? new Date(wo.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                              <td style={td}>{wo.breakMinutes != null ? `${wo.breakMinutes}m` : '—'}</td>
+                              <td style={td}>{wo.miles != null ? wo.miles : '—'}</td>
+                              <td style={td}><StatusBadge status={wo.status} /></td>
+                              <td style={td}>
+                                {editWoId === wo.id ? (
+                                  <button onClick={() => setEditWoId(null)} style={{ fontSize: 12, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}>Cancel</button>
+                                ) : (
+                                  <button onClick={() => openWoTimeEdit(wo)} style={{ fontSize: 12, color: '#2563eb', background: 'none', border: '1px solid #bfdbfe', borderRadius: 4, padding: '2px 8px', cursor: 'pointer' }}>✏️ Edit</button>
+                                )}
+                              </td>
+                            </tr>
+                            {editWoId === wo.id && (
+                              <tr style={{ background: '#f0f9ff', borderBottom: '1px solid #e5e7eb' }}>
+                                <td colSpan={9} style={{ padding: '12px 16px' }}>
+                                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 3 }}>Clock In</label>
+                                      <input type="datetime-local" value={editWoForm.clockIn}
+                                        onChange={e => setEditWoForm(f => ({ ...f, clockIn: e.target.value }))}
+                                        style={{ fontSize: 13, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 4 }} />
+                                    </div>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 3 }}>Clock Out</label>
+                                      <input type="datetime-local" value={editWoForm.clockOut}
+                                        onChange={e => setEditWoForm(f => ({ ...f, clockOut: e.target.value }))}
+                                        style={{ fontSize: 13, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 4 }} />
+                                    </div>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 3 }}>Break (min)</label>
+                                      <input type="number" min="0" value={editWoForm.breakMinutes}
+                                        onChange={e => setEditWoForm(f => ({ ...f, breakMinutes: e.target.value }))}
+                                        style={{ width: 80, fontSize: 13, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 4 }} />
+                                    </div>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 3 }}>Miles</label>
+                                      <input type="number" min="0" step="0.1" value={editWoForm.miles}
+                                        onChange={e => setEditWoForm(f => ({ ...f, miles: e.target.value }))}
+                                        style={{ width: 90, fontSize: 13, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 4 }} />
+                                    </div>
+                                    <button onClick={handleSaveWoTime} disabled={woTimeSaving}
+                                      style={{ padding: '6px 16px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
+                                      {woTimeSaving ? 'Saving…' : 'Save'}
+                                    </button>
+                                    <button onClick={() => setEditWoId(null)}
+                                      style={{ padding: '6px 12px', background: 'none', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, cursor: 'pointer' }}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* Generate invoice */}
-              {unbilledComplete.length > 0 && (
+              {woLoading ? (
+                <p style={{ color: '#6b7280', fontSize: 13 }}>Loading workorders…</p>
+              ) : unbilledComplete.length > 0 ? (
                 <div style={{ marginBottom: 20, padding: 16, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                     <span style={{ fontWeight: 600 }}>
-                      {unbilledComplete.length} workorder{unbilledComplete.length !== 1 ? 's' : ''} ready to invoice
+                      {unbilledComplete.length} unbilled workorder{unbilledComplete.length !== 1 ? 's' : ''}
                     </span>
                     <button
                       onClick={() => setShowGenerateForm(true)}
@@ -494,6 +589,10 @@ export default function ProjectFinancials() {
                     </button>
                   </div>
                 </div>
+              ) : (
+                <div style={{ marginBottom: 20, padding: 14, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, color: '#6b7280', fontSize: 13 }}>
+                  No unbilled workorders. Create a workorder from the project page to start billing.
+                </div>
               )}
 
               {/* Generate form */}
@@ -502,7 +601,7 @@ export default function ProjectFinancials() {
                   <h3 style={{ margin: '0 0 12px 0' }}>New Invoice</h3>
                   <p style={{ margin: '0 0 8px 0', fontSize: 13, color: '#6b7280' }}>Select workorders to include:</p>
                   {unbilledComplete.map(wo => (
-                    <label key={wo.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <label key={wo.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '6px 10px', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', background: selectedWoIds.includes(wo.id) ? '#f0fdf4' : '#fff' }}>
                       <input
                         type="checkbox"
                         checked={selectedWoIds.includes(wo.id)}
@@ -510,8 +609,13 @@ export default function ProjectFinancials() {
                           e.target.checked ? [...prev, wo.id] : prev.filter(x => x !== wo.id)
                         )}
                       />
-                      <strong>{wo.workorderNumber}</strong>
+                      <strong style={{ fontSize: 14 }}>{wo.workorderNumber}</strong>
                       {wo.description && <span style={{ color: '#6b7280', fontSize: 13 }}>{wo.description}</span>}
+                      {wo.scheduledDate && <span style={{ color: '#6b7280', fontSize: 12 }}>· {fmtDate(wo.scheduledDate)}</span>}
+                      {wo.assignedTechnicianName && <span style={{ color: '#6b7280', fontSize: 12 }}>· {wo.assignedTechnicianName}</span>}
+                      <span style={{ marginLeft: 'auto', fontSize: 11, padding: '1px 7px', borderRadius: 8, fontWeight: 600, background: wo.status === 'approved' ? '#d1fae5' : wo.status === 'complete' ? '#dbeafe' : '#f3f4f6', color: wo.status === 'approved' ? '#065f46' : wo.status === 'complete' ? '#1e40af' : '#6b7280', textTransform: 'capitalize' }}>
+                        {wo.status.replace('_', ' ')}
+                      </span>
                     </label>
                   ))}
                   <div style={{ marginTop: 12 }}>
@@ -607,6 +711,7 @@ export default function ProjectFinancials() {
                       onApprove={() => handleApprove(inv)}
                       onVoid={() => handleVoid(inv)}
                       onRegenerate={() => handleRegenerate(inv)}
+                      onPush={() => handlePush(inv)}
                     />
                   ))}
                 </div>
@@ -616,193 +721,7 @@ export default function ProjectFinancials() {
         </div>
       )}
 
-      {/* ============================================================= WORKORDERS (removed — use Create Workorder from Project Details) */}
-      {false && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>Workorders</h2>
-            <button
-              onClick={() => setShowWoForm(true)}
-              style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', cursor: 'pointer', fontWeight: 600 }}
-            >
-              + New Workorder
-            </button>
-          </div>
 
-          <p style={{ color: '#6b7280', fontSize: 13, marginBottom: 16 }}>
-            Tasks are assigned to a workorder when created. Technicians clock in/out from their task detail screen.
-          </p>
-
-          {/* Create workorder form */}
-          {showWoForm && (
-            <div style={{ marginBottom: 16, padding: 16, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8 }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: 16 }}>New Workorder</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginBottom: 12 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>WO Number *</label>
-                  <input
-                    value={woForm.workorderNumber}
-                    onChange={e => setWoForm(f => ({ ...f, workorderNumber: e.target.value }))}
-                    placeholder="e.g. WO-001"
-                    style={inputStyle}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Description</label>
-                  <input
-                    value={woForm.description}
-                    onChange={e => setWoForm(f => ({ ...f, description: e.target.value }))}
-                    placeholder="e.g. Foundation phase — June"
-                    style={inputStyle}
-                  />
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={handleCreateWorkorder} disabled={woSaving} style={btnPrimary}>
-                  {woSaving ? 'Saving…' : 'Create'}
-                </button>
-                <button onClick={() => setShowWoForm(false)} style={btnSecondary}>Cancel</button>
-              </div>
-            </div>
-          )}
-
-          {woLoading ? (
-            <p style={{ color: '#6b7280' }}>Loading…</p>
-          ) : workorders.length === 0 ? (
-            <p style={{ color: '#6b7280' }}>No workorders yet. Create one to start billing.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {workorders.map(wo => (
-                <div key={wo.id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                  {/* Workorder header */}
-                  <div
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#f9fafb', cursor: 'pointer' }}
-                    onClick={() => setExpandedWo(expandedWo === wo.id ? null : wo.id)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <span style={{ fontWeight: 700, fontSize: 15 }}>{wo.workorderNumber}</span>
-                      {wo.description && <span style={{ color: '#6b7280', fontSize: 14 }}>{wo.description}</span>}
-                      <StatusBadge status={wo.billingStatus} />
-                      <StatusBadge status={wo.status} />
-                    </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {wo.status === 'open' && wo.billingStatus === 'unbilled' && (
-                        <button
-                          onClick={e => { e.stopPropagation(); handleMarkWoComplete(wo); }}
-                          style={{ ...btnSecondary, fontSize: 13, padding: '4px 10px' }}
-                        >
-                          Mark Complete
-                        </button>
-                      )}
-                      {wo.billingStatus === 'unbilled' && (
-                        <button
-                          onClick={e => { e.stopPropagation(); handleDeleteWorkorder(wo); }}
-                          style={{ background: 'none', border: '1px solid #fca5a5', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', color: '#dc2626', fontSize: 13 }}
-                        >
-                          Delete
-                        </button>
-                      )}
-                      <span style={{ color: '#9ca3af' }}>{expandedWo === wo.id ? '▲' : '▼'}</span>
-                    </div>
-                  </div>
-
-                  {/* Tasks assigned to this workorder */}
-                  {expandedWo === wo.id && (
-                    <div style={{ padding: 16 }}>
-                      <h4 style={{ margin: '0 0 12px 0', fontSize: 14 }}>Tasks (site visits)</h4>
-                      {!tasksByWo[wo.id] ? (
-                        <p style={{ color: '#9ca3af', fontSize: 13 }}>Loading…</p>
-                      ) : tasksByWo[wo.id].length === 0 ? (
-                        <p style={{ color: '#9ca3af', fontSize: 13 }}>
-                          No tasks assigned to this workorder yet. Assign tasks via Create Task → select this workorder.
-                        </p>
-                      ) : (
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                          <thead>
-                            <tr style={{ background: '#f3f4f6' }}>
-                              <th style={th}>Task Type</th>
-                              <th style={th}>Technician</th>
-                              <th style={th}>Date</th>
-                              <th style={th}>Clock In</th>
-                              <th style={th}>Clock Out</th>
-                              <th style={th}>Break</th>
-                              <th style={th}>Miles</th>
-                              <th style={th}>Status</th>
-                              <th style={th}></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {tasksByWo[wo.id].map(t => (
-                              <React.Fragment key={t.id}>
-                                <tr style={{ borderBottom: editTimeTaskId === t.id ? 'none' : '1px solid #f3f4f6' }}>
-                                  <td style={td}>{taskTypeLabel(t)}</td>
-                                  <td style={td}>{t.assignedTechnicianName || `Tech #${t.assignedTechnicianId}`}</td>
-                                  <td style={td}>{t.scheduledStartDate || '—'}</td>
-                                  <td style={td}>{t.clockIn ? new Date(t.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-                                  <td style={td}>{t.clockOut ? new Date(t.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-                                  <td style={td}>{t.breakMinutes != null ? `${t.breakMinutes}m` : '—'}</td>
-                                  <td style={td}>{t.miles != null ? t.miles : '—'}</td>
-                                  <td style={td}><StatusBadge status={t.status.toLowerCase()} /></td>
-                                  <td style={td}>
-                                    {editTimeTaskId === t.id ? (
-                                      <button onClick={() => setEditTimeTaskId(null)} style={{ fontSize: 12, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}>Cancel</button>
-                                    ) : (
-                                      <button onClick={() => openTimeEdit(t)} style={{ fontSize: 12, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer' }}>Edit Time</button>
-                                    )}
-                                  </td>
-                                </tr>
-                                {editTimeTaskId === t.id && (
-                                  <tr style={{ borderBottom: '1px solid #f3f4f6', background: '#fafafa' }}>
-                                    <td colSpan={9} style={{ padding: '10px 12px' }}>
-                                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                                        <div>
-                                          <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 3 }}>Clock In</label>
-                                          <input type="datetime-local" value={editTimeForm.clockIn}
-                                            onChange={e => setEditTimeForm(f => ({ ...f, clockIn: e.target.value }))}
-                                            style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 4 }} />
-                                        </div>
-                                        <div>
-                                          <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 3 }}>Clock Out</label>
-                                          <input type="datetime-local" value={editTimeForm.clockOut}
-                                            onChange={e => setEditTimeForm(f => ({ ...f, clockOut: e.target.value }))}
-                                            style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 4 }} />
-                                        </div>
-                                        <div>
-                                          <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 3 }}>Break (min)</label>
-                                          <input type="number" min="0" value={editTimeForm.breakMinutes}
-                                            onChange={e => setEditTimeForm(f => ({ ...f, breakMinutes: e.target.value }))}
-                                            style={{ width: 70, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 4 }} />
-                                        </div>
-                                        <div>
-                                          <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 3 }}>Miles</label>
-                                          <input type="number" min="0" step="0.1" value={editTimeForm.miles}
-                                            onChange={e => setEditTimeForm(f => ({ ...f, miles: e.target.value }))}
-                                            style={{ width: 80, fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 4 }} />
-                                        </div>
-                                        <button
-                                          onClick={() => handleAdminSaveTime(wo.id)}
-                                          disabled={timeSaving}
-                                          style={{ padding: '6px 14px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, fontSize: 12, cursor: 'pointer' }}
-                                        >
-                                          {timeSaving ? 'Saving…' : 'Save'}
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                )}
-                              </React.Fragment>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ================================================================= RATES */}
       {tab === 'rates' && (
@@ -917,19 +836,19 @@ function SummaryCard({ label, value, color }: { label: string; value: string; co
   );
 }
 
-function InvoiceCard({ invoice, onApprove, onVoid, onRegenerate }: {
+function InvoiceCard({ invoice, onApprove, onVoid, onRegenerate, onPush }: {
   invoice: Invoice;
   onApprove: () => void;
   onVoid: () => void;
   onRegenerate: () => void;
+  onPush: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const isDraft = invoice.status === 'draft';
+  const [expanded, setExpanded] = useState(isDraft);
   const [lines, setLines] = useState<InvoiceLine[]>(invoice.invoiceLines || []);
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
   const [editDesc, setEditDesc] = useState('');
   const [descSaving, setDescSaving] = useState(false);
-
-  const isDraft = invoice.status === 'draft';
 
   function startEditLine(line: InvoiceLine) {
     setEditingLineId(line.id);
@@ -957,6 +876,11 @@ function InvoiceCard({ invoice, onApprove, onVoid, onRegenerate }: {
           <StatusBadge status={invoice.status} />
           <span style={{ fontSize: 14, color: '#6b7280' }}>v{invoice.rateSetVersion} rates</span>
           {isDraft && <span style={{ fontSize: 12, color: '#2563eb', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 4, padding: '2px 8px' }}>Draft — descriptions editable</span>}
+          {invoice.status === 'pushed' && invoice.qboInvoiceNumber && (
+            <span style={{ fontSize: 12, color: '#065f46', background: '#d1fae5', border: '1px solid #6ee7b7', borderRadius: 4, padding: '2px 8px', fontWeight: 600 }}>
+              QB: {invoice.qboInvoiceNumber}
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontWeight: 700, fontSize: 18 }}>{formatCents(invoice.totalCents)}</span>
@@ -965,6 +889,14 @@ function InvoiceCard({ invoice, onApprove, onVoid, onRegenerate }: {
               <button onClick={e => { e.stopPropagation(); onApprove(); }} style={btnPrimary}>Approve</button>
               <button onClick={e => { e.stopPropagation(); onRegenerate(); }} style={btnSecondary}>Regenerate</button>
             </>
+          )}
+          {invoice.status === 'approved' && (
+            <button
+              onClick={e => { e.stopPropagation(); onPush(); }}
+              style={{ background: '#2CA01C', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+            >
+              Push to QuickBooks
+            </button>
           )}
           {(invoice.status === 'draft' || invoice.status === 'approved') && (
             <button onClick={e => { e.stopPropagation(); onVoid(); }} style={{ background: 'none', border: '1px solid #fca5a5', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', color: '#dc2626', fontSize: 13 }}>Void</button>
@@ -1017,8 +949,8 @@ function InvoiceCard({ invoice, onApprove, onVoid, onRegenerate }: {
                         </span>
                         {isDraft && (
                           <button onClick={() => startEditLine(line)}
-                            style={{ background: 'none', border: '1px solid #2563eb', borderRadius: 4, cursor: 'pointer', fontSize: 11, color: '#2563eb', padding: '1px 7px', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                            Edit
+                            style={{ background: '#eff6ff', border: '1px solid #2563eb', borderRadius: 4, cursor: 'pointer', fontSize: 12, color: '#2563eb', padding: '2px 8px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                            ✏️ Edit
                           </button>
                         )}
                       </span>

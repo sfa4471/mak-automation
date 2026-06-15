@@ -32,6 +32,7 @@ const ProctorSummary = lazy(() => import('./components/ProctorSummary'));
 const Settings = lazy(() => import('./components/admin/Settings'));
 const NuclearGauges = lazy(() => import('./components/admin/NuclearGauges'));
 const GaugeCheckout = lazy(() => import('./components/GaugeCheckout'));
+const ProjectFinancials = lazy(() => import('./components/admin/ProjectFinancials'));
 
 function App() {
   return (
@@ -162,6 +163,16 @@ function App() {
               <ProtectedRoute>
                 <Suspense fallback={<LoadingSpinner fullScreen message="Loading project details..." />}>
                   <ProjectDetails />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/projects/:id/financials"
+            element={
+              <ProtectedRoute requireAdminOrPm>
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading financials..." />}>
+                  <ProjectFinancials />
                 </Suspense>
               </ProtectedRoute>
             }

@@ -8,7 +8,7 @@ import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
-import { getWorkorders, Workorder } from '../api/invoicing';
+import { getWorkorders, updateWorkorder, Workorder } from '../api/invoicing';
 import RejectTaskModal from './RejectTaskModal';
 import UnapproveTaskModal from './UnapproveTaskModal';
 import './Dashboard.css';
@@ -208,6 +208,18 @@ const Dashboard: React.FC = () => {
       loadData();
     } catch (err: any) {
       await showAlert(err.response?.data?.error || 'The task could not be approved.', 'Approval failed');
+    }
+  };
+
+  const handleApproveWorkorder = async (wo: Workorder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const ok = await showConfirm(`Approve workorder ${wo.workorderNumber}? It will be ready for invoicing.`, 'Approve Workorder');
+    if (!ok) return;
+    try {
+      await updateWorkorder(wo.id, { status: 'approved' });
+      loadData();
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'Could not approve workorder.', 'Error');
     }
   };
 
@@ -621,6 +633,23 @@ const Dashboard: React.FC = () => {
                                         Clocked In
                                       </span>
                                     )}
+
+                                    {/* Approve workorder button — shown when work is done but not yet approved */}
+                                    {isAdmin() && (wo.status === 'open' || wo.status === 'complete') && wo.clockOut && (
+                                      <button
+                                        onClick={(e) => handleApproveWorkorder(wo, e)}
+                                        style={{ fontSize: 11, background: '#059669', color: '#fff', border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                      >
+                                        Approve WO
+                                      </button>
+                                    )}
+
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); navigate(`/admin/projects/${project.id}/financials`); }}
+                                      style={{ fontSize: 11, background: 'none', border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', color: '#374151', whiteSpace: 'nowrap' }}
+                                    >
+                                      Financials
+                                    </button>
                                   </div>
                                 </div>
 

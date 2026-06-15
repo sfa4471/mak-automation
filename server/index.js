@@ -114,6 +114,10 @@ app.use('/api/workorders', require('./routes/workorders'));
 app.use('/api/dispatches', require('./routes/dispatches'));
 app.use('/api/rate-sets', require('./routes/rateSets'));
 app.use('/api/invoices', require('./routes/invoices'));
+const qboRoutes = require('./routes/qbo');
+app.use('/api/qbo', qboRoutes);
+// Intuit redirects here after OAuth — path must match QBO_REDIRECT_URI exactly
+app.get('/quickbooks/callback', qboRoutes.callbackHandler);
 
 // Logos, signatures, and other files under server/public (e.g. /tenants/:id/signature.png)
 app.use(express.static(path.join(__dirname, 'public')));
