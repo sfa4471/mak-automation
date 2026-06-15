@@ -724,6 +724,15 @@ const TechnicianDashboard: React.FC = () => {
         )}
       </div>
 
+      {/* Footer */}
+      <div style={{ textAlign: 'center', padding: '32px 16px 20px', color: '#9ca3af', fontSize: 12 }}>
+        <a href="mailto:admin@crestfield.app" style={{ color: '#9ca3af', textDecoration: 'none' }}>Contact support</a>
+        {' · '}
+        <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: '#9ca3af', textDecoration: 'none' }}>Terms</a>
+        {' · '}
+        <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: '#9ca3af', textDecoration: 'none' }}>Privacy</a>
+      </div>
+
       {/* ── Task Detail Modal ───────────────────────────────────────────────── */}
       {selectedTaskForDetail && (
         <TaskDetailModal

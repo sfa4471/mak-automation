@@ -886,6 +886,15 @@ const Dashboard: React.FC = () => {
         }}
       />
 
+      {/* Footer */}
+      <div style={{ textAlign: 'center', padding: '32px 16px 20px', color: '#9ca3af', fontSize: 12 }}>
+        <a href="mailto:admin@crestfield.app" style={{ color: '#9ca3af', textDecoration: 'none' }}>Contact support</a>
+        {' · '}
+        <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: '#9ca3af', textDecoration: 'none' }}>Terms</a>
+        {' · '}
+        <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: '#9ca3af', textDecoration: 'none' }}>Privacy</a>
+      </div>
+
       {/* Reopen workorder modal */}
       {reopenWo && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}

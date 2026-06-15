@@ -428,6 +428,20 @@ const Settings: React.FC = () => {
           <QboSettings />
         </div>
 
+        {/* Support */}
+        <div className="settings-section">
+          <h2 className="settings-section-title">Support</h2>
+          <p style={{ margin: '0 0 8px', fontSize: 14, color: '#374151' }}>
+            For help with your account, billing, or any issue, email us directly:
+          </p>
+          <a
+            href="mailto:admin@crestfield.app"
+            style={{ fontSize: 14, color: '#2563eb', fontWeight: 600 }}
+          >
+            admin@crestfield.app
+          </a>
+        </div>
+
       </div>
     </div>
   );
