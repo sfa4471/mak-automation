@@ -342,9 +342,104 @@ async function sendWorkorderDispatchEmail(to, workorder, tasks, assignedByName) 
   }
 }
 
+/**
+ * Send a "workorder reopened" email to a technician.
+ * @param {string} to - Tech's email
+ * @param {Object} workorder - Workorder row
+ * @param {string} techName - Tech's display name
+ * @param {string|null} note - Optional note from admin
+ * @param {string} adminName - Name of admin who reopened
+ */
+async function sendWorkorderReopenEmail(to, workorder, techName, note, adminName) {
+  if (!isConfigured()) {
+    console.warn('[email] SendGrid not configured; skipping reopen email to', to);
+    return;
+  }
+  if (!workorder) return;
+
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const dashboardLink = appUrl ? `${appUrl}/technician/dashboard` : null;
+  const assigner = adminName || 'Admin';
+  const tech = techName || 'Technician';
+
+  const fmtDate = (d) => {
+    if (!d) return 'TBD';
+    const [y, m, day] = String(d).split('-').map(Number);
+    return new Date(y, m - 1, day).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  const woNumber = workorder.workorder_number || workorder.workorderNumber || '';
+  const woDate   = workorder.scheduled_date   || workorder.scheduledDate   || '';
+  const woTime   = workorder.scheduled_time   || workorder.scheduledTime   || '';
+  const woSite   = workorder.site_location    || workorder.siteLocation    || '—';
+  const projNum  = workorder.project_number   || workorder.projectNumber   || '';
+  const projName = workorder.project_name     || workorder.projectName     || '';
+
+  const timePart = woTime ? ` · Report at ${formatTime(woTime)}` : '';
+  const subject  = `Workorder Reopened — ${woNumber}${woDate ? ' · ' + woDate : ''}${timePart}`;
+
+  let text = `Hello ${tech},\n\n${assigner} has reopened a workorder that was previously marked as "Could Not Access".\n\n`;
+  text += `The site is now accessible — please proceed with the work as scheduled.\n\n`;
+  text += `PROJECT:   ${projNum}${projName ? ' — ' + projName : ''}\n`;
+  text += `WORKORDER: ${woNumber}\n`;
+  text += `DATE:      ${fmtDate(woDate)}\n`;
+  if (woTime) text += `TIME:      ${formatTime(woTime)}\n`;
+  text += `SITE:      ${woSite}\n`;
+  if (note) text += `\nNOTE FROM ADMIN:\n${note}\n`;
+  if (dashboardLink) text += `\nView your dashboard: ${dashboardLink}\n`;
+  text += '\nThis is an automated notification from CrestField.';
+
+  const dashBtn = dashboardLink
+    ? `<p style="margin-top:24px;"><a href="${dashboardLink}" style="background:#2b6cb0;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-size:14px;">View Dashboard</a></p>`
+    : '';
+
+  const noteHtml = note
+    ? `<div style="margin:18px 0;padding:12px 16px;background:#fef9c3;border-left:4px solid #f59e0b;border-radius:4px;font-size:14px;"><strong>Note from ${escHtml(assigner)}:</strong><br>${escHtml(note)}</div>`
+    : '';
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#2d3748;">
+      <div style="background:#2b6cb0;padding:18px 24px;">
+        <span style="color:#fff;font-size:18px;font-weight:bold;">CrestField</span>
+      </div>
+      <div style="padding:24px;">
+        <p style="margin:0 0 6px;">Hello ${escHtml(tech)},</p>
+        <p style="margin:0 0 18px;">A workorder previously marked as <strong>Could Not Access</strong> has been reopened by <strong>${escHtml(assigner)}</strong>. The site is now accessible — please proceed with the work.</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:8px;">
+          <tr><td style="padding:6px 0;color:#6b7280;width:110px;">Project</td><td style="padding:6px 0;font-weight:600;">${escHtml(projNum)}${projName ? ' — ' + escHtml(projName) : ''}</td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280;">Workorder</td><td style="padding:6px 0;font-weight:600;">${escHtml(woNumber)}</td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280;">Date</td><td style="padding:6px 0;">${escHtml(fmtDate(woDate))}</td></tr>
+          ${woTime ? `<tr><td style="padding:6px 0;color:#6b7280;">Report Time</td><td style="padding:6px 0;font-weight:700;font-size:16px;color:#1d4ed8;">${escHtml(formatTime(woTime))}</td></tr>` : ''}
+          <tr><td style="padding:6px 0;color:#6b7280;">Site</td><td style="padding:6px 0;">${escHtml(woSite)}</td></tr>
+        </table>
+        ${noteHtml}
+        ${dashBtn}
+        <p style="margin-top:32px;font-size:12px;color:#718096;">This is an automated notification from CrestField.</p>
+      </div>
+    </div>`.trim();
+
+  try {
+    await sendGridRequest({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: FROM_EMAIL, name: FROM_NAME },
+      ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
+      subject,
+      content: [
+        { type: 'text/plain', value: text },
+        { type: 'text/html',  value: html },
+      ],
+    });
+    console.log(`[email] Reopen email sent to ${to} for WO ${woNumber}`);
+  } catch (err) {
+    console.error('[email] SendGrid error sending reopen email:', err.message);
+    throw err;
+  }
+}
+
 module.exports = {
   isConfigured,
   sendPasswordResetEmail,
   sendTaskAssignmentBatchEmail,
   sendWorkorderDispatchEmail,
+  sendWorkorderReopenEmail,
 };

@@ -369,6 +369,78 @@ router.post('/:id/could-not-access', auth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/workorders/:id/reopen — admin only, resets CNA back to open
+// ---------------------------------------------------------------------------
+router.post('/:id/reopen', adminAuth, async (req, res) => {
+  try {
+    const { scheduledDate, scheduledTime, note } = req.body;
+
+    const { data: wo, error: fetchErr } = await supabase
+      .from('workorders')
+      .select('id, tenant_id, status, assigned_technician_id, workorder_number, scheduled_date, scheduled_time, site_location, description')
+      .eq('id', req.params.id)
+      .eq('tenant_id', req.tenantId)
+      .single();
+
+    if (fetchErr || !wo) return res.status(404).json({ error: 'Workorder not found' });
+    if (wo.status !== 'could_not_access') {
+      return res.status(400).json({ error: 'Only "Could Not Access" workorders can be reopened.' });
+    }
+
+    const updates = { status: 'open', updated_at: new Date().toISOString() };
+    if (scheduledDate) updates.scheduled_date = scheduledDate;
+    if (scheduledTime !== undefined) updates.scheduled_time = scheduledTime || null;
+
+    const { data, error } = await supabase
+      .from('workorders')
+      .update(updates)
+      .eq('id', wo.id)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Reset any COULD_NOT_ACCESS tasks on this workorder back to ASSIGNED
+    await supabase
+      .from('tasks')
+      .update({ status: 'ASSIGNED', updated_at: new Date().toISOString() })
+      .eq('workorder_id', wo.id)
+      .eq('tenant_id', req.tenantId)
+      .eq('status', 'COULD_NOT_ACCESS');
+
+    // Email the assigned technician
+    if (wo.assigned_technician_id) {
+      try {
+        const { sendWorkorderReopenEmail } = require('../services/email');
+        const { data: tech } = await supabase
+          .from('users')
+          .select('email, first_name, last_name')
+          .eq('id', wo.assigned_technician_id)
+          .single();
+
+        if (tech?.email) {
+          const techName  = [tech.first_name, tech.last_name].filter(Boolean).join(' ') || 'Technician';
+          const adminName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || 'Admin';
+          await sendWorkorderReopenEmail(
+            tech.email,
+            { ...wo, scheduled_date: updates.scheduled_date || wo.scheduled_date, scheduled_time: updates.scheduled_time || wo.scheduled_time },
+            techName,
+            note || null,
+            adminName,
+          );
+        }
+      } catch (emailErr) {
+        console.error('[reopen] Email failed (non-fatal):', emailErr.message);
+      }
+    }
+
+    res.json(cc(data));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /api/workorders/:id — only if no tasks and billing_status=unbilled
 // ---------------------------------------------------------------------------
 router.delete('/:id', adminAuth, async (req, res) => {

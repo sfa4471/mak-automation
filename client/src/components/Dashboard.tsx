@@ -8,7 +8,7 @@ import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
-import { getWorkorders, updateWorkorder, Workorder } from '../api/invoicing';
+import { getWorkorders, updateWorkorder, reopenWorkorder, Workorder } from '../api/invoicing';
 import RejectTaskModal from './RejectTaskModal';
 import UnapproveTaskModal from './UnapproveTaskModal';
 import './Dashboard.css';
@@ -31,6 +31,11 @@ const Dashboard: React.FC = () => {
   const [rejectModalTask, setRejectModalTask] = useState<Task | null>(null);
   const [unapproveTask, setUnapproveTask] = useState<Task | null>(null);
   const [unapproveAlreadySent, setUnapproveAlreadySent] = useState(false);
+  const [reopenWo, setReopenWo] = useState<Workorder | null>(null);
+  const [reopenDate, setReopenDate] = useState('');
+  const [reopenTime, setReopenTime] = useState('');
+  const [reopenNote, setReopenNote] = useState('');
+  const [reopenSaving, setReopenSaving] = useState(false);
 
   useEffect(() => {
     if (user && isTechnician()) {
@@ -220,6 +225,32 @@ const Dashboard: React.FC = () => {
       loadData();
     } catch (err: any) {
       await showAlert(err.response?.data?.error || 'Could not approve workorder.', 'Error');
+    }
+  };
+
+  const handleReopenClick = (wo: Workorder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setReopenWo(wo);
+    setReopenDate(wo.scheduledDate || '');
+    setReopenTime(wo.scheduledTime || '');
+    setReopenNote('');
+  };
+
+  const handleReopenSubmit = async () => {
+    if (!reopenWo) return;
+    setReopenSaving(true);
+    try {
+      await reopenWorkorder(reopenWo.id, {
+        scheduledDate: reopenDate || undefined,
+        scheduledTime: reopenTime || undefined,
+        note: reopenNote || undefined,
+      });
+      setReopenWo(null);
+      loadData();
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'Could not reopen workorder.', 'Error');
+    } finally {
+      setReopenSaving(false);
     }
   };
 
@@ -634,6 +665,16 @@ const Dashboard: React.FC = () => {
                                       </span>
                                     )}
 
+                                    {/* Reopen button — shown when CNA */}
+                                    {isAdmin() && wo.status === 'could_not_access' && (
+                                      <button
+                                        onClick={(e) => handleReopenClick(wo, e)}
+                                        style={{ fontSize: 11, background: '#d97706', color: '#fff', border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                      >
+                                        Reopen
+                                      </button>
+                                    )}
+
                                     {/* Approve workorder button — shown when work is done but not yet approved */}
                                     {isAdmin() && (wo.status === 'open' || wo.status === 'complete') && wo.clockOut && (
                                       <button
@@ -844,6 +885,55 @@ const Dashboard: React.FC = () => {
           loadData();
         }}
       />
+
+      {/* Reopen workorder modal */}
+      {reopenWo && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setReopenWo(null)}>
+          <div style={{ background: '#fff', borderRadius: 10, padding: 28, width: 420, maxWidth: '94vw', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 4px', fontSize: 17 }}>Reopen Workorder</h3>
+            <p style={{ margin: '0 0 18px', fontSize: 13, color: '#6b7280' }}>
+              {reopenWo.workorderNumber} — site is now accessible
+            </p>
+
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>New Scheduled Date <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+            <input
+              type="date"
+              value={reopenDate}
+              onChange={e => setReopenDate(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, marginBottom: 14, boxSizing: 'border-box' }}
+            />
+
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Report Time <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+            <input
+              type="time"
+              value={reopenTime}
+              onChange={e => setReopenTime(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, marginBottom: 14, boxSizing: 'border-box' }}
+            />
+
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Note to Technician <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional, included in email)</span></label>
+            <textarea
+              value={reopenNote}
+              onChange={e => setReopenNote(e.target.value)}
+              placeholder="e.g. Gate code is 1234, contact John on site"
+              rows={3}
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, marginBottom: 20, resize: 'vertical', boxSizing: 'border-box' }}
+            />
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setReopenWo(null)} style={{ padding: '8px 18px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: 14 }}>
+                Cancel
+              </button>
+              <button onClick={handleReopenSubmit} disabled={reopenSaving}
+                style={{ padding: '8px 18px', borderRadius: 6, border: 'none', background: '#d97706', color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                {reopenSaving ? 'Reopening…' : 'Reopen & Notify Tech'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -228,6 +228,11 @@ export async function couldNotAccessWorkorder(id: number): Promise<Workorder> {
   return data;
 }
 
+export async function reopenWorkorder(id: number, payload?: { scheduledDate?: string; scheduledTime?: string; note?: string }): Promise<Workorder> {
+  const { data } = await api.post(`/workorders/${id}/reopen`, payload || {});
+  return data;
+}
+
 export async function getMySchedule(): Promise<{ workorders: WorkorderWithTasks[] }> {
   const { data } = await api.get('/workorders/my-schedule');
   return data;
