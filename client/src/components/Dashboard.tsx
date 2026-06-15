@@ -669,63 +669,75 @@ const Dashboard: React.FC = () => {
                                         )}
                                       </div>
                                     ) : (
-                                      woTasks.map(task => (
-                                        <div
-                                          key={task.id}
-                                          className="task-item"
-                                          style={{ paddingLeft: 40 }}
-                                          onClick={() => handleTaskClick(task)}
-                                        >
-                                          <div className="task-status-badge-container">
-                                            <span className={`task-status-badge ${getStatusClass(task.status)}`}>
-                                              {getStatusLabel(task.status)}
-                                            </span>
-                                          </div>
-                                          <div className="task-info">
-                                            <span className="task-name">{taskTypeLabel(task)}</span>
-                                          </div>
-                                          {isStaffReviewer() && (
-                                            <>
-                                              {isAdmin() && task.status !== 'APPROVED' && (
-                                                <button
-                                                  className="edit-task-button-secondary"
-                                                  style={{ background: '#6c757d', color: 'white', borderColor: '#6c757d' }}
-                                                  onClick={(e) => handleDeleteTask(task, e)}
-                                                >
-                                                  Delete
-                                                </button>
-                                              )}
-                                              {task.status === 'READY_FOR_REVIEW' && isReportTask(task) && (
-                                                <>
+                                      <>
+                                        {woTasks.map(task => (
+                                          <div
+                                            key={task.id}
+                                            className="task-item"
+                                            style={{ paddingLeft: 40 }}
+                                            onClick={() => handleTaskClick(task)}
+                                          >
+                                            <div className="task-status-badge-container">
+                                              <span className={`task-status-badge ${getStatusClass(task.status)}`}>
+                                                {getStatusLabel(task.status)}
+                                              </span>
+                                            </div>
+                                            <div className="task-info">
+                                              <span className="task-name">{taskTypeLabel(task)}</span>
+                                            </div>
+                                            {isStaffReviewer() && (
+                                              <>
+                                                {isAdmin() && task.status !== 'APPROVED' && (
                                                   <button
                                                     className="edit-task-button-secondary"
-                                                    style={{ background: '#28a745', color: 'white', borderColor: '#28a745' }}
-                                                    onClick={(e) => handleApprove(task.id, e)}
+                                                    style={{ background: '#6c757d', color: 'white', borderColor: '#6c757d' }}
+                                                    onClick={(e) => handleDeleteTask(task, e)}
                                                   >
-                                                    Approve
+                                                    Delete
                                                   </button>
+                                                )}
+                                                {task.status === 'READY_FOR_REVIEW' && isReportTask(task) && (
+                                                  <>
+                                                    <button
+                                                      className="edit-task-button-secondary"
+                                                      style={{ background: '#28a745', color: 'white', borderColor: '#28a745' }}
+                                                      onClick={(e) => handleApprove(task.id, e)}
+                                                    >
+                                                      Approve
+                                                    </button>
+                                                    <button
+                                                      className="edit-task-button-secondary"
+                                                      style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
+                                                      onClick={(e) => handleRejectClick(task, e)}
+                                                    >
+                                                      Reject
+                                                    </button>
+                                                  </>
+                                                )}
+                                                {task.status === 'APPROVED' && isReportTask(task) && (
                                                   <button
                                                     className="edit-task-button-secondary"
                                                     style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
-                                                    onClick={(e) => handleRejectClick(task, e)}
+                                                    onClick={(e) => void handleUnapproveClick(task, e)}
                                                   >
-                                                    Reject
+                                                    Unapprove
                                                   </button>
-                                                </>
-                                              )}
-                                              {task.status === 'APPROVED' && isReportTask(task) && (
-                                                <button
-                                                  className="edit-task-button-secondary"
-                                                  style={{ background: '#dc3545', color: 'white', borderColor: '#dc3545' }}
-                                                  onClick={(e) => void handleUnapproveClick(task, e)}
-                                                >
-                                                  Unapprove
-                                                </button>
-                                              )}
-                                            </>
-                                          )}
-                                        </div>
-                                      ))
+                                                )}
+                                              </>
+                                            )}
+                                          </div>
+                                        ))}
+                                        {isAdmin() && (
+                                          <div style={{ padding: '6px 40px 10px' }}>
+                                            <button
+                                              onClick={() => navigate(`/admin/create-task/${project.id}`, { state: { workorderId: wo.id } })}
+                                              style={{ background: 'none', border: '1px dashed #d1d5db', borderRadius: 6, color: '#2563eb', cursor: 'pointer', fontSize: 12, padding: '4px 12px' }}
+                                            >
+                                              + Add task
+                                            </button>
+                                          </div>
+                                        )}
+                                      </>
                                     )}
                                   </div>
                                 )}
