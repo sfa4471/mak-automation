@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 const s: Record<string, React.CSSProperties> = {
   page:    { maxWidth: 800, margin: '0 auto', padding: '48px 24px 80px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', color: '#111827', lineHeight: 1.75, fontSize: 15 },
   logoBar: { marginBottom: 40 },
-  logo:    { height: 36 },
+  logo:    { height: 64 },
   h1:      { fontSize: 26, fontWeight: 700, margin: '0 0 4px' },
   meta:    { color: '#6b7280', fontSize: 13, margin: '0 0 40px' },
   h2:      { fontSize: 16, fontWeight: 700, margin: '36px 0 8px', color: '#111827' },
