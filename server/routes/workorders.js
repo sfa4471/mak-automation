@@ -414,13 +414,13 @@ router.post('/:id/reopen', adminAuth, async (req, res) => {
         const { sendWorkorderReopenEmail } = require('../services/email');
         const { data: tech } = await supabase
           .from('users')
-          .select('email, first_name, last_name')
+          .select('email, name')
           .eq('id', wo.assigned_technician_id)
           .single();
 
         if (tech?.email) {
-          const techName  = [tech.first_name, tech.last_name].filter(Boolean).join(' ') || 'Technician';
-          const adminName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || 'Admin';
+          const techName  = tech.name || 'Technician';
+          const adminName = req.user.name || 'Admin';
           await sendWorkorderReopenEmail(
             tech.email,
             { ...wo, scheduled_date: updates.scheduled_date || wo.scheduled_date, scheduled_time: updates.scheduled_time || wo.scheduled_time },
