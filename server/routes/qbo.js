@@ -10,6 +10,8 @@ const {
   getConnection,
   saveConnection,
   deleteConnection,
+  getValidClient,
+  decrypt,
   pushInvoiceToQbo,
 } = require('../services/quickbooks');
 
@@ -102,14 +104,47 @@ async function callbackHandler(req, res) {
 router.get('/callback', callbackHandler);
 
 // ---------------------------------------------------------------------------
-// DELETE /api/qbo/disconnect — remove stored tokens for this tenant
+// DELETE /api/qbo/disconnect — revoke tokens with Intuit then clear from DB
 // ---------------------------------------------------------------------------
 router.delete('/disconnect', adminAuth, async (req, res) => {
   try {
+    try {
+      const { conn } = await getValidClient(req.tenantId);
+      const client = makeOAuthClient();
+      const refreshToken = decrypt(conn.refresh_token_enc);
+      client.setToken({ refresh_token: refreshToken });
+      await client.revoke({ token: refreshToken, token_type_hint: 'refresh_token' });
+    } catch (revokeErr) {
+      // Token may already be invalid — log and proceed with DB cleanup
+      console.warn('[QBO disconnect] token revocation failed (proceeding):', revokeErr.message);
+    }
     await deleteConnection(req.tenantId);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/qbo/disconnect-notify — Intuit redirects here when a user
+// disconnects from within the Intuit App Center / portal.
+// Paste https://api.crestfield.app/api/qbo/disconnect-notify into Intuit's
+// "App Disconnect URL" field in Production Settings.
+// ---------------------------------------------------------------------------
+router.get('/disconnect-notify', async (req, res) => {
+  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  try {
+    const { realmId } = req.query;
+    if (realmId) {
+      // Find and remove the connection by realm_id (no tenant JWT needed here)
+      const { supabase } = require('../db/supabase.js');
+      await supabase.from('tenant_qbo_connections').delete().eq('realm_id', realmId);
+    }
+    // Redirect to a neutral page — user lands here from Intuit, may not be logged in
+    res.redirect(`${appUrl}/login`);
+  } catch (err) {
+    console.error('[QBO disconnect-notify]', err.message);
+    res.redirect(`${appUrl}/login`);
   }
 });
 

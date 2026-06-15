@@ -10,6 +10,8 @@ import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 import Dashboard from './components/Dashboard';
+import TermsPage from './components/TermsPage';
+import PrivacyPage from './components/PrivacyPage';
 import TechnicianDashboard from './components/TechnicianDashboard';
 import ChangePassword from './components/ChangePassword';
 import './App.css';
@@ -275,6 +277,8 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         </AppDialogProvider>
