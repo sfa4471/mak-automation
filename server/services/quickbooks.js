@@ -331,6 +331,13 @@ async function pushInvoiceToQbo(tenantId, invoiceId) {
 
   if (!project) throw new Error('Project not found');
 
+  // Load tenant name for the DocNumber prefix
+  const { data: tenant } = await supabase
+    .from('tenants')
+    .select('name')
+    .eq('id', tenantId)
+    .single();
+
   const { qbo, conn } = await getValidClient(tenantId);
 
   const [customerId, itemId] = await Promise.all([
@@ -353,7 +360,12 @@ async function pushInvoiceToQbo(tenantId, invoiceId) {
     throw new Error('Invoice has no line items to push.');
   }
 
-  const docNumber = `MAK-${invoiceId}`;
+  // DocNumber format: COMPANYNAME-{id}  (uppercase, spaces removed, max 21 chars total)
+  const companySlug = (tenant?.name || 'INV')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 15);
+  const docNumber = `${companySlug}-${invoiceId}`;
   const txnDate   = (invoice.generated_at || new Date().toISOString()).slice(0, 10);
 
   const qboInvoice = await qboCall(qbo.createInvoice.bind(qbo), {
