@@ -234,7 +234,7 @@ function escHtml(str) {
 /**
  * Send a workorder dispatch email to a technician.
  * @param {string} to - Recipient email
- * @param {Object} workorder - Workorder row (workorder_number, scheduled_date, site_location, description, project_number, project_name)
+ * @param {Object} workorder - Workorder row (workorder_number, scheduled_date, site_location, project_number, project_name)
  * @param {Array} tasks - Array of task objects ({ task_type, task_label, location_name, engagement_notes })
  * @param {string} assignedByName - Name of admin who created the dispatch
  */
@@ -245,9 +245,9 @@ async function sendWorkorderDispatchEmail(to, workorder, tasks, assignedByName) 
   }
   if (!workorder) return;
 
-  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const appUrl       = (process.env.APP_URL || '').replace(/\/$/, '');
   const dashboardLink = appUrl ? `${appUrl}/technician/dashboard` : null;
-  const assigner = assignedByName || 'Admin';
+  const assigner     = assignedByName || 'Admin';
 
   const fmtDate = (d) => {
     if (!d) return 'TBD';
@@ -255,73 +255,144 @@ async function sendWorkorderDispatchEmail(to, workorder, tasks, assignedByName) 
     return new Date(y, m - 1, day).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   };
 
-  const woNumber  = workorder.workorder_number || workorder.workorderNumber || '';
-  const woDate    = workorder.scheduled_date   || workorder.scheduledDate   || '';
-  const woTime    = workorder.scheduled_time   || workorder.scheduledTime   || '';
-  const woSite    = workorder.site_location    || workorder.siteLocation    || '—';
-  const projNum   = workorder.project_number   || workorder.projectNumber   || '';
-  const projName  = workorder.project_name     || workorder.projectName     || '';
-  const woDesc    = workorder.description      || '';
+  const woNumber = workorder.workorder_number || workorder.workorderNumber || '';
+  const woDate   = workorder.scheduled_date   || workorder.scheduledDate   || '';
+  const woTime   = workorder.scheduled_time   || workorder.scheduledTime   || '';
+  const woSite   = workorder.site_location    || workorder.siteLocation    || '—';
+  const projNum  = workorder.project_number   || workorder.projectNumber   || '';
+  const projName = workorder.project_name     || workorder.projectName     || '';
 
-  const timePart  = woTime ? ` · Report at ${formatTime(woTime)}` : '';
-  const subject   = `New Dispatch — ${woNumber}${woDate ? ' · ' + woDate : ''}${timePart}`;
+  const timePart = woTime ? ` · ${formatTime(woTime)}` : '';
+  const subject  = `Field Work Order ${woNumber}${woDate ? ' · ' + woDate : ''}${timePart}`;
 
-  // Plain text
-  let text = `Hello,\n\n${assigner} has dispatched you for the following site visit:\n\n`;
-  text += `PROJECT:     ${projNum}${projName ? ' — ' + projName : ''}\n`;
-  text += `WORKORDER:   ${woNumber}${woDesc ? ' — ' + woDesc : ''}\n`;
+  const taskList = tasks || [];
+  const hasLocation = taskList.some(t => t.location_name || t.locationName);
+  const hasNotes    = taskList.some(t => t.engagement_notes || t.engagementNotes);
+
+  // ── Plain text ──────────────────────────────────────────────────────────
+  const projLine = `${projNum}${projName ? ' — ' + projName : ''}`;
+  let text = `FIELD WORK ORDER — ${woNumber}\n`;
+  text += '='.repeat(40) + '\n\n';
+  text += `Dispatched by: ${assigner}\n\n`;
+  text += `PROJECT:     ${projLine}\n`;
   text += `DATE:        ${fmtDate(woDate)}\n`;
   if (woTime) text += `REPORT TIME: ${formatTime(woTime)}  ← be on-site by this time\n`;
   text += `SITE:        ${woSite}\n`;
-  if (tasks && tasks.length > 0) {
+  if (taskList.length > 0) {
     text += '\nTASKS:\n';
-    for (const t of tasks) {
+    text += '-'.repeat(40) + '\n';
+    taskList.forEach((t, i) => {
       const label = t.task_label || t.taskLabel || t.task_type || t.taskType || '';
       const loc   = t.location_name || t.locationName || '';
-      text += `  • ${label}${loc ? ' — ' + loc : ''}\n`;
-    }
+      const notes = t.engagement_notes || t.engagementNotes || '';
+      text += `  ${i + 1}.  ${label}`;
+      if (loc)   text += `\n       Location: ${loc}`;
+      if (notes) text += `\n       Notes:    ${notes}`;
+      text += '\n';
+    });
   }
   if (dashboardLink) text += `\nView your dashboard: ${dashboardLink}\n`;
   text += '\nThis is an automated notification from CrestField.';
 
-  // HTML
-  let taskRowsHtml = '';
-  if (tasks && tasks.length > 0) {
-    const items = tasks.map(t => {
-      const label = t.task_label || t.taskLabel || t.task_type || t.taskType || '';
-      const loc   = t.location_name || t.locationName || '';
-      const notes = t.engagement_notes || t.engagementNotes || '';
-      return `<li style="margin-bottom:4px;">${escHtml(label)}${loc ? ` <span style="color:#6b7280;">— ${escHtml(loc)}</span>` : ''}${notes ? `<br><span style="color:#9ca3af;font-size:12px;">${escHtml(notes)}</span>` : ''}</li>`;
-    }).join('');
-    taskRowsHtml = `<p style="margin:16px 0 6px;font-weight:600;">Tasks to perform:</p><ul style="margin:4px 0 0;padding-left:18px;">${items}</ul>`;
-  }
+  // ── HTML ────────────────────────────────────────────────────────────────
+  // Task table rows
+  let taskBodyRows = '';
+  taskList.forEach((t, i) => {
+    const label = escHtml(t.task_label || t.taskLabel || t.task_type || t.taskType || '');
+    const loc   = escHtml(t.location_name || t.locationName || '');
+    const notes = escHtml(t.engagement_notes || t.engagementNotes || '');
+    const bg    = i % 2 === 0 ? '#ffffff' : '#f9fafb';
+    taskBodyRows += `
+      <tr style="background:${bg};">
+        <td style="padding:9px 10px;color:#9ca3af;font-size:12px;width:28px;border-bottom:1px solid #f3f4f6;">${i + 1}</td>
+        <td style="padding:9px 10px;font-weight:600;font-size:13px;border-bottom:1px solid #f3f4f6;">${label}</td>
+        ${hasLocation ? `<td style="padding:9px 10px;font-size:13px;color:#374151;border-bottom:1px solid #f3f4f6;">${loc || '<span style="color:#d1d5db;">—</span>'}</td>` : ''}
+        ${hasNotes    ? `<td style="padding:9px 10px;font-size:13px;color:#374151;border-bottom:1px solid #f3f4f6;">${notes || '<span style="color:#d1d5db;">—</span>'}</td>` : ''}
+      </tr>`;
+  });
+
+  const taskTableHtml = taskList.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:20px;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;font-size:13px;">
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb;">#</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb;">Test Type</th>
+          ${hasLocation ? '<th style="padding:8px 10px;text-align:left;font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb;">Location</th>' : ''}
+          ${hasNotes    ? '<th style="padding:8px 10px;text-align:left;font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb;">Notes</th>' : ''}
+        </tr>
+      </thead>
+      <tbody>${taskBodyRows}</tbody>
+    </table>` : '';
 
   const dashBtn = dashboardLink
-    ? `<p style="margin-top:24px;"><a href="${dashboardLink}" style="background:#2b6cb0;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-size:14px;">View Dashboard</a></p>`
+    ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;">
+        <tr><td>
+          <a href="${dashboardLink}" style="display:inline-block;background:#1d4ed8;color:#ffffff;padding:11px 24px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600;">
+            View Dashboard
+          </a>
+        </td></tr>
+      </table>`
     : '';
 
-  const projDisplay = `${escHtml(projNum)}${projName ? ' — ' + escHtml(projName) : ''}`;
-  const woDisplay   = `${escHtml(woNumber)}${woDesc ? ' <span style="color:#6b7280;font-weight:400;">— ' + escHtml(woDesc) + '</span>' : ''}`;
-
   const html = `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#2d3748;">
-      <div style="background:#2b6cb0;padding:18px 24px;">
-        <span style="color:#fff;font-size:18px;font-weight:bold;">CrestField</span>
-      </div>
-      <div style="padding:24px;">
-        <p style="margin:0 0 12px;">Hello,</p>
-        <p style="margin:0 0 18px;"><strong>${escHtml(assigner)}</strong> has dispatched you for a site visit:</p>
-        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:8px;">
-          <tr><td style="padding:6px 0;color:#6b7280;width:110px;vertical-align:top;">Project</td><td style="padding:6px 0;font-weight:600;">${projDisplay}</td></tr>
-          <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top;">Workorder</td><td style="padding:6px 0;font-weight:600;">${woDisplay}</td></tr>
-          <tr><td style="padding:6px 0;color:#6b7280;">Date</td><td style="padding:6px 0;">${escHtml(fmtDate(woDate))}</td></tr>
-          ${woTime ? `<tr><td style="padding:6px 0;color:#6b7280;">Report Time</td><td style="padding:6px 0;font-weight:700;font-size:16px;color:#1d4ed8;">${escHtml(formatTime(woTime))}</td></tr>` : ''}
-          <tr><td style="padding:6px 0;color:#6b7280;">Site</td><td style="padding:6px 0;">${escHtml(woSite)}</td></tr>
-        </table>
-        ${taskRowsHtml}
-        ${dashBtn}
-        <p style="margin-top:32px;font-size:12px;color:#718096;">This is an automated notification from CrestField.</p>
-      </div>
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:620px;margin:0 auto;background:#f3f4f6;padding:24px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <!-- Header -->
+        <tr>
+          <td style="background:#1e3a5f;padding:18px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <div style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.3px;">CrestField</div>
+                  <div style="color:#93c5fd;font-size:11px;letter-spacing:1.5px;margin-top:3px;text-transform:uppercase;">Field Work Order</div>
+                </td>
+                <td style="text-align:right;">
+                  <div style="color:#ffffff;font-size:20px;font-weight:700;">${escHtml(woNumber)}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="background:#ffffff;padding:24px;">
+            <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+              <strong>${escHtml(assigner)}</strong> has dispatched you for a site visit.
+            </p>
+
+            <!-- Dispatch info -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border-top:1px solid #f3f4f6;">
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;width:110px;font-size:13px;border-bottom:1px solid #f9fafb;vertical-align:top;">Project</td>
+                <td style="padding:8px 0;font-weight:600;border-bottom:1px solid #f9fafb;">${escHtml(projNum)}${projName ? ' — ' + escHtml(projName) : ''}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;border-bottom:1px solid #f9fafb;">Date</td>
+                <td style="padding:8px 0;border-bottom:1px solid #f9fafb;">${escHtml(fmtDate(woDate))}</td>
+              </tr>
+              ${woTime ? `
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;border-bottom:1px solid #f9fafb;">Report Time</td>
+                <td style="padding:8px 0;border-bottom:1px solid #f9fafb;">
+                  <span style="background:#dbeafe;color:#1d4ed8;font-weight:700;font-size:15px;padding:3px 10px;border-radius:4px;">${escHtml(formatTime(woTime))}</span>
+                  <span style="color:#6b7280;font-size:12px;margin-left:8px;">be on-site by this time</span>
+                </td>
+              </tr>` : ''}
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;">Site</td>
+                <td style="padding:8px 0;">${escHtml(woSite)}</td>
+              </tr>
+            </table>
+
+            ${taskTableHtml}
+            ${dashBtn}
+
+            <p style="margin-top:32px;font-size:12px;color:#9ca3af;">
+              This is an automated notification from CrestField.
+            </p>
+          </td>
+        </tr>
+      </table>
     </div>`.trim();
 
   try {
