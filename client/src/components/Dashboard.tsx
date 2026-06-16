@@ -8,9 +8,11 @@ import { projectsAPI, Project } from '../api/projects';
 import { workPackagesAPI, WorkPackage } from '../api/workpackages';
 import { tasksAPI, Task, taskTypeLabel } from '../api/tasks';
 import { notificationsAPI, Notification } from '../api/notifications';
-import { getWorkorders, updateWorkorder, reopenWorkorder, Workorder } from '../api/invoicing';
+import { getWorkorders, updateWorkorder, deleteWorkorder, reopenWorkorder, Workorder } from '../api/invoicing';
+import { authAPI } from '../api/auth';
 import RejectTaskModal from './RejectTaskModal';
 import UnapproveTaskModal from './UnapproveTaskModal';
+import EditWorkorderModal from './admin/EditWorkorderModal';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
@@ -36,6 +38,8 @@ const Dashboard: React.FC = () => {
   const [reopenTime, setReopenTime] = useState('');
   const [reopenNote, setReopenNote] = useState('');
   const [reopenSaving, setReopenSaving] = useState(false);
+  const [technicians, setTechnicians] = useState<{ id: number; name: string; email: string }[]>([]);
+  const [editWo, setEditWo] = useState<{ wo: Workorder; tasks: Task[] } | null>(null);
 
   useEffect(() => {
     if (user && isTechnician()) {
@@ -88,6 +92,12 @@ const Dashboard: React.FC = () => {
         setNotifications(notifs);
         const count = await notificationsAPI.getUnreadCount();
         setUnreadCount(count);
+      }
+
+      if (isAdmin()) {
+        authAPI.listTechnicians().then(techs => {
+          setTechnicians(techs.map(t => ({ id: t.id, name: t.name || t.email, email: t.email })));
+        }).catch(() => {});
       }
     } catch (error) {
       console.error('Error loading data:', error);
@@ -234,6 +244,26 @@ const Dashboard: React.FC = () => {
     setReopenDate(wo.scheduledDate || '');
     setReopenTime(wo.scheduledTime || '');
     setReopenNote('');
+  };
+
+  const handleEditWoClick = (wo: Workorder, tasks: Task[], e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditWo({ wo, tasks });
+  };
+
+  const handleDeleteWoClick = async (wo: Workorder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const ok = await showConfirm(
+      `Delete workorder ${wo.workorderNumber}? This will permanently remove it and all associated tasks. This cannot be undone.`,
+      'Delete Workorder'
+    );
+    if (!ok) return;
+    try {
+      await deleteWorkorder(wo.id);
+      loadData();
+    } catch (err: any) {
+      await showAlert(err.response?.data?.error || 'Could not delete workorder.', 'Error');
+    }
   };
 
   const handleReopenSubmit = async () => {
@@ -685,6 +715,22 @@ const Dashboard: React.FC = () => {
                                       </button>
                                     )}
 
+                                    {isAdmin() && (
+                                      <button
+                                        onClick={(e) => handleEditWoClick(wo, woTasks, e)}
+                                        style={{ fontSize: 11, background: 'none', border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', color: '#374151', whiteSpace: 'nowrap' }}
+                                      >
+                                        Edit
+                                      </button>
+                                    )}
+                                    {isAdmin() && wo.billingStatus === 'unbilled' && (
+                                      <button
+                                        onClick={(e) => handleDeleteWoClick(wo, e)}
+                                        style={{ fontSize: 11, background: 'none', border: '1px solid #fca5a5', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', color: '#dc2626', whiteSpace: 'nowrap' }}
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
                                     <button
                                       onClick={(e) => { e.stopPropagation(); navigate(`/admin/projects/${project.id}/financials`); }}
                                       style={{ fontSize: 11, background: 'none', border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', color: '#374151', whiteSpace: 'nowrap' }}
@@ -942,6 +988,23 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {editWo && (
+        <EditWorkorderModal
+          workorder={editWo.wo}
+          projectId={editWo.wo.projectId}
+          initialTasks={editWo.tasks.map(t => ({
+            id: t.id,
+            taskType: t.taskType || (t as any).task_type,
+            locationName: (t as any).locationName,
+            engagementNotes: (t as any).engagementNotes,
+            status: t.status,
+          }))}
+          technicians={technicians}
+          onSaved={() => { setEditWo(null); loadData(); }}
+          onClose={() => setEditWo(null)}
+        />
       )}
     </div>
   );

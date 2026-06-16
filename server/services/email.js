@@ -507,10 +507,394 @@ async function sendWorkorderReopenEmail(to, workorder, techName, note, adminName
   }
 }
 
+/**
+ * Send a "removed from workorder" email to a technician.
+ * @param {string} to - Tech's email
+ * @param {Object} workorder - Workorder row
+ * @param {string} techName - Tech's display name
+ * @param {string} adminName - Name of admin who made the change
+ */
+async function sendWorkorderRemovedFromEmail(to, workorder, techName, adminName) {
+  if (!isConfigured()) {
+    console.warn('[email] SendGrid not configured; skipping removed-from email to', to);
+    return;
+  }
+  if (!workorder) return;
+
+  const assigner = adminName || 'Admin';
+  const tech     = techName || 'Technician';
+
+  const fmtDate = (d) => {
+    if (!d) return 'TBD';
+    const [y, m, day] = String(d).split('-').map(Number);
+    return new Date(y, m - 1, day).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  const woNumber = workorder.workorder_number || workorder.workorderNumber || '';
+  const woDate   = workorder.scheduled_date   || workorder.scheduledDate   || '';
+  const woSite   = workorder.site_location    || workorder.siteLocation    || '—';
+  const projNum  = workorder.project_number   || workorder.projectNumber   || '';
+  const projName = workorder.project_name     || workorder.projectName     || '';
+
+  const subject = `You've been removed from Field Work Order ${woNumber}`;
+
+  // ── Plain text ──────────────────────────────────────────────────────────
+  let text = `Hello ${tech},\n\n`;
+  text += `${assigner} has reassigned Field Work Order ${woNumber}. `;
+  text += `You are no longer scheduled for this workorder.\n\n`;
+  text += `PROJECT: ${projNum}${projName ? ' — ' + projName : ''}\n`;
+  text += `DATE:    ${fmtDate(woDate)}\n`;
+  text += `SITE:    ${woSite}\n\n`;
+  text += 'This is an automated notification from CrestField.';
+
+  // ── HTML ────────────────────────────────────────────────────────────────
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:620px;margin:0 auto;background:#f3f4f6;padding:24px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <tr>
+          <td style="background:#1e3a5f;padding:18px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <div style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.3px;">CrestField</div>
+                  <div style="color:#93c5fd;font-size:11px;letter-spacing:1.5px;margin-top:3px;text-transform:uppercase;">Field Work Order</div>
+                </td>
+                <td style="text-align:right;">
+                  <div style="color:#ffffff;font-size:20px;font-weight:700;">${escHtml(woNumber)}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;padding:24px;">
+            <p style="margin:0 0 16px;font-size:14px;color:#374151;">Hello ${escHtml(tech)},</p>
+            <p style="margin:0 0 20px;font-size:14px;color:#374151;">
+              <strong>${escHtml(assigner)}</strong> has reassigned Field Work Order <strong>${escHtml(woNumber)}</strong>.
+              You are no longer scheduled for this workorder.
+            </p>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border-top:1px solid #f3f4f6;">
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;width:110px;font-size:13px;border-bottom:1px solid #f9fafb;vertical-align:top;">Project</td>
+                <td style="padding:8px 0;font-weight:600;border-bottom:1px solid #f9fafb;">${escHtml(projNum)}${projName ? ' — ' + escHtml(projName) : ''}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;border-bottom:1px solid #f9fafb;">Date</td>
+                <td style="padding:8px 0;border-bottom:1px solid #f9fafb;">${escHtml(fmtDate(woDate))}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;">Site</td>
+                <td style="padding:8px 0;">${escHtml(woSite)}</td>
+              </tr>
+            </table>
+
+            <p style="margin-top:32px;font-size:12px;color:#9ca3af;">
+              This is an automated notification from CrestField.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </div>`.trim();
+
+  try {
+    await sendGridRequest({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: FROM_EMAIL, name: FROM_NAME },
+      ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
+      subject,
+      content: [
+        { type: 'text/plain', value: text },
+        { type: 'text/html',  value: html },
+      ],
+    });
+    console.log(`[email] Removed-from email sent to ${to} for WO ${woNumber}`);
+  } catch (err) {
+    console.error('[email] SendGrid error sending removed-from email:', err.message);
+    throw err;
+  }
+}
+
+/**
+ * Send a "workorder updated" email to a technician.
+ * @param {string} to - Tech's email
+ * @param {Object} workorder - Workorder row (workorder_number, scheduled_date, scheduled_time, site_location, project_number, project_name)
+ * @param {Array} tasks - Array of task objects ({ task_type, task_label, location_name, engagement_notes })
+ * @param {string} adminName - Name of admin who made the update
+ */
+async function sendWorkorderUpdatedEmail(to, workorder, tasks, adminName) {
+  if (!isConfigured()) {
+    console.warn('[email] SendGrid not configured; skipping updated email to', to);
+    return;
+  }
+  if (!workorder) return;
+
+  const appUrl        = (process.env.APP_URL || '').replace(/\/$/, '');
+  const dashboardLink = appUrl ? `${appUrl}/technician/dashboard` : null;
+  const assigner      = adminName || 'Admin';
+
+  const fmtDate = (d) => {
+    if (!d) return 'TBD';
+    const [y, m, day] = String(d).split('-').map(Number);
+    return new Date(y, m - 1, day).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  const woNumber = workorder.workorder_number || workorder.workorderNumber || '';
+  const woDate   = workorder.scheduled_date   || workorder.scheduledDate   || '';
+  const woTime   = workorder.scheduled_time   || workorder.scheduledTime   || '';
+  const woSite   = workorder.site_location    || workorder.siteLocation    || '—';
+  const projNum  = workorder.project_number   || workorder.projectNumber   || '';
+  const projName = workorder.project_name     || workorder.projectName     || '';
+
+  const subject = `Updated: Field Work Order ${woNumber}${woDate ? ' · ' + woDate : ''}`;
+
+  const taskList    = tasks || [];
+  const hasLocation = taskList.some(t => t.location_name || t.locationName);
+  const hasNotes    = taskList.some(t => t.engagement_notes || t.engagementNotes);
+
+  // ── Plain text ──────────────────────────────────────────────────────────
+  const projLine = `${projNum}${projName ? ' — ' + projName : ''}`;
+  let text = `UPDATED: FIELD WORK ORDER — ${woNumber}\n`;
+  text += '='.repeat(40) + '\n\n';
+  text += `${assigner} has updated the details for your upcoming workorder.\n\n`;
+  text += `PROJECT:     ${projLine}\n`;
+  text += `DATE:        ${fmtDate(woDate)}\n`;
+  if (woTime) text += `REPORT TIME: ${formatTime(woTime)}  ← be on-site by this time\n`;
+  text += `SITE:        ${woSite}\n`;
+  if (taskList.length > 0) {
+    text += '\nTASKS:\n';
+    text += '-'.repeat(40) + '\n';
+    taskList.forEach((t, i) => {
+      const label = t.task_label || t.taskLabel || t.task_type || t.taskType || '';
+      const loc   = t.location_name || t.locationName || '';
+      const notes = t.engagement_notes || t.engagementNotes || '';
+      text += `  ${i + 1}.  ${label}`;
+      if (loc)   text += `\n       Location: ${loc}`;
+      if (notes) text += `\n       Notes:    ${notes}`;
+      text += '\n';
+    });
+  }
+  if (dashboardLink) text += `\nView your dashboard: ${dashboardLink}\n`;
+  text += '\nThis is an automated notification from CrestField.';
+
+  // ── HTML ────────────────────────────────────────────────────────────────
+  let taskBodyRows = '';
+  taskList.forEach((t, i) => {
+    const label = escHtml(t.task_label || t.taskLabel || t.task_type || t.taskType || '');
+    const loc   = escHtml(t.location_name || t.locationName || '');
+    const notes = escHtml(t.engagement_notes || t.engagementNotes || '');
+    const bg    = i % 2 === 0 ? '#ffffff' : '#f9fafb';
+    taskBodyRows += `
+      <tr style="background:${bg};">
+        <td style="padding:9px 10px;color:#9ca3af;font-size:12px;width:28px;border-bottom:1px solid #f3f4f6;">${i + 1}</td>
+        <td style="padding:9px 10px;font-weight:600;font-size:13px;border-bottom:1px solid #f3f4f6;">${label}</td>
+        ${hasLocation ? `<td style="padding:9px 10px;font-size:13px;color:#374151;border-bottom:1px solid #f3f4f6;">${loc || '<span style="color:#d1d5db;">—</span>'}</td>` : ''}
+        ${hasNotes    ? `<td style="padding:9px 10px;font-size:13px;color:#374151;border-bottom:1px solid #f3f4f6;">${notes || '<span style="color:#d1d5db;">—</span>'}</td>` : ''}
+      </tr>`;
+  });
+
+  const taskTableHtml = taskList.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:20px;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;font-size:13px;">
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb;">#</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb;">Test Type</th>
+          ${hasLocation ? '<th style="padding:8px 10px;text-align:left;font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb;">Location</th>' : ''}
+          ${hasNotes    ? '<th style="padding:8px 10px;text-align:left;font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e5e7eb;">Notes</th>' : ''}
+        </tr>
+      </thead>
+      <tbody>${taskBodyRows}</tbody>
+    </table>` : '';
+
+  const dashBtn = dashboardLink
+    ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;">
+        <tr><td>
+          <a href="${dashboardLink}" style="display:inline-block;background:#1d4ed8;color:#ffffff;padding:11px 24px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600;">
+            View Dashboard
+          </a>
+        </td></tr>
+      </table>`
+    : '';
+
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:620px;margin:0 auto;background:#f3f4f6;padding:24px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <!-- Header -->
+        <tr>
+          <td style="background:#1e3a5f;padding:18px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <div style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.3px;">CrestField</div>
+                  <div style="color:#93c5fd;font-size:11px;letter-spacing:1.5px;margin-top:3px;text-transform:uppercase;">Field Work Order</div>
+                </td>
+                <td style="text-align:right;vertical-align:top;">
+                  <div style="display:inline-block;background:#d97706;color:#fff;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:2px 8px;border-radius:3px;margin-bottom:4px;">Updated</div>
+                  <div style="color:#ffffff;font-size:20px;font-weight:700;">${escHtml(woNumber)}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="background:#ffffff;padding:24px;">
+            <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+              <strong>${escHtml(assigner)}</strong> has updated the details for your upcoming workorder. Please review the information below.
+            </p>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border-top:1px solid #f3f4f6;">
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;width:110px;font-size:13px;border-bottom:1px solid #f9fafb;vertical-align:top;">Project</td>
+                <td style="padding:8px 0;font-weight:600;border-bottom:1px solid #f9fafb;">${escHtml(projNum)}${projName ? ' — ' + escHtml(projName) : ''}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;border-bottom:1px solid #f9fafb;">Date</td>
+                <td style="padding:8px 0;border-bottom:1px solid #f9fafb;">${escHtml(fmtDate(woDate))}</td>
+              </tr>
+              ${woTime ? `
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;border-bottom:1px solid #f9fafb;">Report Time</td>
+                <td style="padding:8px 0;border-bottom:1px solid #f9fafb;">
+                  <span style="background:#dbeafe;color:#1d4ed8;font-weight:700;font-size:15px;padding:3px 10px;border-radius:4px;">${escHtml(formatTime(woTime))}</span>
+                  <span style="color:#6b7280;font-size:12px;margin-left:8px;">be on-site by this time</span>
+                </td>
+              </tr>` : ''}
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;">Site</td>
+                <td style="padding:8px 0;">${escHtml(woSite)}</td>
+              </tr>
+            </table>
+
+            ${taskTableHtml}
+            ${dashBtn}
+
+            <p style="margin-top:32px;font-size:12px;color:#9ca3af;">
+              This is an automated notification from CrestField.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </div>`.trim();
+
+  try {
+    await sendGridRequest({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: FROM_EMAIL, name: FROM_NAME },
+      ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
+      subject,
+      content: [
+        { type: 'text/plain', value: text },
+        { type: 'text/html',  value: html },
+      ],
+    });
+    console.log(`[email] Updated email sent to ${to} for WO ${woNumber}`);
+  } catch (err) {
+    console.error('[email] SendGrid error sending updated email:', err.message);
+    throw err;
+  }
+}
+
+/**
+ * Send a "workorder cancelled" email to a technician.
+ * @param {string} to - Tech's email
+ * @param {Object} workorder - Workorder row
+ * @param {string} techName - Tech's display name
+ * @param {string} adminName - Name of admin who cancelled
+ */
+async function sendWorkorderCancelledEmail(to, workorder, techName, adminName) {
+  if (!isConfigured()) {
+    console.warn('[email] SendGrid not configured; skipping cancelled email to', to);
+    return;
+  }
+  if (!workorder) return;
+
+  const assigner = adminName || 'Admin';
+  const tech     = techName || 'Technician';
+
+  const fmtDate = (d) => {
+    if (!d) return 'TBD';
+    const [y, m, day] = String(d).split('-').map(Number);
+    return new Date(y, m - 1, day).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  const woNumber = workorder.workorder_number || workorder.workorderNumber || '';
+  const woDate   = workorder.scheduled_date   || workorder.scheduledDate   || '';
+  const woSite   = workorder.site_location    || workorder.siteLocation    || '—';
+
+  const subject = `Field Work Order ${woNumber} has been cancelled`;
+
+  // ── Plain text ──────────────────────────────────────────────────────────
+  let text = `Hello ${tech},\n\n`;
+  text += `${assigner} has cancelled Field Work Order ${woNumber} scheduled for ${fmtDate(woDate)} at ${woSite}. `;
+  text += `You do not need to report to this site. Please contact your supervisor if you have questions.\n\n`;
+  text += 'This is an automated notification from CrestField.';
+
+  // ── HTML ────────────────────────────────────────────────────────────────
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:620px;margin:0 auto;background:#f3f4f6;padding:24px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <!-- Header -->
+        <tr>
+          <td style="background:#1e3a5f;padding:18px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <div style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.3px;">CrestField</div>
+                  <div style="color:#93c5fd;font-size:11px;letter-spacing:1.5px;margin-top:3px;text-transform:uppercase;">Field Work Order</div>
+                </td>
+                <td style="text-align:right;vertical-align:top;">
+                  <div style="display:inline-block;background:#dc2626;color:#fff;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:2px 8px;border-radius:3px;margin-bottom:4px;">Cancelled</div>
+                  <div style="color:#ffffff;font-size:20px;font-weight:700;">${escHtml(woNumber)}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="background:#ffffff;padding:24px;">
+            <p style="margin:0 0 16px;font-size:14px;color:#374151;">Hello ${escHtml(tech)},</p>
+            <p style="margin:0 0 20px;font-size:14px;color:#374151;">
+              <strong>${escHtml(assigner)}</strong> has cancelled Field Work Order <strong>${escHtml(woNumber)}</strong>
+              scheduled for <strong>${escHtml(fmtDate(woDate))}</strong> at <strong>${escHtml(woSite)}</strong>.
+            </p>
+            <p style="margin:0 0 20px;font-size:14px;color:#374151;">
+              You do not need to report to this site. Please contact your supervisor if you have questions.
+            </p>
+            <p style="margin-top:32px;font-size:12px;color:#9ca3af;">
+              This is an automated notification from CrestField.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </div>`.trim();
+
+  try {
+    await sendGridRequest({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: FROM_EMAIL, name: FROM_NAME },
+      ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
+      subject,
+      content: [
+        { type: 'text/plain', value: text },
+        { type: 'text/html',  value: html },
+      ],
+    });
+    console.log(`[email] Cancelled email sent to ${to} for WO ${woNumber}`);
+  } catch (err) {
+    console.error('[email] SendGrid error sending cancelled email:', err.message);
+    throw err;
+  }
+}
+
 module.exports = {
   isConfigured,
   sendPasswordResetEmail,
   sendTaskAssignmentBatchEmail,
   sendWorkorderDispatchEmail,
   sendWorkorderReopenEmail,
+  sendWorkorderRemovedFromEmail,
+  sendWorkorderUpdatedEmail,
+  sendWorkorderCancelledEmail,
 };

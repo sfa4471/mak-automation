@@ -1596,7 +1596,7 @@ router.delete('/:id', authenticate, requireTenant, requireAdmin, async (req, res
     if (db.isSupabase()) {
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, tenant_id, status')
+        .select('id, tenant_id, status, workorder_id, assigned_technician_id')
         .eq('id', taskId)
         .single();
       if (error || !data) {
@@ -1629,6 +1629,53 @@ router.delete('/:id', authenticate, requireTenant, requireAdmin, async (req, res
       }
     } else {
       await deleteTaskSqliteCascade(taskId);
+    }
+
+    // Notify assigned tech of updated workorder when a task is deleted (non-fatal)
+    if (db.isSupabase() && existing.workorder_id) {
+      try {
+        const TASK_LABEL_MAP = {
+          DENSITY_MEASUREMENT: 'Density Measurement',
+          PROCTOR: 'Proctor',
+          REBAR: 'Rebar',
+          COMPRESSIVE_STRENGTH: 'Compressive Strength',
+          CYLINDER_PICKUP: 'Cylinder Pickup',
+        };
+        const { data: wo } = await supabase
+          .from('workorders')
+          .select('assigned_technician_id, workorder_number, scheduled_date, scheduled_time, site_location, project_id')
+          .eq('id', existing.workorder_id)
+          .single();
+        if (wo && wo.assigned_technician_id) {
+          const [{ data: tech }, { data: remainingTasks }, { data: project }] = await Promise.all([
+            supabase.from('users').select('email, name').eq('id', wo.assigned_technician_id).single(),
+            supabase.from('tasks').select('task_type, location_name, engagement_notes').eq('workorder_id', existing.workorder_id).eq('tenant_id', tenantId),
+            supabase.from('projects').select('project_number, project_name').eq('id', wo.project_id).single(),
+          ]);
+          if (tech?.email) {
+            const { sendWorkorderUpdatedEmail } = require('../services/email');
+            const taskList = (remainingTasks || []).map(t => ({
+              task_type:        t.task_type,
+              task_label:       TASK_LABEL_MAP[t.task_type] || t.task_type,
+              location_name:    t.location_name,
+              engagement_notes: t.engagement_notes,
+            }));
+            const adminName = req.user.name || req.user.email || 'Admin';
+            await sendWorkorderUpdatedEmail(
+              tech.email,
+              {
+                ...wo,
+                project_number: project?.project_number || '',
+                project_name:   project?.project_name   || '',
+              },
+              taskList,
+              adminName,
+            );
+          }
+        }
+      } catch (emailErr) {
+        console.error('[tasks DELETE] Updated email failed (non-fatal):', emailErr.message);
+      }
     }
 
     res.json({ success: true });

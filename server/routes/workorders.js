@@ -226,7 +226,7 @@ router.put('/:id', adminAuth, [
 
   const { data: existing, error: fetchErr } = await supabase
     .from('workorders')
-    .select('id, tenant_id, billing_status')
+    .select('id, tenant_id, billing_status, assigned_technician_id, workorder_number, scheduled_date, scheduled_time, site_location, project_id, description')
     .eq('id', req.params.id)
     .single();
 
@@ -255,6 +255,108 @@ router.put('/:id', adminAuth, [
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // ── Post-update email notifications ────────────────────────────────────
+    try {
+      const TASK_LABEL_MAP = {
+        DENSITY_MEASUREMENT: 'Density Measurement',
+        PROCTOR: 'Proctor',
+        REBAR: 'Rebar',
+        COMPRESSIVE_STRENGTH: 'Compressive Strength',
+        CYLINDER_PICKUP: 'Cylinder Pickup',
+      };
+
+      const newTechId = req.body.assignedTechnicianId !== undefined
+        ? (req.body.assignedTechnicianId || null)
+        : undefined;
+      const techChanged = req.body.assignedTechnicianId !== undefined &&
+        (newTechId || null) !== (existing.assigned_technician_id || null);
+
+      const detailsChanged = !techChanged && (
+        (req.body.scheduledDate  !== undefined && req.body.scheduledDate  !== existing.scheduled_date) ||
+        (req.body.scheduledTime  !== undefined && req.body.scheduledTime  !== existing.scheduled_time) ||
+        (req.body.siteLocation   !== undefined && req.body.siteLocation   !== existing.site_location)  ||
+        (req.body.description    !== undefined && req.body.description    !== existing.description)
+      );
+
+      const adminName = req.user.name || req.user.email || 'Admin';
+
+      if (techChanged) {
+        const { sendWorkorderRemovedFromEmail, sendWorkorderDispatchEmail } = require('../services/email');
+
+        // Notify old tech they've been removed
+        if (existing.assigned_technician_id) {
+          const { data: oldTech } = await supabase.from('users').select('email, name').eq('id', existing.assigned_technician_id).single();
+          if (oldTech?.email) {
+            await sendWorkorderRemovedFromEmail(
+              oldTech.email,
+              existing,
+              oldTech.name || 'Technician',
+              adminName,
+            );
+          }
+        }
+
+        // Notify new tech they've been dispatched
+        if (newTechId) {
+          const [{ data: newTech }, { data: taskRows }, { data: project }] = await Promise.all([
+            supabase.from('users').select('email, name').eq('id', newTechId).single(),
+            supabase.from('tasks').select('task_type, location_name, engagement_notes').eq('workorder_id', existing.id).eq('tenant_id', req.tenantId),
+            supabase.from('projects').select('project_number, project_name').eq('id', existing.project_id).single(),
+          ]);
+          if (newTech?.email) {
+            const taskList = (taskRows || []).map(t => ({
+              task_type:        t.task_type,
+              task_label:       TASK_LABEL_MAP[t.task_type] || t.task_type,
+              location_name:    t.location_name,
+              engagement_notes: t.engagement_notes,
+            }));
+            const mergedWo = {
+              ...existing,
+              workorder_number: data.workorder_number,
+              scheduled_date:   data.scheduled_date,
+              scheduled_time:   data.scheduled_time,
+              site_location:    data.site_location,
+              project_number:   project?.project_number || '',
+              project_name:     project?.project_name || '',
+            };
+            await sendWorkorderDispatchEmail(newTech.email, mergedWo, taskList, adminName);
+          }
+        }
+      } else if (detailsChanged) {
+        // Notify current assigned tech of updated details
+        const currentTechId = existing.assigned_technician_id;
+        if (currentTechId) {
+          const { sendWorkorderUpdatedEmail } = require('../services/email');
+          const [{ data: tech }, { data: taskRows }, { data: project }] = await Promise.all([
+            supabase.from('users').select('email, name').eq('id', currentTechId).single(),
+            supabase.from('tasks').select('task_type, location_name, engagement_notes').eq('workorder_id', existing.id).eq('tenant_id', req.tenantId),
+            supabase.from('projects').select('project_number, project_name').eq('id', existing.project_id).single(),
+          ]);
+          if (tech?.email) {
+            const taskList = (taskRows || []).map(t => ({
+              task_type:        t.task_type,
+              task_label:       TASK_LABEL_MAP[t.task_type] || t.task_type,
+              location_name:    t.location_name,
+              engagement_notes: t.engagement_notes,
+            }));
+            const mergedWo = {
+              ...existing,
+              workorder_number: data.workorder_number,
+              scheduled_date:   data.scheduled_date,
+              scheduled_time:   data.scheduled_time,
+              site_location:    data.site_location,
+              project_number:   project?.project_number || '',
+              project_name:     project?.project_name || '',
+            };
+            await sendWorkorderUpdatedEmail(tech.email, mergedWo, taskList, adminName);
+          }
+        }
+      }
+    } catch (emailErr) {
+      console.error('[workorders PUT] Email failed (non-fatal):', emailErr.message);
+    }
+
     res.json(cc(data));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -441,12 +543,12 @@ router.post('/:id/reopen', adminAuth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /api/workorders/:id — only if no tasks and billing_status=unbilled
+// DELETE /api/workorders/:id — deletes tasks cascade then workorder (unbilled only)
 // ---------------------------------------------------------------------------
 router.delete('/:id', adminAuth, async (req, res) => {
   const { data: wo } = await supabase
     .from('workorders')
-    .select('id, tenant_id, billing_status')
+    .select('id, tenant_id, billing_status, assigned_technician_id, workorder_number, scheduled_date, scheduled_time, site_location, project_id')
     .eq('id', req.params.id)
     .single();
 
@@ -456,17 +558,38 @@ router.delete('/:id', adminAuth, async (req, res) => {
     return res.status(409).json({ error: 'Cannot delete a claimed or billed workorder. Void the invoice first.' });
   }
 
-  const { count } = await supabase
-    .from('tasks')
-    .select('id', { count: 'exact', head: true })
-    .eq('workorder_id', wo.id);
-
-  if (count > 0) {
-    return res.status(409).json({ error: `Cannot delete — workorder has ${count} task(s) assigned. Re-assign tasks first.` });
-  }
+  // Delete associated tasks first
+  await supabase.from('tasks').delete().eq('workorder_id', wo.id).eq('tenant_id', req.tenantId);
 
   const { error } = await supabase.from('workorders').delete().eq('id', wo.id);
   if (error) return res.status(500).json({ error: error.message });
+
+  // Notify assigned tech of cancellation (non-fatal)
+  if (wo.assigned_technician_id) {
+    try {
+      const { sendWorkorderCancelledEmail } = require('../services/email');
+      const [{ data: tech }, { data: project }] = await Promise.all([
+        supabase.from('users').select('email, name').eq('id', wo.assigned_technician_id).single(),
+        supabase.from('projects').select('project_number, project_name').eq('id', wo.project_id).single(),
+      ]);
+      if (tech?.email) {
+        const adminName = req.user.name || req.user.email || 'Admin';
+        await sendWorkorderCancelledEmail(
+          tech.email,
+          {
+            ...wo,
+            project_number: project?.project_number || '',
+            project_name:   project?.project_name   || '',
+          },
+          tech.name || 'Technician',
+          adminName,
+        );
+      }
+    } catch (emailErr) {
+      console.error('[workorders DELETE] Cancel email failed (non-fatal):', emailErr.message);
+    }
+  }
+
   res.json({ ok: true });
 });
 

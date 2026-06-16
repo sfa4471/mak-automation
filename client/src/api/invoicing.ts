@@ -197,8 +197,9 @@ export async function updateWorkorder(id: number, payload: {
   workorderNumber?: string;
   description?: string;
   status?: WorkorderStatus;
-  assignedTechnicianId?: number;
+  assignedTechnicianId?: number | null;
   scheduledDate?: string;
+  scheduledTime?: string | null;
   siteLocation?: string;
   clockIn?: string | null;
   clockOut?: string | null;
