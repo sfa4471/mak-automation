@@ -1117,5 +1117,186 @@ router.delete('/:id/drawings/:filename', authenticate, requireTenant, requireAdm
   }
 });
 
+// GET /api/projects/:id/summary — Option A: JSONB aggregation, no schema change
+router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const tenantId = req.tenantId;
+
+    if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+
+    if (!db.isSupabase()) {
+      return res.status(501).json({ error: 'Project summary is not supported on the legacy database' });
+    }
+
+    const project = await db.get('projects', { id: projectId });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    if (await denyUnlessProjectReadable(req, res, project, projectId)) return;
+
+    // ── 1. Density Log ──────────────────────────────────────────────────────
+    const { data: densityTasks, error: dtErr } = await supabase
+      .from('tasks')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('tenant_id', tenantId)
+      .eq('task_type', 'DENSITY_MEASUREMENT')
+      .eq('status', 'APPROVED');
+    if (dtErr) throw dtErr;
+
+    const densityLog = [];
+    for (const task of densityTasks || []) {
+      const { data: report } = await supabase
+        .from('density_reports')
+        .select('date_performed, structure, dens_spec_percent, moist_spec_min, moist_spec_max, test_rows')
+        .eq('task_id', task.id)
+        .single();
+      if (!report) continue;
+
+      const testRows = Array.isArray(report.test_rows) ? report.test_rows : [];
+      const specPct = report.dens_spec_percent != null && report.dens_spec_percent !== ''
+        ? parseFloat(report.dens_spec_percent) : null;
+      const moistMin = report.moist_spec_min != null && report.moist_spec_min !== ''
+        ? parseFloat(report.moist_spec_min) : null;
+      const moistMax = report.moist_spec_max != null && report.moist_spec_max !== ''
+        ? parseFloat(report.moist_spec_max) : null;
+
+      for (const row of testRows) {
+        // JSONB stored in snake_case (keysToSnakeCase applied on save); fall back to camelCase for older records
+        const dryDensity = row.dry_density ?? row.dryDensity;
+        if (dryDensity == null || dryDensity === '' || String(dryDensity).trim() === '') continue;
+
+        const pctRaw = row.percent_proctor_density ?? row.percentProctorDensity;
+        const pct = pctRaw != null && pctRaw !== '' ? parseFloat(pctRaw) : null;
+        const moistureRaw = row.field_moisture ?? row.fieldMoisture;
+        const moisture = moistureRaw != null && moistureRaw !== '' ? parseFloat(moistureRaw) : null;
+
+        let pass = null;
+        if (specPct != null && pct != null) {
+          pass = pct >= specPct;
+          if (moistMin != null && moisture != null) {
+            pass = pass && moisture >= moistMin;
+          }
+          if (moistMax != null && moisture != null) {
+            pass = pass && moisture <= moistMax;
+          }
+        }
+
+        densityLog.push({
+          reportDate: report.date_performed,
+          taskId: task.id,
+          structure: report.structure,
+          testLocation: row.test_location ?? row.testLocation ?? null,
+          depthLiftValue: row.depth_lift_value ?? row.depthLiftValue ?? null,
+          dryDensity: parseFloat(dryDensity),
+          fieldMoisture: moisture,
+          proctorNo: row.proctor_no ?? row.proctorNo ?? null,
+          pctCompaction: pct,
+          specDensityPct: specPct,
+          moistSpecMin: moistMin,
+          moistSpecMax: moistMax,
+          pass
+        });
+      }
+    }
+
+    densityLog.sort((a, b) => {
+      if ((a.reportDate || '') < (b.reportDate || '')) return -1;
+      if ((a.reportDate || '') > (b.reportDate || '')) return 1;
+      return a.taskId - b.taskId;
+    });
+
+    // ── 2. Proctor Index ────────────────────────────────────────────────────
+    const { data: proctorTasks, error: ptErr } = await supabase
+      .from('tasks')
+      .select('id, proctor_no')
+      .eq('project_id', projectId)
+      .eq('tenant_id', tenantId)
+      .eq('task_type', 'PROCTOR')
+      .eq('status', 'APPROVED')
+      .order('proctor_no', { ascending: true });
+    if (ptErr) throw ptErr;
+
+    const proctorIndex = [];
+    for (const task of proctorTasks || []) {
+      const { data: pd } = await supabase
+        .from('proctor_data')
+        .select('soil_classification, max_dry_density_pcf, opt_moisture_pct')
+        .eq('task_id', task.id)
+        .single();
+      if (!pd) continue;
+
+      proctorIndex.push({
+        proctorNo: task.proctor_no,
+        soilClassification: pd.soil_classification || null,
+        maxDryDensityPcf: pd.max_dry_density_pcf != null ? parseFloat(pd.max_dry_density_pcf) : null,
+        optMoisturePct: pd.opt_moisture_pct != null ? parseFloat(pd.opt_moisture_pct) : null
+      });
+    }
+
+    // ── 3. Cylinder Schedule ────────────────────────────────────────────────
+    const { data: wp1Tasks, error: wtErr } = await supabase
+      .from('tasks')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('tenant_id', tenantId)
+      .eq('task_type', 'COMPRESSIVE_STRENGTH')
+      .eq('status', 'APPROVED');
+    if (wtErr) throw wtErr;
+
+    const cylinderSchedule = [];
+    for (const task of wp1Tasks || []) {
+      const { data: wp1 } = await supabase
+        .from('wp1_data')
+        .select('placement_date, structure, sample_location, spec_strength, spec_strength_days, cylinders')
+        .eq('task_id', task.id)
+        .single();
+      if (!wp1) continue;
+
+      let cylinders = wp1.cylinders || [];
+      if (typeof cylinders === 'string') {
+        try { cylinders = JSON.parse(cylinders); } catch { cylinders = []; }
+      }
+
+      const specStrength = wp1.spec_strength != null ? parseFloat(wp1.spec_strength) : null;
+      const specDays = wp1.spec_strength_days != null ? parseInt(wp1.spec_strength_days) : 28;
+
+      for (const cyl of cylinders) {
+        const ageRaw = cyl.age ?? cyl.ageDays;
+        const ageDays = ageRaw != null && ageRaw !== '' ? parseInt(ageRaw) : null;
+        const bsRaw = cyl.compressive_strength ?? cyl.compressiveStrength;
+        const breakStrength = bsRaw != null && bsRaw !== '' ? parseFloat(bsRaw) : null;
+        const isComplianceBreak = ageDays != null && ageDays === specDays;
+        const belowSpec = isComplianceBreak && specStrength != null && breakStrength != null
+          ? breakStrength < specStrength : null;
+
+        cylinderSchedule.push({
+          taskId: task.id,
+          pourDate: wp1.placement_date,
+          structure: wp1.structure,
+          sampleLocation: wp1.sample_location,
+          specStrength,
+          specStrengthDays: specDays,
+          cylinderLabel: cyl.cylinder_number ?? cyl.cylinderNumber ?? null,
+          ageDays,
+          breakStrength,
+          isComplianceBreak,
+          belowSpec
+        });
+      }
+    }
+
+    cylinderSchedule.sort((a, b) => {
+      if ((a.pourDate || '') < (b.pourDate || '')) return -1;
+      if ((a.pourDate || '') > (b.pourDate || '')) return 1;
+      return a.taskId - b.taskId;
+    });
+
+    res.json({ densityLog, proctorIndex, cylinderSchedule });
+  } catch (err) {
+    console.error('Error building project summary:', err);
+    res.status(500).json({ error: err.message || 'Failed to build project summary' });
+  }
+});
+
 module.exports = router;
 

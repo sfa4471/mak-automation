@@ -1,0 +1,170 @@
+.ps-container {
+  min-height: 100vh;
+  background: #f5f5f5;
+}
+
+.ps-header {
+  background: white;
+  padding: 20px 30px;
+  border-bottom: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ps-header h1 {
+  margin: 0;
+  font-size: 22px;
+  color: #333;
+}
+
+.ps-header-sub {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: #666;
+}
+
+.ps-content {
+  max-width: 1200px;
+  margin: 28px auto;
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.ps-section {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+
+.ps-section-header {
+  padding: 16px 20px;
+  border-bottom: 2px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.ps-section-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #333;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ps-section-header span {
+  font-size: 13px;
+  color: #888;
+  font-weight: normal;
+  margin-left: 8px;
+}
+
+.ps-table-wrap {
+  overflow-x: auto;
+}
+
+.ps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ps-table th {
+  background: #f8f9fa;
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #555;
+  border-bottom: 1px solid #e0e0e0;
+  white-space: nowrap;
+}
+
+.ps-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
+  vertical-align: middle;
+}
+
+.ps-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.ps-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+.ps-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.ps-chip-pass {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.ps-chip-fail {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.ps-chip-info {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.ps-chip-pending {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.ps-chip-below {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.ps-chip-meets {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.ps-empty {
+  padding: 28px 20px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.ps-back-btn {
+  padding: 8px 16px;
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.ps-back-btn:hover {
+  background: #5a6268;
+}
+
+.ps-moisture-spec {
+  font-size: 11px;
+  color: #888;
+  margin-left: 4px;
+}

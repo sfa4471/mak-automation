@@ -37,7 +37,7 @@ const ProjectDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user: _user, isAdmin } = useAuth();
+  const { user: _user, isAdmin, isStaffReviewer } = useAuth();
   const { showAlert } = useAppDialog();
   const [openingDrawing, setOpeningDrawing] = useState<string | null>(null);
   const [deletingDrawing, setDeletingDrawing] = useState<string | null>(null);
@@ -982,6 +982,14 @@ const ProjectDetails: React.FC = () => {
               style={{ marginLeft: 8, padding: '8px 16px', background: '#059669', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}
             >
               Financials
+            </button>
+          )}
+          {isStaffReviewer() && project?.id && (
+            <button
+              onClick={() => navigate(`/admin/projects/${project.id}/summary`)}
+              style={{ marginLeft: 8, padding: '8px 16px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}
+            >
+              View Summary
             </button>
           )}
         </div>
