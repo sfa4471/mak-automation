@@ -13,6 +13,54 @@ import UnapproveTaskModal from './UnapproveTaskModal';
 import { useUnapproveReport } from '../hooks/useUnapproveReport';
 import './WP1Form.css';
 
+interface CylinderCheckResult {
+  isComplianceBreak: boolean;
+  belowSpec: boolean;
+  significantlyBelow: boolean;
+  earlyWarning: boolean;
+}
+
+/** Evaluate a cylinder break against the specified strength.
+ *  Compliance break = age matches specStrengthDays (default 28).
+ *  Severity thresholds follow ACI 318 — action required if break falls more than
+ *  500 psi below f'c (for mixes ≤5,000 psi) or more than 10% below f'c (>5,000 psi).
+ *  7-day and other non-compliance breaks flag an early warning only if < 70% of f'c,
+ *  which is a standard CMT rule-of-thumb for predicting a low 28-day result. */
+function checkCylinder(
+  cylinder: Cylinder,
+  specStrength: string | undefined,
+  specStrengthDays: number | undefined
+): CylinderCheckResult | null {
+  if (cylinder.compressiveStrength == null) return null;
+  if (!specStrength) return null;
+
+  const specNum = parseFloat(String(specStrength).replace(/,/g, ''));
+  if (isNaN(specNum) || specNum <= 0) return null;
+
+  const age = parseInt(String(cylinder.age ?? ''));
+  if (isNaN(age)) return null;
+
+  const complianceDays = specStrengthDays ?? 28;
+  const strength = cylinder.compressiveStrength;
+
+  if (age === complianceDays) {
+    const belowSpec = strength < specNum;
+    // ACI 318 Section 26.12.3: investigate if single test falls more than 500 psi below f'c
+    // (for f'c ≤ 5,000 psi) or more than 10% below f'c (for f'c > 5,000 psi)
+    const actionThreshold = specNum > 5000 ? specNum * 0.90 : specNum - 500;
+    const significantlyBelow = strength < actionThreshold;
+    return { isComplianceBreak: true, belowSpec, significantlyBelow, earlyWarning: false };
+  }
+
+  // Non-compliance age: soft early warning if below 70% of f'c (CMT rule of thumb — informational only)
+  return {
+    isComplianceBreak: false,
+    belowSpec: false,
+    significantlyBelow: false,
+    earlyWarning: strength < specNum * 0.70,
+  };
+}
+
 const WP1Form: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1497,6 +1545,35 @@ const WP1Form: React.FC = () => {
         <section className="form-section">
           <h2 className="section-title">Specimen Information</h2>
 
+          {(() => {
+            const specNum = parseFloat(String(formData.specStrength || '').replace(/,/g, ''));
+            const complianceDays = formData.specStrengthDays ?? 28;
+            if (isNaN(specNum) || specNum <= 0 || !formData.cylinders?.length) return null;
+            const failBreaks = formData.cylinders.filter(c => {
+              const check = checkCylinder(c, formData.specStrength, formData.specStrengthDays);
+              return check?.isComplianceBreak && check.belowSpec;
+            });
+            if (failBreaks.length === 0) return null;
+            const criticalBreaks = failBreaks.filter(c => {
+              const check = checkCylinder(c, formData.specStrength, formData.specStrengthDays);
+              return check?.significantlyBelow;
+            });
+            const isCritical = criticalBreaks.length > 0;
+            return (
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: isCritical ? '#fff1f2' : '#fffbeb', border: `1px solid ${isCritical ? '#fca5a5' : '#fde68a'}`, borderRadius: 6, fontSize: 13 }}>
+                {isCritical ? (
+                  <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                    ⚠ {criticalBreaks.length} {complianceDays}-day break{criticalBreaks.length > 1 ? 's' : ''} significantly below {specNum.toLocaleString()} psi — P.E. review required per ACI 318 §26.12.3
+                  </span>
+                ) : (
+                  <span style={{ color: '#b45309', fontWeight: 600 }}>
+                    ⚠ {failBreaks.length} {complianceDays}-day break{failBreaks.length > 1 ? 's' : ''} below specified strength ({specNum.toLocaleString()} psi)
+                  </span>
+                )}
+              </div>
+            );
+          })()}
+
           {cylinderSets.length > 0 ? cylinderSets.map((set, setIndex) => {
             const setInfo = getSpecimenSetInfo(setIndex);
             return (
@@ -1560,8 +1637,16 @@ const WP1Form: React.FC = () => {
                 <tbody>
                   {set.map((cylinder, cylIndex) => {
                     const globalIndex = setIndex * 5 + cylIndex;
+                    const cylCheck = checkCylinder(cylinder, formData.specStrength, formData.specStrengthDays);
+                    const cylRowStyle: React.CSSProperties = cylCheck?.isComplianceBreak && cylCheck.significantlyBelow
+                      ? { backgroundColor: '#fff1f2' }
+                      : cylCheck?.isComplianceBreak && cylCheck.belowSpec
+                      ? { backgroundColor: '#fffbeb' }
+                      : cylCheck?.earlyWarning
+                      ? { backgroundColor: '#fefce8' }
+                      : {};
                     return (
-                      <tr key={cylinder.cylinderNumber}>
+                      <tr key={cylinder.cylinderNumber} style={cylRowStyle}>
                         <td>{cylinder.cylinderNumber}</td>
                         <td>
                           <input

@@ -61,6 +61,101 @@ function effectiveMoistSpecRanges(data: DensityReport): Array<{ min?: string; ma
   return [];
 }
 
+/** Resolve the applicable density and moisture spec for a given test row index.
+ *  Handles both single-structure mode (specs from form fields) and multi-structure
+ *  mode (specs looked up from projectSoilSpecs by the active section header). */
+function getRowSpec(
+  rowIndex: number,
+  formData: DensityReport
+): { densSpec: number | null; moistMin: number | null; moistMax: number | null } {
+  const rows = formData.testRows;
+  const row = rows[rowIndex];
+  if (!row || row.type === 'section') return { densSpec: null, moistMin: null, moistMax: null };
+
+  const proctorIdx = formData.proctors.findIndex(
+    (p) => p.proctorNo != null && String(p.proctorNo) === String(row.proctorNo)
+  );
+
+  let densArr: string[] = [];
+  let moistArr: Array<{ min?: string; max?: string }> = [];
+
+  const isMultiStructure = rows.some((r) => r.type === 'section');
+  if (isMultiStructure) {
+    let activeSectionType: string | undefined;
+    for (let i = rowIndex - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (r.type === 'section' && r.sectionStructureType) {
+        activeSectionType = r.sectionStructureType;
+        break;
+      }
+    }
+    if (activeSectionType && formData.projectSoilSpecs && typeof formData.projectSoilSpecs === 'object') {
+      const specObj = (formData.projectSoilSpecs as Record<string, unknown>)[activeSectionType];
+      const normalized = normalizeSoilSpecRow(specObj as SoilSpecRow);
+      densArr = (normalized.densityPcts || []).map(String);
+      moistArr = normalized.moistureRanges || [];
+    }
+  } else {
+    densArr = effectiveDensitySpecPercents(formData);
+    moistArr = effectiveMoistSpecRanges(formData);
+  }
+
+  // Each spec column maps positionally to a proctor — column 0 = proctor 1, column 1 = proctor 2, etc.
+  // Fall back to column 0 if the proctor isn't found (covers single-spec reports).
+  const colIdx = proctorIdx >= 0 ? proctorIdx : 0;
+  const densSpecStr = (densArr[colIdx] ?? densArr[0] ?? '').trim();
+  const moistRange = moistArr[colIdx] ?? moistArr[0];
+
+  const densSpecNum = densSpecStr !== '' ? parseFloat(densSpecStr) : NaN;
+  const moistMinNum =
+    moistRange?.min != null && String(moistRange.min).trim() !== ''
+      ? parseFloat(String(moistRange.min))
+      : NaN;
+  const moistMaxNum =
+    moistRange?.max != null && String(moistRange.max).trim() !== ''
+      ? parseFloat(String(moistRange.max))
+      : NaN;
+
+  return {
+    densSpec: !isNaN(densSpecNum) ? densSpecNum : null,
+    moistMin: !isNaN(moistMinNum) ? moistMinNum : null,
+    moistMax: !isNaN(moistMaxNum) ? moistMaxNum : null,
+  };
+}
+
+interface RowCheckResult { densityFail: boolean; moistureFail: boolean }
+
+/** Determine whether a test row is out of spec.
+ *  Density: measured % must be >= spec % (≥ is the universal CMT standard — meeting spec exactly passes).
+ *  Moisture: measured % must fall within [moistMin, moistMax] inclusive on both ends.
+ *  Returns null for section rows, empty rows, or rows with no spec defined. */
+function checkDensityRow(
+  row: TestRow,
+  spec: { densSpec: number | null; moistMin: number | null; moistMax: number | null }
+): RowCheckResult | null {
+  if (row.type === 'section') return null;
+  if (!row.dryDensity || row.percentProctorDensity === '' || row.percentProctorDensity == null) return null;
+
+  const pct = parseFloat(row.percentProctorDensity);
+  if (isNaN(pct)) return null;
+
+  const densityFail = spec.densSpec !== null && pct < spec.densSpec;
+
+  let moistureFail = false;
+  const moisture = parseFloat(row.fieldMoisture);
+  if (!isNaN(moisture) && (spec.moistMin !== null || spec.moistMax !== null)) {
+    if (spec.moistMin !== null && spec.moistMax !== null) {
+      moistureFail = moisture < spec.moistMin || moisture > spec.moistMax;
+    } else if (spec.moistMin !== null) {
+      moistureFail = moisture < spec.moistMin;
+    } else if (spec.moistMax !== null) {
+      moistureFail = moisture > spec.moistMax;
+    }
+  }
+
+  return { densityFail, moistureFail };
+}
+
 const DensityReportForm: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1511,9 +1606,28 @@ const DensityReportForm: React.FC = () => {
             ? Object.keys(formData.projectSoilSpecs)
             : [];
           const dataRowCount = formData.testRows.filter(r => r.type !== 'section').length;
+          const rowChecks = formData.testRows.map((row, i) =>
+            row.type === 'section' ? null : checkDensityRow(row, getRowSpec(i, formData))
+          );
+          const densityFailCount = rowChecks.filter(c => c?.densityFail).length;
+          const moistureOnlyFailCount = rowChecks.filter(c => c && !c.densityFail && c.moistureFail).length;
           return (
             <div className="form-section">
               <h2>Test Results</h2>
+              {(densityFailCount > 0 || moistureOnlyFailCount > 0) && (
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10, padding: '8px 12px', background: '#fff1f2', border: '1px solid #fca5a5', borderRadius: 6, fontSize: 13 }}>
+                  {densityFailCount > 0 && (
+                    <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                      ⚠ {densityFailCount} test{densityFailCount > 1 ? 's' : ''} below specified density
+                    </span>
+                  )}
+                  {moistureOnlyFailCount > 0 && (
+                    <span style={{ color: '#b45309', fontWeight: 600 }}>
+                      ⚠ {moistureOnlyFailCount} test{moistureOnlyFailCount > 1 ? 's' : ''} outside moisture spec
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="test-table-container">
                 <table className="test-table">
                   <thead>
@@ -1606,8 +1720,14 @@ const DensityReportForm: React.FC = () => {
                           </tr>
                         );
                       }
+                      const rowCheck = rowChecks[index];
+                      const rowStyle: React.CSSProperties = rowCheck?.densityFail
+                        ? { backgroundColor: '#fff1f2' }
+                        : rowCheck?.moistureFail
+                        ? { backgroundColor: '#fffbeb' }
+                        : {};
                       return (
-                        <tr key={`row-${index}`}>
+                        <tr key={`row-${index}`} style={rowStyle}>
                           <td style={{ textAlign: 'center', width: '46px' }}>{row.testNo}</td>
                           <td>
                             <input type="text" value={row.testLocation}
