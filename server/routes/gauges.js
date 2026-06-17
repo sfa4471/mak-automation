@@ -529,7 +529,8 @@ router.get('/:id/log', auth, async (req, res) => {
   const month = parseInt(req.query.month) || new Date().getMonth() + 1;
   const year = parseInt(req.query.year) || new Date().getFullYear();
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-  const endDate = `${year}-${String(month).padStart(2, '0')}-31`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
   try {
     const { data, error } = await supabase
@@ -555,7 +556,8 @@ router.get('/log/all', auth, async (req, res) => {
   const month = parseInt(req.query.month) || new Date().getMonth() + 1;
   const year = parseInt(req.query.year) || new Date().getFullYear();
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-  const endDate = `${year}-${String(month).padStart(2, '0')}-31`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
   try {
     const { data, error } = await supabase
