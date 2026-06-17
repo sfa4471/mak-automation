@@ -1317,22 +1317,31 @@ const DensityReportForm: React.FC = () => {
         await showAlert('Your session has expired or you are not signed in. Please log in again.', 'Authentication required');
         return;
       }
-      // Ensure report is persisted so the PDF server can find it (server looks up by taskId in density_reports)
-      if (typeof formData.id === 'undefined' || formData.id === null) {
-        try {
-          const saved = await densityAPI.saveByTask(task.id, formData);
-          setFormData(saved);
-          setSaveStatus('saved');
-          setLastSaved(new Date());
-        } catch (saveErr: any) {
-          const saveMsg = saveErr.response?.data?.error || saveErr.message || 'Save failed';
-          setError(saveMsg);
-          await showAlert(
-            `The report must be saved before a PDF can be generated.\n\nPlease save the form, then use Download PDF again.\n\nDetails: ${saveMsg}`,
-            'Save required'
-          );
-          return;
+      // Always flush pending debounce and save current form state before generating PDF.
+      // The PDF server reads from the DB, so proctors/test rows added since the last save
+      // would be missing from the PDF if we skip saving here.
+      try {
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
         }
+        const dataToSave = latestFormDataRef.current || formData;
+        const savePayload = buildDensitySavePayload(dataToSave);
+        const saved = await densityAPI.saveByTask(task.id, savePayload);
+        if (saved) {
+          setFormData(saved);
+          latestFormDataRef.current = saved;
+        }
+        setSaveStatus('saved');
+        setLastSaved(new Date());
+      } catch (saveErr: any) {
+        const saveMsg = saveErr.response?.data?.error || saveErr.message || 'Save failed';
+        setError(saveMsg);
+        await showAlert(
+          `The report must be saved before a PDF can be generated.\n\nPlease save the form, then use Download PDF again.\n\nDetails: ${saveMsg}`,
+          'Save required'
+        );
+        return;
       }
 
       const pdfUrl = getApiPathPrefix() + `/pdf/density/${task.id}`;
