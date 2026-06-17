@@ -1133,13 +1133,26 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
     if (!project) return res.status(404).json({ error: 'Project not found' });
     if (await denyUnlessProjectReadable(req, res, project, projectId)) return;
 
-    // Resolve structure display: when type is "Other", use the free-text description
-    function resolveStructure(structure, structureType, structureDescription) {
-      const type = (structureType || structure || '').trim().toLowerCase();
-      if (type === 'other' && structureDescription && String(structureDescription).trim()) {
-        return String(structureDescription).trim();
+    // Parse project JSON fields so soilSpecs / concreteSpecs are objects not strings
+    parseProjectJSONFields(project);
+    const soilSpecs = (typeof project.soilSpecs === 'object' && project.soilSpecs) ? project.soilSpecs : {};
+    const concreteSpecs = (typeof project.concreteSpecs === 'object' && project.concreteSpecs) ? project.concreteSpecs : {};
+
+    // Resolve structure display: "Other" type uses the project-level otherDetails label
+    // e.g. soilSpecs["Other"].otherDetails = "Highway Fill" → shows "Highway Fill"
+    function resolveStructure(structure, specs) {
+      if (!structure) return null;
+      const structureKey = String(structure).trim();
+      if (structureKey.toLowerCase() === 'other') {
+        // Find the "Other" key in specs (case-insensitive)
+        for (const [key, spec] of Object.entries(specs || {})) {
+          if (key.trim().toLowerCase() === 'other') {
+            const detail = spec && spec.otherDetails ? String(spec.otherDetails).trim() : '';
+            if (detail) return detail;
+          }
+        }
       }
-      return structure || null;
+      return structureKey || null;
     }
 
     // ── 1. Density Log ──────────────────────────────────────────────────────
@@ -1157,12 +1170,12 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
       const workorderNumber = task.wo?.workorder_number || null;
       const { data: report } = await supabase
         .from('density_reports')
-        .select('date_performed, structure, structure_type, structure_description, dens_spec_percent, moist_spec_min, moist_spec_max, test_rows')
+        .select('date_performed, structure, dens_spec_percent, moist_spec_min, moist_spec_max, test_rows')
         .eq('task_id', task.id)
         .single();
       if (!report) continue;
 
-      const structureDisplay = resolveStructure(report.structure, report.structure_type, report.structure_description);
+      const structureDisplay = resolveStructure(report.structure, soilSpecs);
       const testRows = Array.isArray(report.test_rows) ? report.test_rows : [];
       const specPct = report.dens_spec_percent != null && report.dens_spec_percent !== ''
         ? parseFloat(report.dens_spec_percent) : null;
@@ -1260,13 +1273,12 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
       const workorderNumber = task.wo?.workorder_number || null;
       const { data: wp1 } = await supabase
         .from('wp1_data')
-        .select('placement_date, structure, structure_description, sample_location, spec_strength, spec_strength_days, cylinders')
+        .select('placement_date, structure, sample_location, spec_strength, spec_strength_days, cylinders')
         .eq('task_id', task.id)
         .single();
       if (!wp1) continue;
 
-      // wp1_data uses structure + structureDescription (no separate structureType column)
-      const structureDisplay = resolveStructure(wp1.structure, wp1.structure, wp1.structure_description);
+      const structureDisplay = resolveStructure(wp1.structure, concreteSpecs);
 
       let cylinders = wp1.cylinders || [];
       if (typeof cylinders === 'string') {
