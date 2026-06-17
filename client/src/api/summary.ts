@@ -3,6 +3,7 @@ import api from './api';
 export interface DensityLogRow {
   reportDate: string | null;
   taskId: number;
+  workorderNumber: string | null;
   structure: string | null;
   testLocation: string | null;
   depthLiftValue: string | null;
@@ -25,6 +26,7 @@ export interface ProctorIndexRow {
 
 export interface CylinderScheduleRow {
   taskId: number;
+  workorderNumber: string | null;
   pourDate: string | null;
   structure: string | null;
   sampleLocation: string | null;

@@ -1133,10 +1133,19 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
     if (!project) return res.status(404).json({ error: 'Project not found' });
     if (await denyUnlessProjectReadable(req, res, project, projectId)) return;
 
+    // Resolve structure display: when type is "Other", use the free-text description
+    function resolveStructure(structure, structureType, structureDescription) {
+      const type = (structureType || structure || '').trim().toLowerCase();
+      if (type === 'other' && structureDescription && String(structureDescription).trim()) {
+        return String(structureDescription).trim();
+      }
+      return structure || null;
+    }
+
     // ── 1. Density Log ──────────────────────────────────────────────────────
     const { data: densityTasks, error: dtErr } = await supabase
       .from('tasks')
-      .select('id')
+      .select('id, wo:workorder_id(workorder_number)')
       .eq('project_id', projectId)
       .eq('tenant_id', tenantId)
       .eq('task_type', 'DENSITY_MEASUREMENT')
@@ -1145,13 +1154,15 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
 
     const densityLog = [];
     for (const task of densityTasks || []) {
+      const workorderNumber = task.wo?.workorder_number || null;
       const { data: report } = await supabase
         .from('density_reports')
-        .select('date_performed, structure, dens_spec_percent, moist_spec_min, moist_spec_max, test_rows')
+        .select('date_performed, structure, structure_type, structure_description, dens_spec_percent, moist_spec_min, moist_spec_max, test_rows')
         .eq('task_id', task.id)
         .single();
       if (!report) continue;
 
+      const structureDisplay = resolveStructure(report.structure, report.structure_type, report.structure_description);
       const testRows = Array.isArray(report.test_rows) ? report.test_rows : [];
       const specPct = report.dens_spec_percent != null && report.dens_spec_percent !== ''
         ? parseFloat(report.dens_spec_percent) : null;
@@ -1184,7 +1195,8 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
         densityLog.push({
           reportDate: report.date_performed,
           taskId: task.id,
-          structure: report.structure,
+          workorderNumber,
+          structure: structureDisplay,
           testLocation: row.test_location ?? row.testLocation ?? null,
           depthLiftValue: row.depth_lift_value ?? row.depthLiftValue ?? null,
           dryDensity: parseFloat(dryDensity),
@@ -1236,7 +1248,7 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
     // ── 3. Cylinder Schedule ────────────────────────────────────────────────
     const { data: wp1Tasks, error: wtErr } = await supabase
       .from('tasks')
-      .select('id')
+      .select('id, wo:workorder_id(workorder_number)')
       .eq('project_id', projectId)
       .eq('tenant_id', tenantId)
       .eq('task_type', 'COMPRESSIVE_STRENGTH')
@@ -1245,12 +1257,16 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
 
     const cylinderSchedule = [];
     for (const task of wp1Tasks || []) {
+      const workorderNumber = task.wo?.workorder_number || null;
       const { data: wp1 } = await supabase
         .from('wp1_data')
-        .select('placement_date, structure, sample_location, spec_strength, spec_strength_days, cylinders')
+        .select('placement_date, structure, structure_description, sample_location, spec_strength, spec_strength_days, cylinders')
         .eq('task_id', task.id)
         .single();
       if (!wp1) continue;
+
+      // wp1_data uses structure + structureDescription (no separate structureType column)
+      const structureDisplay = resolveStructure(wp1.structure, wp1.structure, wp1.structure_description);
 
       let cylinders = wp1.cylinders || [];
       if (typeof cylinders === 'string') {
@@ -1271,8 +1287,9 @@ router.get('/:id/summary', authenticate, requireTenant, async (req, res) => {
 
         cylinderSchedule.push({
           taskId: task.id,
+          workorderNumber,
           pourDate: wp1.placement_date,
-          structure: wp1.structure,
+          structure: structureDisplay,
           sampleLocation: wp1.sample_location,
           specStrength,
           specStrengthDays: specDays,
