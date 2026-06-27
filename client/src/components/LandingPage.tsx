@@ -79,6 +79,20 @@ const LandingPage: React.FC = () => {
             </li>
             <li className="lp-feature">
               <svg className="lp-icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 2h9l3 3v11H3V2z"/>
+                <path d="M12 2v3h3"/>
+                <path d="M5.5 8h7M5.5 10.5h7M5.5 13h4.5"/>
+              </svg>
+              <div>
+                <strong>Reporting</strong>
+                <p>
+                  Turn field results into clean, client-ready reports
+                  automatically.
+                </p>
+              </div>
+            </li>
+            <li className="lp-feature">
+              <svg className="lp-icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M4 2h7l3 3v11H4V2z"/>
                 <path d="M11 2v3h3"/>
                 <path d="M6.5 9.5h5M6.5 12h3.5"/>
