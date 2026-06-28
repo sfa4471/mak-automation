@@ -30,7 +30,8 @@
     "render-setup": "node scripts/add-to-render-instructions.js",
     "qa:database": "node scripts/qa-database-verification.js",
     "create-admin": "node scripts/create-admin-user.js",
-    "dev:run-schema": "node scripts/run-dev-full-schema.js"
+    "dev:run-schema": "node scripts/run-dev-full-schema.js",
+    "migrate": "node scripts/run-migration.js"
   },
   "keywords": [],
   "author": "",

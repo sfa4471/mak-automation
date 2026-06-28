@@ -564,4 +564,87 @@ router.patch('/auto-send-body', authenticate, requireTenant, requireAdmin, [
   }
 });
 
+// ---------------------------------------------------------------------------
+// Automation settings (Phase 6+7) — persisted via Supabase app_settings
+// ---------------------------------------------------------------------------
+const { supabase: supabaseClient } = require('../db/supabase');
+
+async function getAutomationSetting(tenantId, key, defaultValue) {
+  const { data } = await supabaseClient
+    .from('app_settings')
+    .select('value')
+    .eq('tenant_id', tenantId)
+    .eq('key', key)
+    .maybeSingle();
+  return data?.value ?? defaultValue;
+}
+
+async function upsertAutomationSetting(tenantId, key, value) {
+  const { data: existing } = await supabaseClient
+    .from('app_settings')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('key', key)
+    .maybeSingle();
+
+  if (existing) {
+    await supabaseClient
+      .from('app_settings')
+      .update({ value: String(value), updated_at: new Date().toISOString() })
+      .eq('tenant_id', tenantId)
+      .eq('key', key);
+  } else {
+    await supabaseClient
+      .from('app_settings')
+      .insert({ tenant_id: tenantId, key, value: String(value) });
+  }
+}
+
+// GET /api/settings/automation
+router.get('/automation', authenticate, requireTenant, requireAdmin, async (req, res) => {
+  try {
+    const [intakeAutoAccept, intakeThreshold, dispatchAutoAssign, dispatchHoldMinutes, intakeForwardAddress] =
+      await Promise.all([
+        getAutomationSetting(req.tenantId, 'intake_auto_accept', 'false'),
+        getAutomationSetting(req.tenantId, 'intake_auto_accept_threshold', '92'),
+        getAutomationSetting(req.tenantId, 'dispatch_auto_assign', 'false'),
+        getAutomationSetting(req.tenantId, 'dispatch_hold_minutes', '30'),
+        getAutomationSetting(req.tenantId, 'intake_forward_address', ''),
+      ]);
+
+    res.json({
+      intakeAutoAccept: intakeAutoAccept === 'true',
+      intakeAutoAcceptThreshold: parseInt(intakeThreshold, 10) || 92,
+      dispatchAutoAssign: dispatchAutoAssign === 'true',
+      dispatchHoldMinutes: parseInt(dispatchHoldMinutes, 10) || 30,
+      intakeForwardAddress: intakeForwardAddress || '',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/settings/automation
+router.patch('/automation', authenticate, requireTenant, requireAdmin, async (req, res) => {
+  const { intakeAutoAccept, intakeAutoAcceptThreshold, dispatchAutoAssign, dispatchHoldMinutes, intakeForwardAddress } = req.body;
+  try {
+    const ops = [];
+    if (intakeAutoAccept !== undefined)
+      ops.push(upsertAutomationSetting(req.tenantId, 'intake_auto_accept', intakeAutoAccept ? 'true' : 'false'));
+    if (intakeAutoAcceptThreshold !== undefined)
+      ops.push(upsertAutomationSetting(req.tenantId, 'intake_auto_accept_threshold', String(Number(intakeAutoAcceptThreshold) || 92)));
+    if (dispatchAutoAssign !== undefined)
+      ops.push(upsertAutomationSetting(req.tenantId, 'dispatch_auto_assign', dispatchAutoAssign ? 'true' : 'false'));
+    if (dispatchHoldMinutes !== undefined)
+      ops.push(upsertAutomationSetting(req.tenantId, 'dispatch_hold_minutes', String(Number(dispatchHoldMinutes) || 30)));
+    if (intakeForwardAddress !== undefined)
+      ops.push(upsertAutomationSetting(req.tenantId, 'intake_forward_address', intakeForwardAddress.trim().toLowerCase()));
+
+    await Promise.all(ops);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

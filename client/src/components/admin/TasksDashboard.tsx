@@ -495,6 +495,16 @@ const TasksDashboard: React.FC = () => {
             })}
           </div>
         </td>
+        <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+          {task.qcResult ? (
+            <span
+              className={`qc-badge qc-badge-${task.qcResult.status.toLowerCase()}`}
+              title={task.qcResult.note || (task.qcResult.flags as any[]).map((f: any) => f.message).join('; ') || task.qcResult.status}
+            >
+              {task.qcResult.status}
+            </span>
+          ) : null}
+        </td>
         <td>{formatFieldDates(task)}</td>
         <td>
           <span className={`status-badge ${getStatusClass(task.status)}`}>
@@ -636,6 +646,7 @@ const TasksDashboard: React.FC = () => {
                       <th>Project</th>
                       <th>Technician</th>
                       <th>Task</th>
+                      <th>QC</th>
                       <th>Field Dates</th>
                       <th>Status</th>
                       <th>PM Review</th>
@@ -648,7 +659,7 @@ const TasksDashboard: React.FC = () => {
                       ? boardGroups.map(group => (
                           <React.Fragment key={group.label}>
                             <tr className={`board-section-header board-section-${group.label.toLowerCase()}`}>
-                              <td colSpan={9}>
+                              <td colSpan={10}>
                                 <span className="board-section-label">{group.label}</span>
                                 <span className="board-section-count">{group.tasks.length} {group.tasks.length === 1 ? 'task' : 'tasks'}</span>
                               </td>

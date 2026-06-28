@@ -1,9 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAppDialog } from '../../context/AppDialogContext';
 import { authAPI, User } from '../../api/auth';
 import { createWorkorder } from '../../api/invoicing';
 import api from '../../api/api';
+
+interface TechSuggestion {
+  technicianId: number;
+  name: string;
+  hasConflict: boolean;
+  workedProjectRecently: boolean;
+  recommended: boolean;
+}
 
 const TASK_TYPE_OPTIONS: { value: string; label: string; hint?: string }[] = [
   {
@@ -101,6 +109,7 @@ export default function CreateWorkorder() {
   const [siteLocation,         setSiteLocation]         = useState('');
   const [taskConfig,           setTaskConfig]           = useState<Record<string, TaskConfig>>({});
   const [saving,               setSaving]               = useState(false);
+  const [suggestions,          setSuggestions]          = useState<TechSuggestion[]>([]);
 
   const isCustomTime  = reportTimeSelect === 'other';
   const scheduledTime = isCustomTime ? reportTimeCustom : reportTimeSelect;
@@ -114,6 +123,18 @@ export default function CreateWorkorder() {
       })
       .catch(() => {});
   }, [projectId]);
+
+  // Fetch technician suggestions whenever the scheduled date changes
+  const suggestionAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!scheduledDate) { setSuggestions([]); return; }
+    suggestionAbort.current?.abort();
+    const ctrl = new AbortController();
+    suggestionAbort.current = ctrl;
+    api.get(`/workorders/suggest-assignment?date=${scheduledDate}&projectId=${projectId}`, { signal: ctrl.signal })
+      .then(({ data }) => setSuggestions(data))
+      .catch(() => {});
+  }, [scheduledDate, projectId]);
 
   const toggleTaskType = (value: string) => {
     setTaskConfig(prev => {
@@ -244,6 +265,31 @@ export default function CreateWorkorder() {
 
           <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>Assigned Technician</label>
+            {suggestions.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                {suggestions.map(s => (
+                  <button
+                    key={s.technicianId}
+                    type="button"
+                    onClick={() => setAssignedTechnicianId(s.technicianId)}
+                    style={{
+                      padding: '3px 10px',
+                      borderRadius: 12,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      border: assignedTechnicianId === s.technicianId ? '2px solid #2563eb' : '1px solid #d1d5db',
+                      background: s.hasConflict ? '#fef2f2' : s.recommended ? '#f0fdf4' : '#f9fafb',
+                      color: s.hasConflict ? '#b91c1c' : s.recommended ? '#166534' : '#374151',
+                      opacity: s.hasConflict ? 0.75 : 1,
+                    }}
+                    title={s.hasConflict ? 'Already scheduled on this date' : s.workedProjectRecently ? 'Worked this project recently' : ''}
+                  >
+                    {s.name}{s.hasConflict ? ' ⚠' : s.recommended ? ' ✓' : ''}
+                  </button>
+                ))}
+              </div>
+            )}
             <select
               value={assignedTechnicianId}
               onChange={e => setAssignedTechnicianId(e.target.value ? Number(e.target.value) : '')}

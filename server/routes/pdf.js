@@ -500,10 +500,12 @@ router.get('/wp1/:id', authenticate, async (req, res) => {
     // If only 1 specimen set, move REMARKS to Page 2 with top spacing
     const hasOnlyOneSet = cylinderSets.length === 1;
     const remarksSectionClass = hasOnlyOneSet ? 'remarks-section-page2' : 'remarks-section';
+    const wp1PeNotes = (taskOrWp && (taskOrWp.pe_notes || taskOrWp.peNotes)) || '';
     const remarksHtml = `
       <div class="${remarksSectionClass} section-box">
         <div class="section-title">REMARKS:</div>
         <div class="remarks-box">${escapeHtml(wp1Data.remarks || '')}</div>
+        ${wp1PeNotes ? `<div class="section-title" style="margin-top:8px;">PE NOTES:</div><div class="remarks-box">${escapeHtml(wp1PeNotes)}</div>` : ''}
       </div>
     `;
     html = html.replace('{{REMARKS_SECTION}}', remarksHtml);
@@ -1243,6 +1245,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
       if (!technicianName) technicianName = data.techName;
 
       // Build footer HTML (remarks, tech, time, disclaimer) — shown on last page only
+      const densityPeNotes = task.pe_notes || task.peNotes || '';
       const densityFooterHtml = `
         <div class="footer-section">
           <div class="remarks-box">
@@ -1253,6 +1256,7 @@ router.get('/density/:taskId', authenticate, async (req, res) => {
             <div><strong>Time:</strong> ${escapeHtml(data.timeStr || '')}</div>
           </div>
         </div>
+        ${densityPeNotes ? `<div class="footer-section" style="margin-top:8px;"><div class="remarks-box"><strong>PE Notes:</strong> ${escapeHtml(densityPeNotes)}</div></div>` : ''}
         <div class="disclaimer">
           The results shown on this report are for the exclusive use of the client for whom they were obtained and apply only to the samples tested and/or inspected. They are not intended to be indicative of the qualities of apparently identical products. The use of our name must receive prior written approval. Reports must be reproduced in their entirety.
         </div>
@@ -1672,7 +1676,9 @@ router.get('/rebar/:taskId', authenticate, async (req, res) => {
         html = html.replace('{{GENERAL_CONTRACTOR}}', escapeHtml(data.generalContractor || ''));
         const methodOfTest = data.methodOfTest || 'Applicable ACI Recommendations and ASTM Standards';
         html = html.replace('{{METHOD_OF_TEST}}', escapeHtml(methodOfTest));
-        html = html.replace('{{RESULT_REMARKS}}', escapeHtml(data.resultRemarks || ''));
+        const rebarResultRemarks = data.resultRemarks || '';
+        const rebarPeNotes = task.pe_notes || task.peNotes || '';
+        html = html.replace('{{RESULT_REMARKS}}', escapeHtml(rebarResultRemarks) + (rebarPeNotes ? `\n\nPE Notes: ${escapeHtml(rebarPeNotes)}` : ''));
         html = html.replace('{{DRAWINGS}}', escapeHtml(data.drawings || ''));
         html = html.replace('{{TECHNICIAN_NAME}}', escapeHtml(data.techName || task.assignedTechnicianName || ''));
 

@@ -1,7 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAppDialog } from '../../context/AppDialogContext';
-import { updateWorkorder, Workorder } from '../../api/invoicing';
+import { updateWorkorder, autoAssignWorkorder, Workorder, TechCandidate } from '../../api/invoicing';
 import api from '../../api/api';
+
+interface TechSuggestion {
+  technicianId: number;
+  name: string;
+  hasConflict: boolean;
+  workedProjectRecently: boolean;
+  recommended: boolean;
+}
 
 const REPORT_TIME_OPTIONS = [
   { value: '06:00', label: '6:00 AM' },
@@ -105,10 +113,31 @@ export default function EditWorkorderModal({ workorder, projectId, initialTasks,
   const [addNotes,    setAddNotes]    = useState('');
   const [addingTask,  setAddingTask]  = useState(false);
 
+  // Auto-assign (Phase 6)
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [autoAssignMsg, setAutoAssignMsg] = useState<string | null>(null);
+  const [autoAssignCandidates, setAutoAssignCandidates] = useState<TechCandidate[]>([]);
+
   // Save / delete
   const [saving,   setSaving]   = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // Technician suggestions
+  const [suggestions, setSuggestions] = useState<TechSuggestion[]>([]);
+  const suggestionAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!schedDate) { setSuggestions([]); return; }
+    suggestionAbort.current?.abort();
+    const ctrl = new AbortController();
+    suggestionAbort.current = ctrl;
+    api.get(
+      `/workorders/suggest-assignment?date=${schedDate}&projectId=${projectId}&excludeWorkorderId=${workorder.id}`,
+      { signal: ctrl.signal }
+    )
+      .then(({ data }) => setSuggestions(data))
+      .catch(() => {});
+  }, [schedDate, projectId, workorder.id]);
 
   const handleRemoveTask = async (taskId: number) => {
     try {
@@ -215,12 +244,108 @@ export default function EditWorkorderModal({ workorder, projectId, initialTasks,
 
         <div style={{ marginBottom: 12 }}>
           <label style={labelStyle}>Assigned Technician</label>
-          <select value={techId} onChange={e => setTechId(e.target.value ? Number(e.target.value) : '')} style={inputStyle}>
+          {suggestions.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {suggestions.map(s => (
+                <button
+                  key={s.technicianId}
+                  type="button"
+                  onClick={() => setTechId(s.technicianId)}
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: 12,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    border: techId === s.technicianId ? '2px solid #2563eb' : '1px solid #d1d5db',
+                    background: s.hasConflict ? '#fef2f2' : s.recommended ? '#f0fdf4' : '#f9fafb',
+                    color: s.hasConflict ? '#b91c1c' : s.recommended ? '#166534' : '#374151',
+                    opacity: s.hasConflict ? 0.75 : 1,
+                  }}
+                  title={s.hasConflict ? 'Already scheduled on this date' : s.workedProjectRecently ? 'Worked this project recently' : ''}
+                >
+                  {s.name}{s.hasConflict ? ' ⚠' : s.recommended ? ' ✓' : ''}
+                </button>
+              ))}
+            </div>
+          )}
+          <select value={techId} onChange={e => { setTechId(e.target.value ? Number(e.target.value) : ''); setAutoAssignMsg(null); setAutoAssignCandidates([]); }} style={inputStyle}>
             <option value="">— Unassigned —</option>
             {technicians.map(t => (
               <option key={t.id} value={t.id}>{t.name || t.email}</option>
             ))}
           </select>
+
+          {/* Auto-assign button — only when no tech selected and date is set */}
+          {!techId && schedDate && (
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                disabled={autoAssigning}
+                onClick={async () => {
+                  setAutoAssigning(true);
+                  setAutoAssignMsg(null);
+                  setAutoAssignCandidates([]);
+                  try {
+                    const result = await autoAssignWorkorder(workorder.id);
+                    if (result.autoAssigned && result.technicianId) {
+                      setTechId(result.technicianId);
+                      setAutoAssignMsg(`Auto-assigned to ${result.technicianName}. Email sends in ~${result.holdMinutes}m.`);
+                    } else {
+                      setAutoAssignCandidates(result.candidates || []);
+                      setAutoAssignMsg('Multiple candidates — select below.');
+                    }
+                  } catch {
+                    setAutoAssignMsg('Auto-assign failed. Try selecting manually.');
+                  } finally {
+                    setAutoAssigning(false);
+                  }
+                }}
+                style={{
+                  padding: '5px 12px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: 5,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  background: '#f9fafb',
+                  cursor: autoAssigning ? 'not-allowed' : 'pointer',
+                  color: '#374151',
+                }}
+              >
+                {autoAssigning ? 'Finding best tech…' : 'Auto-assign'}
+              </button>
+              {autoAssignMsg && (
+                <span style={{ fontSize: 12, color: autoAssignCandidates.length > 0 ? '#92400e' : '#166534' }}>
+                  {autoAssignMsg}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Ambiguous auto-assign candidates */}
+          {autoAssignCandidates.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {autoAssignCandidates.filter(c => !c.hasConflict).map(c => (
+                <button
+                  key={c.technicianId}
+                  type="button"
+                  onClick={() => { setTechId(c.technicianId); setAutoAssignCandidates([]); setAutoAssignMsg(null); }}
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: 12,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    border: '1px solid #d1d5db',
+                    background: c.recommended ? '#f0fdf4' : '#f9fafb',
+                    color: c.recommended ? '#166534' : '#374151',
+                  }}
+                >
+                  {c.name}{c.recommended ? ' ✓' : ''}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>

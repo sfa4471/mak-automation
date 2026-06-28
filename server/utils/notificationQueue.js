@@ -33,6 +33,8 @@ async function queueAssignmentNotification({
   workorderNumber,
   scheduledTime,
   siteLocation,
+  // Phase 6: auto-assign hold window (ISO timestamp; null = send immediately)
+  holdUntil,
 }) {
   if (!isAvailable() || !technicianEmail) return;
   try {
@@ -56,6 +58,7 @@ async function queueAssignmentNotification({
       workorder_number:    workorderNumber || null,
       scheduled_time:      scheduledTime   || null,
       site_location:       siteLocation    || null,
+      hold_until:          holdUntil       || null,
     });
     if (error) throw error;
   } catch (err) {

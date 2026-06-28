@@ -37,6 +37,7 @@ const NuclearGauges = lazy(() => import('./components/admin/NuclearGauges'));
 const GaugeCheckout = lazy(() => import('./components/GaugeCheckout'));
 const ProjectFinancials = lazy(() => import('./components/admin/ProjectFinancials'));
 const ProjectSummary = lazy(() => import('./components/admin/ProjectSummary'));
+const IntakeQueue = lazy(() => import('./components/admin/IntakeQueue'));
 
 function App() {
   return (
@@ -257,6 +258,16 @@ function App() {
               <ProtectedRoute requireAdmin>
                 <Suspense fallback={<LoadingSpinner fullScreen message="Loading gauge log…" />}>
                   <NuclearGauges />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/intake"
+            element={
+              <ProtectedRoute requireAdminOrPm>
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading intake queue…" />}>
+                  <IntakeQueue />
                 </Suspense>
               </ProtectedRoute>
             }

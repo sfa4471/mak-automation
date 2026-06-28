@@ -585,6 +585,36 @@
   color: #155724;
 }
 
+.qc-badge {
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-block;
+  cursor: default;
+  letter-spacing: 0.02em;
+}
+
+.qc-badge-pass {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.qc-badge-fail {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.qc-badge-attention {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.qc-badge-skipped {
+  background-color: #e9ecef;
+  color: #6c757d;
+}
+
 .board-section-header td {
   padding: 8px 16px;
   font-size: 12px;

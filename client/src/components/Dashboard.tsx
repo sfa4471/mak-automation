@@ -13,6 +13,7 @@ import { authAPI } from '../api/auth';
 import RejectTaskModal from './RejectTaskModal';
 import UnapproveTaskModal from './UnapproveTaskModal';
 import EditWorkorderModal from './admin/EditWorkorderModal';
+import HoldWindowStrip from './admin/HoldWindowStrip';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
@@ -561,6 +562,14 @@ const Dashboard: React.FC = () => {
                 Nuclear Gauge Log
               </button>
             )}
+            {isStaffReviewer() && (
+              <button
+                onClick={() => navigate('/admin/intake')}
+                className="secondary-button"
+              >
+                Intake Queue
+              </button>
+            )}
             {isAdmin() && (
               <button
                 onClick={() => navigate('/admin/settings')}
@@ -571,6 +580,8 @@ const Dashboard: React.FC = () => {
             )}
           </div>
         )}
+
+        {isStaffReviewer() && <HoldWindowStrip />}
 
         <div className="projects-list">
           <h2>{isStaffReviewer() ? 'All Projects' : 'My Assigned Projects'}</h2>

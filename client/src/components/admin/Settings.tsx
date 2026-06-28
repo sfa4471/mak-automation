@@ -3,6 +3,7 @@ import QboSettings from './QboSettings';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { settingsAPI, WorkflowStatusResponse } from '../../api/settings';
+import { intakeAPI, CalibrationStats } from '../../api/intake';
 import { tenantsAPI, TenantMe, TenantMeUpdate } from '../../api/tenants';
 import { getBackendPublicFileUrl } from '../../api/api';
 import {
@@ -40,9 +41,21 @@ const Settings: React.FC = () => {
   const [autoSendSaving, setAutoSendSaving] = useState(false);
   const [autoSendMsg, setAutoSendMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Automation settings (Phase 6+7)
+  const [automationLoaded, setAutomationLoaded] = useState(false);
+  const [intakeAutoAccept, setIntakeAutoAccept] = useState(false);
+  const [intakeThreshold, setIntakeThreshold] = useState(92);
+  const [dispatchAutoAssign, setDispatchAutoAssign] = useState(false);
+  const [dispatchHoldMinutes, setDispatchHoldMinutes] = useState(30);
+  const [intakeForwardAddress, setIntakeForwardAddress] = useState('');
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationMsg, setAutomationMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [calibration, setCalibration] = useState<CalibrationStats | null>(null);
+
   useEffect(() => {
     loadSettings();
     loadAutoSendSettings();
+    loadAutomationSettings();
   }, []);
 
   const loadAutoSendSettings = async () => {
@@ -55,6 +68,43 @@ const Settings: React.FC = () => {
       setAutoSendBody(bodyResp.bodyTemplate || '');
     } catch {
       setAutoSendEnabled(false);
+    }
+  };
+
+  const loadAutomationSettings = async () => {
+    try {
+      const [auto, cal] = await Promise.all([
+        settingsAPI.getAutomationSettings(),
+        intakeAPI.getCalibration().catch(() => null),
+      ]);
+      setIntakeAutoAccept(auto.intakeAutoAccept);
+      setIntakeThreshold(auto.intakeAutoAcceptThreshold);
+      setDispatchAutoAssign(auto.dispatchAutoAssign);
+      setDispatchHoldMinutes(auto.dispatchHoldMinutes);
+      setIntakeForwardAddress(auto.intakeForwardAddress || '');
+      setAutomationLoaded(true);
+      setCalibration(cal);
+    } catch {
+      setAutomationLoaded(true);
+    }
+  };
+
+  const saveAutomationSettings = async () => {
+    setAutomationSaving(true);
+    setAutomationMsg(null);
+    try {
+      await settingsAPI.setAutomationSettings({
+        intakeAutoAccept,
+        intakeAutoAcceptThreshold: intakeThreshold,
+        dispatchAutoAssign,
+        dispatchHoldMinutes,
+        intakeForwardAddress,
+      });
+      setAutomationMsg({ type: 'success', text: 'Automation settings saved.' });
+    } catch (e: any) {
+      setAutomationMsg({ type: 'error', text: e?.response?.data?.error || 'Failed to save.' });
+    } finally {
+      setAutomationSaving(false);
     }
   };
 
@@ -417,6 +467,184 @@ const Settings: React.FC = () => {
                 disabled={autoSendSaving}
               >
                 {autoSendSaving ? 'Saving…' : 'Save auto-send settings'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Automation (Phase 6+7) */}
+        <div className="settings-section">
+          <h2 className="settings-section-title">Automation</h2>
+          {!automationLoaded ? (
+            <p style={{ color: '#6b7280', fontSize: 14 }}>Loading…</p>
+          ) : (
+            <div className="settings-form">
+
+              {/* Intake email address — the address clients forward job requests to */}
+              <div className="form-group">
+                <label className="form-label">Intake email address</label>
+                <input
+                  type="email"
+                  value={intakeForwardAddress}
+                  onChange={e => setIntakeForwardAddress(e.target.value)}
+                  placeholder="e.g. intake@crestfield.app"
+                  style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 14 }}
+                />
+                <p className="form-help" style={{ marginTop: 4, fontSize: 12, color: '#6b7280' }}>
+                  Emails sent to this address are parsed into draft workorders. Set up MX forwarding to SendGrid Inbound Parse pointing here.
+                </p>
+              </div>
+
+              {/* Calibration stats — show before toggles so admin can decide */}
+              {calibration && calibration.accepted > 0 && (
+                <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6b7280', marginBottom: 10 }}>
+                    Intake calibration — last {calibration.accepted} accepted
+                  </div>
+
+                  {/* Circuit breaker warning */}
+                  {calibration.circuitBreakerActive && (
+                    <div style={{ background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: '#92400e' }}>
+                      <strong>Circuit breaker active</strong> — correction rate is above 20% this week. Auto-accept is suppressed until accuracy improves.
+                    </div>
+                  )}
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                    {[
+                      { label: 'Project match', value: calibration.projectMatchAccuracy != null ? `${calibration.projectMatchAccuracy}%` : '—', good: (calibration.projectMatchAccuracy ?? 0) >= 90 },
+                      { label: 'Date match', value: calibration.dateMatchAccuracy != null ? `${calibration.dateMatchAccuracy}%` : '—', good: (calibration.dateMatchAccuracy ?? 0) >= 90 },
+                      { label: 'Avg score', value: calibration.avgMatchScore != null ? `${calibration.avgMatchScore}%` : '—', good: (calibration.avgMatchScore ?? 0) >= 85 },
+                    ].map(stat => (
+                      <div key={stat.label} style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: stat.good ? '#16a34a' : '#dc2626' }}>{stat.value}</div>
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>{stat.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Phase 8: correction rate */}
+                  {calibration.correctionRate != null && (
+                    <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 16, fontSize: 12, color: '#6b7280' }}>
+                      <span>
+                        Correction rate (7d):&nbsp;
+                        <strong style={{ color: calibration.correctionRate > 20 ? '#dc2626' : calibration.correctionRate > 10 ? '#b45309' : '#16a34a' }}>
+                          {calibration.correctionRate}%
+                        </strong>
+                      </span>
+                      <span style={{ color: '#d1d5db' }}>|</span>
+                      <span>{calibration.autoAccepted} auto · {calibration.humanReviewed} human · {calibration.pendingReview} pending</span>
+                    </div>
+                  )}
+
+                  {/* Phase 9: outcome stats */}
+                  {calibration.outcomeStats && !calibration.outcomeStats.dormant && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
+                      Real-world outcome accuracy:&nbsp;
+                      <strong style={{ color: calibration.outcomeStats.matchRate >= 90 ? '#16a34a' : '#dc2626' }}>
+                        {calibration.outcomeStats.matchRate}%
+                      </strong>
+                      &nbsp;({calibration.outcomeStats.matched}/{calibration.outcomeStats.total} matched)
+                    </div>
+                  )}
+                  {calibration.outcomeStats?.dormant && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#9ca3af' }}>
+                      Phase 9 outcome feedback dormant — needs {calibration.outcomeStats.minSamples - calibration.outcomeStats.total} more completed workorders to activate.
+                    </div>
+                  )}
+
+                  {calibration.accepted < 10 && (
+                    <div style={{ fontSize: 12, color: '#b45309', marginTop: 8 }}>
+                      Calibrate on at least 10 accepted intakes before enabling auto-accept.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Intake auto-accept */}
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Auto-accept high-confidence intakes</span>
+                  <div className="autosend-toggle" style={{ display: 'inline-flex', gap: 0 }}>
+                    <label className={`toggle-option${intakeAutoAccept ? ' toggle-option-active' : ''}`} style={{ padding: '4px 12px', cursor: 'pointer' }}>
+                      <input type="radio" name="intakeAutoAccept" checked={intakeAutoAccept} onChange={() => setIntakeAutoAccept(true)} style={{ display: 'none' }} />
+                      On
+                    </label>
+                    <label className={`toggle-option${!intakeAutoAccept ? ' toggle-option-active' : ''}`} style={{ padding: '4px 12px', cursor: 'pointer' }}>
+                      <input type="radio" name="intakeAutoAccept" checked={!intakeAutoAccept} onChange={() => setIntakeAutoAccept(false)} style={{ display: 'none' }} />
+                      Off
+                    </label>
+                  </div>
+                </label>
+                <p className="form-help" style={{ marginTop: 4, fontSize: 12, color: '#6b7280' }}>
+                  When on, intakes with project match ≥ 85% and all field confidence scores above the threshold are committed automatically.
+                </p>
+              </div>
+
+              {intakeAutoAccept && (
+                <div className="form-group">
+                  <label className="form-label">Confidence threshold: {intakeThreshold}%</label>
+                  <input
+                    type="range"
+                    min={70}
+                    max={99}
+                    value={intakeThreshold}
+                    onChange={e => setIntakeThreshold(Number(e.target.value))}
+                    style={{ width: '100%' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#9ca3af' }}>
+                    <span>70% (more auto)</span><span>99% (only sure things)</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Dispatch auto-assign */}
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Auto-assign dispatch (Tier 2)</span>
+                  <div className="autosend-toggle" style={{ display: 'inline-flex', gap: 0 }}>
+                    <label className={`toggle-option${dispatchAutoAssign ? ' toggle-option-active' : ''}`} style={{ padding: '4px 12px', cursor: 'pointer' }}>
+                      <input type="radio" name="dispatchAutoAssign" checked={dispatchAutoAssign} onChange={() => setDispatchAutoAssign(true)} style={{ display: 'none' }} />
+                      On
+                    </label>
+                    <label className={`toggle-option${!dispatchAutoAssign ? ' toggle-option-active' : ''}`} style={{ padding: '4px 12px', cursor: 'pointer' }}>
+                      <input type="radio" name="dispatchAutoAssign" checked={!dispatchAutoAssign} onChange={() => setDispatchAutoAssign(false)} style={{ display: 'none' }} />
+                      Off
+                    </label>
+                  </div>
+                </label>
+                <p className="form-help" style={{ marginTop: 4, fontSize: 12, color: '#6b7280' }}>
+                  When on, clicking "Auto-assign" on a workorder will commit immediately if exactly one technician has no conflicts.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Hold window (minutes)</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={dispatchHoldMinutes}
+                  onChange={e => setDispatchHoldMinutes(Number(e.target.value) || 30)}
+                  style={{ width: 100, padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 14 }}
+                />
+                <p className="form-help" style={{ marginTop: 4, fontSize: 12, color: '#6b7280' }}>
+                  Time before the assignment email fires. Cancel appears in the dashboard strip during this window.
+                </p>
+              </div>
+
+              {automationMsg && (
+                <div className={`message ${automationMsg.type}`} style={{ marginBottom: '0.75rem' }}>
+                  {automationMsg.text}
+                </div>
+              )}
+              <button
+                type="button"
+                className="primary-button"
+                onClick={saveAutomationSettings}
+                disabled={automationSaving}
+                style={{ marginTop: 4 }}
+              >
+                {automationSaving ? 'Saving…' : 'Save Automation Settings'}
               </button>
             </div>
           )}

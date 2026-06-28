@@ -12,6 +12,9 @@ const { body, validationResult } = require('express-validator');
 const { createNotification } = require('./notifications');
 const { generateAndSaveReportPdfForTask } = require('../jobs/sendApprovedReports');
 const { queueAssignmentNotification } = require('../utils/notificationQueue');
+const { runQcCheck } = require('../services/qcService');
+const { draftNarrative } = require('../services/reportNarrativeService');
+const { recordPeApprovalOutcome } = require('../services/correctionService');
 
 const router = express.Router();
 
@@ -251,6 +254,8 @@ function normalizeSupabaseTaskRow(task) {
     clockOut: task.clock_out ?? task.clockOut ?? null,
     breakMinutes: task.break_minutes ?? task.breakMinutes ?? 0,
     miles: task.miles ?? null,
+    qcResult: task.qc_result ?? task.qcResult ?? null,
+    peNotes: task.pe_notes ?? task.peNotes ?? null,
     users: undefined,
     projects: undefined
   };
@@ -1841,6 +1846,30 @@ router.put('/:id/status', authenticate, requireTenant, [
 
     // Update task
     await db.update('tasks', updateData, { id: taskId });
+
+    // Phase 9: record PE approval outcome signal (fire-and-forget)
+    if (status === 'APPROVED' && db.isSupabase()) {
+      recordPeApprovalOutcome(taskId, req.tenantId)
+        .catch(err => console.error('[outcomeCollector] PE approval signal error:', err));
+    }
+
+    // Fire QC check + narrative draft asynchronously — neither blocks the status transition
+    if (status === 'READY_FOR_REVIEW' && db.isSupabase()) {
+      const qcTaskType = task.task_type || task.taskType;
+
+      runQcCheck(taskId, qcTaskType, req.tenantId)
+        .then(result => {
+          supabase.from('tasks').update({ qc_result: result }).eq('id', taskId).then(() => {});
+          logTaskHistory(taskId, req.tenantId, 'SYSTEM', 'QC Check', null, 'QC_CHECK_COMPLETED', JSON.stringify(result));
+        })
+        .catch(err => console.error('[qcService] Unexpected error:', err));
+
+      draftNarrative(taskId, qcTaskType, req.tenantId)
+        .then(draft => {
+          if (draft) supabase.from('tasks').update({ pe_notes: draft }).eq('id', taskId).then(() => {});
+        })
+        .catch(err => console.error('[reportNarrative] Unexpected error:', err));
+    }
 
     // Log history and create notification when technician sends update to admin
     if (status === 'READY_FOR_REVIEW' && req.user.role === 'TECHNICIAN') {
@@ -3697,6 +3726,34 @@ router.get('/:id/history', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Error fetching task history:', err);
     res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/tasks/:id/pe-notes — ADMIN/PM save edited PE narrative
+// ---------------------------------------------------------------------------
+router.put('/:id/pe-notes', authenticate, requireTenant, requireAdminOrPm, async (req, res) => {
+  const taskId = parseInt(req.params.id);
+  if (isNaN(taskId)) return res.status(400).json({ error: 'Invalid task ID' });
+
+  const { peNotes } = req.body;
+  if (typeof peNotes !== 'string') return res.status(400).json({ error: 'peNotes must be a string' });
+
+  try {
+    if (db.isSupabase()) {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ pe_notes: peNotes, updated_at: new Date().toISOString() })
+        .eq('id', taskId)
+        .eq('tenant_id', req.tenantId);
+      if (error) throw error;
+    } else {
+      await db.update('tasks', { peNotes }, { id: taskId });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error saving pe_notes:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

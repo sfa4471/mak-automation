@@ -114,6 +114,7 @@ app.use('/api/workorders', require('./routes/workorders'));
 app.use('/api/dispatches', require('./routes/dispatches'));
 app.use('/api/rate-sets', require('./routes/rateSets'));
 app.use('/api/invoices', require('./routes/invoices'));
+app.use('/api/intake', require('./routes/intake'));
 const qboRoutes = require('./routes/qbo');
 app.use('/api/qbo', qboRoutes);
 // Intuit redirects here after OAuth — path must match QBO_REDIRECT_URI exactly
@@ -215,6 +216,27 @@ app.listen(PORT, HOST, () => {
       startNotificationBatchSender();
     } catch (err) {
       console.error('Failed to start notification batch sender:', err);
+    }
+  }
+
+  // Invoice readiness alerts — polls every 30 min, emails admins when all field work is done.
+  if (process.env.ENABLE_INVOICE_READINESS_CHECKER !== 'false') {
+    try {
+      const { startInvoiceReadinessChecker } = require('./jobs/invoiceReadinessChecker');
+      startInvoiceReadinessChecker();
+    } catch (err) {
+      console.error('Failed to start invoice readiness checker:', err);
+    }
+  }
+
+  // Phase 9: Outcome collector — compares AI predictions vs real workorder outcomes.
+  // Dormant per tenant until 50 outcome signals accumulate. Disable with ENABLE_OUTCOME_COLLECTOR=false.
+  if (process.env.ENABLE_OUTCOME_COLLECTOR !== 'false') {
+    try {
+      const { startOutcomeCollector } = require('./jobs/outcomeCollector');
+      startOutcomeCollector();
+    } catch (err) {
+      console.error('Failed to start outcome collector:', err);
     }
   }
 });

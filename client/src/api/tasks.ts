@@ -71,6 +71,10 @@ export interface Task {
   clockOut?: string | null;
   breakMinutes?: number;
   miles?: number;
+  // QC screening result (set asynchronously when task reaches READY_FOR_REVIEW)
+  qcResult?: { status: 'PASS' | 'FAIL' | 'ATTENTION' | 'SKIPPED'; flags: unknown[]; note?: string } | null;
+  // AI-drafted PE narrative (set asynchronously when task reaches READY_FOR_REVIEW)
+  peNotes?: string | null;
 }
 
 export interface ProctorTask {
@@ -348,6 +352,10 @@ export const tasksAPI = {
   updateTime: async (id: number, data: UpdateTaskTimeRequest): Promise<Task> => {
     const response = await api.put<{ ok: boolean; task: Task }>(`/tasks/${id}/time`, data);
     return response.data.task;
+  },
+
+  savePeNotes: async (id: number, peNotes: string): Promise<void> => {
+    await api.put(`/tasks/${id}/pe-notes`, { peNotes });
   },
 };
 

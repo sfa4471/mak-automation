@@ -888,6 +888,55 @@ async function sendWorkorderCancelledEmail(to, workorder, techName, adminName) {
   }
 }
 
+/**
+ * Alert ADMIN users that a project is ready to invoice.
+ * @param {string[]} toEmails - Array of admin email addresses
+ * @param {{ projectName: string, projectNumber: string, wipDollars: string, warnings: string[], dashboardUrl: string }} opts
+ */
+async function sendBillingReadyAlert(toEmails, { projectName, projectNumber, wipDollars, warnings, dashboardUrl }) {
+  if (!isConfigured()) {
+    console.warn('[email] SendGrid not configured; skipping billing-ready alert');
+    return;
+  }
+  if (!toEmails || toEmails.length === 0) return;
+
+  const warningBlock = warnings && warnings.length > 0
+    ? `\n\nNotes:\n${warnings.map(w => `• ${w}`).join('\n')}`
+    : '';
+
+  const warningHtml = warnings && warnings.length > 0
+    ? `<p style="color:#856404;background:#fff3cd;padding:10px;border-radius:4px;"><strong>Notes:</strong><br>${warnings.map(w => `• ${w}`).join('<br>')}</p>`
+    : '';
+
+  const linkHtml = dashboardUrl
+    ? `<p><a href="${dashboardUrl}" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none;font-weight:600;">Open Financials Dashboard</a></p>`
+    : '';
+
+  await sendGridRequest({
+    personalizations: [{ to: toEmails.map(e => ({ email: e })) }],
+    from: { email: FROM_EMAIL, name: FROM_NAME },
+    ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
+    subject: `Invoice Ready: ${projectName} (${projectNumber}) — ${wipDollars}`,
+    content: [
+      {
+        type: 'text/plain',
+        value: `Project "${projectName}" (${projectNumber}) is ready to invoice.\n\nEstimated WIP: ${wipDollars}${warningBlock}\n\n${dashboardUrl || ''}`,
+      },
+      {
+        type: 'text/html',
+        value: `
+          <h2 style="color:#166534;">Invoice Ready</h2>
+          <p>Project <strong>${projectName}</strong> (${projectNumber}) has completed field work with unbilled workorders.</p>
+          <p style="font-size:20px;font-weight:700;color:#166534;">Estimated WIP: ${wipDollars}</p>
+          ${warningHtml}
+          ${linkHtml}
+          <p style="color:#6b7280;font-size:12px;margin-top:24px;">This alert was sent by CrestField Invoice Readiness Checker. No action is required if this project is already being invoiced.</p>
+        `.trim(),
+      },
+    ],
+  });
+}
+
 module.exports = {
   isConfigured,
   sendPasswordResetEmail,
@@ -897,4 +946,5 @@ module.exports = {
   sendWorkorderRemovedFromEmail,
   sendWorkorderUpdatedEmail,
   sendWorkorderCancelledEmail,
+  sendBillingReadyAlert,
 };

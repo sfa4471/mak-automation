@@ -134,6 +134,195 @@ router.get('/', auth, [
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/workorders/suggest-assignment?date=YYYY-MM-DD&projectId=N[&excludeWorkorderId=N]
+// Returns ranked technician suggestions for a given date.
+// Must be registered BEFORE /:id to avoid being shadowed.
+// ---------------------------------------------------------------------------
+router.get('/suggest-assignment', [authenticate, requireTenant, requireAdminOrPm], async (req, res) => {
+  const { date, projectId, excludeWorkorderId } = req.query;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'date (YYYY-MM-DD) is required' });
+  }
+
+  try {
+    // 1. Fetch all technicians for this tenant
+    const { data: techRows, error: techErr } = await supabase
+      .from('users')
+      .select('id, name, email')
+      .eq('tenant_id', req.tenantId)
+      .eq('role', 'TECHNICIAN')
+      .order('name');
+    if (techErr) throw techErr;
+    const techs = techRows || [];
+
+    // 2. Fetch workorders on the requested date (excluding the workorder being edited)
+    let wosQ = supabase
+      .from('workorders')
+      .select('id, assigned_technician_id, scheduled_date, project_id')
+      .eq('tenant_id', req.tenantId)
+      .eq('scheduled_date', date)
+      .not('assigned_technician_id', 'is', null);
+    if (excludeWorkorderId) {
+      wosQ = wosQ.neq('id', Number(excludeWorkorderId));
+    }
+    const { data: wosOnDate } = await wosQ;
+    const busyTechIds = new Set((wosOnDate || []).map(w => w.assigned_technician_id));
+
+    // 3. Check which techs have worked this project recently (same week) for ranking
+    const projectIdNum = projectId ? Number(projectId) : null;
+    let projectTechIds = new Set();
+    if (projectIdNum) {
+      const weekAgo = new Date(date);
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      const { data: recentWos } = await supabase
+        .from('workorders')
+        .select('assigned_technician_id')
+        .eq('tenant_id', req.tenantId)
+        .eq('project_id', projectIdNum)
+        .gte('scheduled_date', weekAgo.toISOString().slice(0, 10))
+        .lte('scheduled_date', date)
+        .not('assigned_technician_id', 'is', null);
+      projectTechIds = new Set((recentWos || []).map(w => w.assigned_technician_id));
+    }
+
+    // 4. Build result: rank by (no conflict, worked project recently, then name)
+    const suggestions = techs
+      .map(t => ({
+        technicianId: t.id,
+        name: t.name || t.email,
+        hasConflict: busyTechIds.has(t.id),
+        workedProjectRecently: projectTechIds.has(t.id),
+        recommended: false,
+      }))
+      .sort((a, b) => {
+        if (a.hasConflict !== b.hasConflict) return a.hasConflict ? 1 : -1;
+        if (a.workedProjectRecently !== b.workedProjectRecently) return a.workedProjectRecently ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    // Mark the top non-conflicting tech as recommended
+    const firstFree = suggestions.find(s => !s.hasConflict);
+    if (firstFree) firstFree.recommended = true;
+
+    res.json(suggestions);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/workorders/hold-window — workorders with a pending auto-assigned notification
+// Must be before /:id
+// ---------------------------------------------------------------------------
+router.get('/hold-window', [authenticate, requireTenant, requireAdminOrPm], async (req, res) => {
+  const now = new Date().toISOString();
+  try {
+    const { data: pnRows } = await supabase
+      .from('pending_notifications')
+      .select('workorder_id, hold_until, technician_id, technician_email')
+      .eq('tenant_id', req.tenantId)
+      .eq('sent', false)
+      .not('hold_until', 'is', null)
+      .gt('hold_until', now);
+
+    if (!pnRows || pnRows.length === 0) return res.json([]);
+
+    const woIdMap = new Map();
+    for (const row of pnRows) {
+      if (row.workorder_id && !woIdMap.has(row.workorder_id)) woIdMap.set(row.workorder_id, row);
+    }
+    const woIds = [...woIdMap.keys()];
+
+    const { data: wos } = await supabase
+      .from('workorders')
+      .select('id, workorder_number, scheduled_date, assigned_technician_id, project_id')
+      .in('id', woIds)
+      .eq('tenant_id', req.tenantId);
+
+    const projectIds = [...new Set((wos || []).map(w => w.project_id).filter(Boolean))];
+    const { data: projects } = projectIds.length
+      ? await supabase.from('projects').select('id, project_name').in('id', projectIds)
+      : { data: [] };
+    const projectMap = new Map((projects || []).map(p => [p.id, p.project_name]));
+
+    const techIds = [...new Set((wos || []).map(w => w.assigned_technician_id).filter(Boolean))];
+    const { data: techs } = techIds.length
+      ? await supabase.from('users').select('id, name').in('id', techIds)
+      : { data: [] };
+    const techMap = new Map((techs || []).map(t => [t.id, t.name]));
+
+    res.json((wos || []).map(wo => {
+      const pn = woIdMap.get(wo.id);
+      return {
+        workorderId: wo.id,
+        workorderNumber: wo.workorder_number,
+        scheduledDate: wo.scheduled_date,
+        projectName: projectMap.get(wo.project_id) || null,
+        technicianName: techMap.get(wo.assigned_technician_id) || pn?.technician_email || null,
+        technicianId: wo.assigned_technician_id,
+        holdUntil: pn?.hold_until,
+      };
+    }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/workorders/availability — list availability blocks for the tenant
+// POST /api/workorders/availability — create a block
+// Must be before /:id
+// ---------------------------------------------------------------------------
+router.get('/availability', [authenticate, requireTenant, requireAdminOrPm], async (req, res) => {
+  const { technicianId, startDate, endDate } = req.query;
+  let q = supabase
+    .from('technician_availability')
+    .select('*, users!technician_availability_technician_id_fkey(name, email)')
+    .eq('tenant_id', req.tenantId)
+    .order('date');
+
+  if (technicianId) q = q.eq('technician_id', Number(technicianId));
+  if (startDate)    q = q.gte('date', startDate);
+  if (endDate)      q = q.lte('date', endDate);
+
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json((data || []).map(row => ({
+    id: row.id,
+    technicianId: row.technician_id,
+    technicianName: row.users?.name || row.users?.email || null,
+    date: row.date,
+    reason: row.reason,
+    createdAt: row.created_at,
+  })));
+});
+
+router.post('/availability', [authenticate, requireTenant, requireAdminOrPm], async (req, res) => {
+  const { technicianId, date, reason } = req.body;
+  if (!technicianId || !date) return res.status(400).json({ error: 'technicianId and date are required' });
+  const { data, error } = await supabase
+    .from('technician_availability')
+    .insert({ tenant_id: req.tenantId, technician_id: Number(technicianId), date, reason: reason || null })
+    .select()
+    .single();
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Availability block already exists for this date' });
+    return res.status(500).json({ error: error.message });
+  }
+  res.status(201).json({ id: data.id, technicianId: data.technician_id, date: data.date, reason: data.reason });
+});
+
+router.delete('/availability/:blockId', [authenticate, requireTenant, requireAdminOrPm], async (req, res) => {
+  const { error } = await supabase
+    .from('technician_availability')
+    .delete()
+    .eq('id', req.params.blockId)
+    .eq('tenant_id', req.tenantId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/workorders/:id
 // ---------------------------------------------------------------------------
 router.get('/:id', auth, async (req, res) => {
@@ -589,6 +778,182 @@ router.delete('/:id', adminAuth, async (req, res) => {
       console.error('[workorders DELETE] Cancel email failed (non-fatal):', emailErr.message);
     }
   }
+
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/workorders/:id/auto-assign
+// Runs conflict + availability check; auto-assigns if exactly one clear winner.
+// If ambiguous (0 or 2+ equal candidates), returns suggestion list (Tier 1 fallback).
+// ---------------------------------------------------------------------------
+router.post('/:id/auto-assign', adminAuth, async (req, res) => {
+  const woId = Number(req.params.id);
+
+  const { data: wo, error: woErr } = await supabase
+    .from('workorders')
+    .select('id, tenant_id, project_id, scheduled_date, workorder_number, scheduled_time, site_location, description')
+    .eq('id', woId)
+    .eq('tenant_id', req.tenantId)
+    .single();
+
+  if (woErr || !wo) return res.status(404).json({ error: 'Workorder not found' });
+  if (!wo.scheduled_date) return res.status(422).json({ error: 'Workorder must have a scheduled date before auto-assigning' });
+
+  // Read per-tenant hold_minutes from app_settings (default 30)
+  let holdMinutes = 30;
+  try {
+    const { data: setting } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('tenant_id', req.tenantId)
+      .eq('key', 'dispatch_hold_minutes')
+      .maybeSingle();
+    if (setting?.value) holdMinutes = parseInt(setting.value, 10) || 30;
+  } catch { /* use default */ }
+
+  const date = wo.scheduled_date;
+
+  // 1. All technicians for this tenant
+  const { data: techRows } = await supabase
+    .from('users')
+    .select('id, name, email')
+    .eq('tenant_id', req.tenantId)
+    .eq('role', 'TECHNICIAN')
+    .order('name');
+  const techs = techRows || [];
+
+  // 2. Workorders on the same date (excluding this one)
+  const { data: busyWos } = await supabase
+    .from('workorders')
+    .select('assigned_technician_id')
+    .eq('tenant_id', req.tenantId)
+    .eq('scheduled_date', date)
+    .not('assigned_technician_id', 'is', null)
+    .neq('id', woId);
+  const busyIds = new Set((busyWos || []).map(w => w.assigned_technician_id));
+
+  // 3. Availability blocks on this date
+  const { data: blockedRows } = await supabase
+    .from('technician_availability')
+    .select('technician_id')
+    .eq('tenant_id', req.tenantId)
+    .eq('date', date);
+  const blockedIds = new Set((blockedRows || []).map(r => r.technician_id));
+
+  // 4. Techs who worked this project recently (last 7 days)
+  let projectTechIds = new Set();
+  if (wo.project_id) {
+    const weekAgo = new Date(date);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const { data: recentWos } = await supabase
+      .from('workorders')
+      .select('assigned_technician_id')
+      .eq('tenant_id', req.tenantId)
+      .eq('project_id', wo.project_id)
+      .gte('scheduled_date', weekAgo.toISOString().slice(0, 10))
+      .lte('scheduled_date', date)
+      .not('assigned_technician_id', 'is', null);
+    projectTechIds = new Set((recentWos || []).map(w => w.assigned_technician_id));
+  }
+
+  // 5. Rank candidates
+  const candidates = techs
+    .map(t => ({
+      technicianId: t.id,
+      name: t.name || t.email,
+      email: t.email,
+      hasConflict: busyIds.has(t.id),
+      isBlocked: blockedIds.has(t.id),
+      workedProjectRecently: projectTechIds.has(t.id),
+      recommended: false,
+    }))
+    .filter(c => !c.isBlocked)  // blocked techs never shown
+    .sort((a, b) => {
+      if (a.hasConflict !== b.hasConflict) return a.hasConflict ? 1 : -1;
+      if (a.workedProjectRecently !== b.workedProjectRecently) return a.workedProjectRecently ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+  const freeCandidates = candidates.filter(c => !c.hasConflict);
+
+  // 6. Ambiguous? Return suggestion list (Tier 1 fallback)
+  if (freeCandidates.length !== 1) {
+    if (freeCandidates.length > 0) freeCandidates[0].recommended = true;
+    return res.json({ autoAssigned: false, candidates });
+  }
+
+  // 7. Unambiguous — auto-assign
+  const winner = freeCandidates[0];
+  const holdUntil = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+
+  await supabase
+    .from('workorders')
+    .update({ assigned_technician_id: winner.technicianId, updated_at: new Date().toISOString() })
+    .eq('id', woId);
+
+  // Queue notification with hold window
+  const { queueAssignmentNotification } = require('../utils/notificationQueue');
+  const { data: project } = await supabase
+    .from('projects')
+    .select('project_number, project_name')
+    .eq('id', wo.project_id)
+    .single();
+
+  await queueAssignmentNotification({
+    tenantId: req.tenantId,
+    technicianId: winner.technicianId,
+    technicianEmail: winner.email,
+    projectId: wo.project_id,
+    projectNumber: project?.project_number || null,
+    projectName: project?.project_name || null,
+    assignedByName: req.user?.name || req.user?.email || 'Admin',
+    workorderId: woId,
+    workorderNumber: wo.workorder_number,
+    scheduledTime: wo.scheduled_time,
+    siteLocation: wo.site_location,
+    holdUntil,
+  });
+
+  res.json({
+    autoAssigned: true,
+    technicianId: winner.technicianId,
+    technicianName: winner.name,
+    holdUntil,
+    holdMinutes,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/workorders/:id/cancel-auto-assign
+// Cancels the hold-window notification and clears the assigned technician.
+// ---------------------------------------------------------------------------
+router.delete('/:id/cancel-auto-assign', adminAuth, async (req, res) => {
+  const woId = Number(req.params.id);
+
+  const { data: wo } = await supabase
+    .from('workorders')
+    .select('id, tenant_id')
+    .eq('id', woId)
+    .eq('tenant_id', req.tenantId)
+    .single();
+
+  if (!wo) return res.status(404).json({ error: 'Workorder not found' });
+
+  // Delete any unsent hold-window notifications for this workorder
+  await supabase
+    .from('pending_notifications')
+    .delete()
+    .eq('workorder_id', woId)
+    .eq('tenant_id', req.tenantId)
+    .eq('sent', false)
+    .not('hold_until', 'is', null);
+
+  // Clear assigned technician
+  await supabase
+    .from('workorders')
+    .update({ assigned_technician_id: null, updated_at: new Date().toISOString() })
+    .eq('id', woId);
 
   res.json({ ok: true });
 });

@@ -1,0 +1,79 @@
+.hold-window-strip {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+}
+
+.hold-window-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #92400e;
+  margin-bottom: 8px;
+}
+
+.hold-window-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hold-window-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: #78350f;
+}
+
+.hold-window-item-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.hold-wo-number {
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.hold-project { color: #374151; }
+.hold-tech    { color: #374151; }
+.hold-date    { color: #6b7280; }
+
+.hold-countdown {
+  margin-left: 8px;
+  padding: 1px 7px;
+  background: #fde68a;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #92400e;
+}
+
+.hold-cancel-btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: 1px solid #f59e0b;
+  background: #fff;
+  color: #92400e;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hold-cancel-btn:hover:not(:disabled) {
+  background: #fef3c7;
+}
+
+.hold-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

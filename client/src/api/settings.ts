@@ -228,5 +228,35 @@ export const settingsAPI = {
       bodyTemplate
     });
     return response.data;
-  }
+  },
+
+  /**
+   * Get automation settings (Phase 6+7).
+   * API: GET /api/settings/automation
+   */
+  getAutomationSettings: async (): Promise<{
+    intakeAutoAccept: boolean;
+    intakeAutoAcceptThreshold: number;
+    dispatchAutoAssign: boolean;
+    dispatchHoldMinutes: number;
+    intakeForwardAddress: string;
+  }> => {
+    const response = await api.get('/settings/automation');
+    return response.data;
+  },
+
+  /**
+   * Save automation settings (Phase 6+7).
+   * API: PATCH /api/settings/automation
+   */
+  setAutomationSettings: async (settings: {
+    intakeAutoAccept?: boolean;
+    intakeAutoAcceptThreshold?: number;
+    dispatchAutoAssign?: boolean;
+    dispatchHoldMinutes?: number;
+    intakeForwardAddress?: string;
+  }): Promise<{ ok: boolean }> => {
+    const response = await api.patch('/settings/automation', settings);
+    return response.data;
+  },
 };

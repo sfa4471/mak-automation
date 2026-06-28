@@ -32,10 +32,12 @@ async function processPendingNotifications() {
 
   let pending;
   try {
+    const now = new Date().toISOString();
     const { data, error } = await supabase
       .from('pending_notifications')
       .select('*')
       .eq('sent', false)
+      .or(`hold_until.is.null,hold_until.lte.${now}`)
       .order('created_at', { ascending: true });
     if (error) throw error;
     pending = data || [];

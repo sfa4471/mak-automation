@@ -240,6 +240,83 @@ export async function getMySchedule(): Promise<{ workorders: WorkorderWithTasks[
 }
 
 // ---------------------------------------------------------------------------
+// Phase 6: Dispatch Tier 2
+// ---------------------------------------------------------------------------
+
+export interface TechCandidate {
+  technicianId: number;
+  name: string;
+  hasConflict: boolean;
+  isBlocked: boolean;
+  workedProjectRecently: boolean;
+  recommended: boolean;
+}
+
+export interface AutoAssignResult {
+  autoAssigned: boolean;
+  technicianId?: number;
+  technicianName?: string;
+  holdUntil?: string;
+  holdMinutes?: number;
+  candidates?: TechCandidate[];
+}
+
+export interface HoldWindowItem {
+  workorderId: number;
+  workorderNumber: string;
+  scheduledDate: string | null;
+  projectName: string | null;
+  technicianName: string | null;
+  technicianId: number | null;
+  holdUntil: string;
+}
+
+export interface AvailabilityBlock {
+  id: number;
+  technicianId: number;
+  technicianName: string | null;
+  date: string;
+  reason: string | null;
+  createdAt: string;
+}
+
+export async function autoAssignWorkorder(id: number): Promise<AutoAssignResult> {
+  const { data } = await api.post<AutoAssignResult>(`/workorders/${id}/auto-assign`);
+  return data;
+}
+
+export async function cancelAutoAssign(id: number): Promise<void> {
+  await api.delete(`/workorders/${id}/cancel-auto-assign`);
+}
+
+export async function getHoldWindow(): Promise<HoldWindowItem[]> {
+  const { data } = await api.get<HoldWindowItem[]>('/workorders/hold-window');
+  return data;
+}
+
+export async function getAvailability(params?: {
+  technicianId?: number;
+  startDate?: string;
+  endDate?: string;
+}): Promise<AvailabilityBlock[]> {
+  const { data } = await api.get<AvailabilityBlock[]>('/workorders/availability', { params });
+  return data;
+}
+
+export async function addAvailabilityBlock(
+  technicianId: number,
+  date: string,
+  reason?: string
+): Promise<AvailabilityBlock> {
+  const { data } = await api.post<AvailabilityBlock>('/workorders/availability', { technicianId, date, reason });
+  return data;
+}
+
+export async function deleteAvailabilityBlock(id: number): Promise<void> {
+  await api.delete(`/workorders/availability/${id}`);
+}
+
+// ---------------------------------------------------------------------------
 // Dispatches
 // ---------------------------------------------------------------------------
 

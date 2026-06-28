@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Task, taskTypeLabel } from '../api/tasks';
+import { Task, taskTypeLabel, tasksAPI } from '../api/tasks';
 import { projectsAPI, Project, ProjectDrawing } from '../api/projects';
+import { useAuth } from '../context/AuthContext';
 import ProjectSpecsReadOnly from './ProjectSpecsReadOnly';
 import './TaskDetailModal.css';
 
@@ -14,11 +15,35 @@ interface TaskDetailModalProps {
 
 const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTechnicianView }) => {
   const navigate = useNavigate();
+  const { isStaffReviewer } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [loadingProject, setLoadingProject] = useState(true);
   const [drawingsExpanded, setDrawingsExpanded] = useState(false);
   const [openingDrawing, setOpeningDrawing] = useState<string | null>(null);
   const [drawingError, setDrawingError] = useState<string | null>(null);
+
+  // PE Notes (ADMIN/PM only)
+  const [peNotes, setPeNotes] = useState<string>(task.peNotes || '');
+  const [peNotesDirty, setPeNotesDirty] = useState(false);
+  const [peNotesSaving, setPeNotesSaving] = useState(false);
+  const [peNotesSaved, setPeNotesSaved] = useState(false);
+  const isAiDraft = Boolean(task.peNotes) && !peNotesDirty;
+
+  const handlePeNotesChange = (val: string) => {
+    setPeNotes(val);
+    setPeNotesDirty(true);
+    setPeNotesSaved(false);
+  };
+
+  const savePeNotes = async () => {
+    setPeNotesSaving(true);
+    try {
+      await tasksAPI.savePeNotes(task.id, peNotes);
+      setPeNotesSaved(true);
+    } catch { /* non-fatal */ } finally {
+      setPeNotesSaving(false);
+    }
+  };
 
   useEffect(() => {
     const loadProject = async () => {
@@ -277,6 +302,61 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
             </div>
           )}
         </div>
+
+        {/* PE Notes — ADMIN/PM only */}
+        {!isTechnicianView && isStaffReviewer() && (
+          <div style={{ padding: '16px 24px', borderTop: '1px solid #e5e7eb' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>PE Notes</span>
+              {isAiDraft && (
+                <span style={{ fontSize: 11, fontWeight: 600, background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 8 }}>
+                  AI Draft — edit before approving
+                </span>
+              )}
+              {peNotesSaved && (
+                <span style={{ fontSize: 11, color: '#166534' }}>Saved</span>
+              )}
+            </div>
+            <textarea
+              value={peNotes}
+              onChange={e => handlePeNotesChange(e.target.value)}
+              placeholder="No PE notes yet. Notes will be drafted automatically when the report is submitted for review."
+              rows={4}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                border: '1px solid #d1d5db',
+                borderRadius: 6,
+                fontSize: 13,
+                lineHeight: 1.5,
+                resize: 'vertical',
+                boxSizing: 'border-box',
+                fontFamily: 'inherit',
+              }}
+            />
+            {peNotesDirty && (
+              <button
+                type="button"
+                onClick={savePeNotes}
+                disabled={peNotesSaving}
+                style={{
+                  marginTop: 6,
+                  padding: '5px 14px',
+                  background: '#2563eb',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 5,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: peNotesSaving ? 'not-allowed' : 'pointer',
+                  opacity: peNotesSaving ? 0.7 : 1,
+                }}
+              >
+                {peNotesSaving ? 'Saving…' : 'Save PE Notes'}
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="modal-footer">
           {task.projectId && !isTechnicianView && (
