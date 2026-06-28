@@ -43,15 +43,17 @@ async function checkDensity(taskId) {
 
   const flags = [];
   for (const row of dataRows) {
-    const pct = parseNum(row.percentProctorDensity);
+    const pct = parseNum(row.percent_proctor_density ?? row.percentProctorDensity);
     if (pct == null) continue;
+    const testNo = row.test_no ?? row.testNo;
+    const location = row.test_location ?? row.testLocation ?? null;
     if (pct < specMin) {
       flags.push({
-        testNo: row.testNo,
-        location: row.testLocation || null,
+        testNo,
+        location,
         measured: pct,
         spec: specMin,
-        message: `Test #${row.testNo}: ${pct}% < ${specMin}% spec`,
+        message: `Test #${testNo}: ${pct}% < ${specMin}% spec`,
       });
     }
   }
