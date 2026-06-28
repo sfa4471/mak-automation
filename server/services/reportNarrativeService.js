@@ -120,7 +120,7 @@ async function draftDensity(taskId) {
   const results = rows.map(r => {
     const pct = r.percent_proctor_density ?? r.percentProctorDensity;
     const testNo = r.test_no ?? r.testNo ?? '?';
-    const loc = r.test_location ?? r.testLocation || 'unknown location';
+    const loc = (r.test_location ?? r.testLocation) || 'unknown location';
     return `Test #${testNo} at ${loc}: ${pct}%`;
   }).join('; ');
 
