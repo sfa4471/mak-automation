@@ -79,7 +79,7 @@ async function checkCompressiveStrength(taskId) {
 
   // Only evaluate cylinders at the compliance break age
   const complianceCyls = cylinders.filter(c => {
-    const age = parseNum(c.ageDays);
+    const age = parseNum(c.age_days ?? c.ageDays);
     return age != null && age === complianceDays;
   });
 
@@ -94,15 +94,16 @@ async function checkCompressiveStrength(taskId) {
 
   const flags = [];
   for (const cyl of complianceCyls) {
-    const strength = parseNum(cyl.compressiveStrength);
+    const strength = parseNum(cyl.compressive_strength ?? cyl.compressiveStrength);
+    const cylNo = cyl.cyl_no ?? cyl.cylNo ?? null;
     if (strength == null) continue;
     if (strength < specStrength) {
       flags.push({
-        cylNo: cyl.cylNo || cyl.cyl_no || null,
+        cylNo,
         measured: strength,
         spec: specStrength,
         ageDays: complianceDays,
-        message: `Cylinder ${cyl.cylNo || cyl.cyl_no || '?'}: ${strength} psi < ${specStrength} psi at ${complianceDays} days`,
+        message: `Cylinder ${cylNo || '?'}: ${strength} psi < ${specStrength} psi at ${complianceDays} days`,
       });
     }
   }
