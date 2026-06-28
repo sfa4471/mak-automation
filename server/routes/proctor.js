@@ -735,6 +735,12 @@ router.post('/:taskId/pdf', authenticate, requireTenant, async (req, res) => {
       ${generateProctorChartSVG(reportData)}
     </div>
 
+    ${reportData.remarks ? `
+    <div style="margin-top:20px;padding:10px 14px;border:1px solid #ccc;border-radius:3px;">
+      <div style="font-size:11px;font-weight:bold;color:#333;text-transform:uppercase;margin-bottom:6px;">Remarks:</div>
+      <div style="font-size:12px;color:#333;white-space:pre-wrap;">${escapeHtml(reportData.remarks)}</div>
+    </div>` : ''}
+
     ${pdfFooterHtml}
   </div>
 </body>
@@ -1161,7 +1167,8 @@ router.post('/task/:taskId', authenticate, requireTenant, [
       atterbergLimits,
       specificGravityG,
       proctorPoints,
-      zavPoints
+      zavPoints,
+      remarks
     } = req.body;
 
     // Use canonical fields if provided, otherwise fallback to old field names
@@ -1270,7 +1277,8 @@ router.post('/task/:taskId', authenticate, requireTenant, [
       ...(atterbergToSave !== undefined ? { atterbergLimits: atterbergToSave } : {}),
       specificGravityG: specificGravityG || null,
       proctorPoints: proctorPointsJson,
-      zavPoints: zavPointsJson
+      zavPoints: zavPointsJson,
+      remarks: remarks !== undefined ? (remarks || null) : undefined
     };
 
     const isTenantIdError = (e) => e && e.message && /tenant_id/.test(e.message);

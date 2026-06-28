@@ -1864,10 +1864,8 @@ router.put('/:id/status', authenticate, requireTenant, [
         })
         .catch(err => console.error('[qcService] Unexpected error:', err));
 
+      // AI drafts remarks into the report table's own remarks field (if empty)
       draftNarrative(taskId, qcTaskType, req.tenantId)
-        .then(draft => {
-          if (draft) supabase.from('tasks').update({ pe_notes: draft }).eq('id', taskId).then(() => {});
-        })
         .catch(err => console.error('[reportNarrative] Unexpected error:', err));
     }
 

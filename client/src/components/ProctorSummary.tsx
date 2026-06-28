@@ -49,6 +49,7 @@ interface ProctorSummaryData {
   specificGravityG: string; // Normalized key
   proctorPoints: ProctorPoint[];
   zavPoints: ZAVPoint[];
+  remarks: string;
 }
 
 const ProctorSummary: React.FC = () => {
@@ -89,7 +90,8 @@ const ProctorSummary: React.FC = () => {
     passing200SummaryPct: '',
     specificGravityG: '',
     proctorPoints: [],
-    zavPoints: []
+    zavPoints: [],
+    remarks: ''
   });
 
   useEffect(() => {
@@ -201,7 +203,8 @@ const ProctorSummary: React.FC = () => {
           passing200SummaryPct: (savedData as any).passing200SummaryPct || savedData.percentPassing200 || '', // Load summary from Page 1
           specificGravityG: savedData.specificGravityG || '',
           proctorPoints: savedData.proctorPoints || [],
-          zavPoints: savedData.zavPoints || []
+          zavPoints: savedData.zavPoints || [],
+          remarks: (savedData as any).remarks || ''
         };
 
         if (!initialData.percentPassing200 && initialData.passing200SummaryPct) {
@@ -273,7 +276,8 @@ const ProctorSummary: React.FC = () => {
           passing200SummaryPct: '',
           specificGravityG: '',
           proctorPoints: [],
-          zavPoints: []
+          zavPoints: [],
+          remarks: ''
         };
 
         // Load saved Proctor data - try draft first (most complete), then step1 data
@@ -342,8 +346,9 @@ const ProctorSummary: React.FC = () => {
           initialData.calculatedBy = data.calculatedBy ?? '';
           initialData.reviewedBy = data.reviewedBy ?? '';
           initialData.checkedBy = data.checkedBy ?? '';
+          initialData.remarks = data.remarks ?? '';
         }
-        
+
         if (!initialData.percentPassing200 && initialData.passing200SummaryPct) {
           initialData.percentPassing200 = initialData.passing200SummaryPct;
         }
@@ -473,9 +478,10 @@ const ProctorSummary: React.FC = () => {
         passing200SummaryPct: summaryData.passing200SummaryPct || '',
         specificGravityG: summaryData.specificGravityG,
         proctorPoints: summaryData.proctorPoints || [],
-        zavPoints: summaryData.zavPoints || []
+        zavPoints: summaryData.zavPoints || [],
+        remarks: summaryData.remarks || ''
       };
-      
+
       await proctorAPI.saveByTask(task.id, reportData);
       
       // Also save to localStorage for backward compatibility
@@ -593,9 +599,10 @@ const ProctorSummary: React.FC = () => {
         passing200SummaryPct: summaryData.passing200SummaryPct || '',
         specificGravityG: summaryData.specificGravityG,
         proctorPoints: summaryData.proctorPoints || [],
-        zavPoints: summaryData.zavPoints || []
+        zavPoints: summaryData.zavPoints || [],
+        remarks: summaryData.remarks || ''
       };
-      
+
       // Save to database
       await proctorAPI.saveByTask(task.id, saveData);
       
@@ -628,9 +635,10 @@ const ProctorSummary: React.FC = () => {
         passing200SummaryPct: summaryData.passing200SummaryPct || '',
         specificGravityG: summaryData.specificGravityG,
         proctorPoints: summaryData.proctorPoints || [],
-        zavPoints: summaryData.zavPoints || []
+        zavPoints: summaryData.zavPoints || [],
+        remarks: summaryData.remarks || ''
       };
-      
+
       // Use same approach as WP1Form - direct fetch (bypassing API helper)
       const token = localStorage.getItem('token');
       const pdfUrl = getApiPathPrefix() + `/proctor/${task.id}/pdf`;
@@ -1139,6 +1147,20 @@ const ProctorSummary: React.FC = () => {
               <div className="summary-field-value">{summaryData.specificGravityG}</div>
             </div>
           </div>
+        </div>
+
+        {/* Remarks */}
+        <div style={{ margin: '16px 0' }}>
+          <label style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: 13 }}>Remarks:</label>
+          <textarea
+            value={summaryData.remarks}
+            onChange={(e) => handleFieldChange('remarks', e.target.value)}
+            readOnly={!isEditable}
+            className={!isEditable ? 'readonly' : ''}
+            rows={3}
+            style={{ width: '100%', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 13, resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
+            placeholder="PE review remarks..."
+          />
         </div>
 
         {/* Proctor Chart */}

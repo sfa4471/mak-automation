@@ -2,8 +2,11 @@
 
 /**
  * Report Narrative Service — drafts a PE-review narrative for a task that has
- * just reached READY_FOR_REVIEW. The draft is saved to tasks.pe_notes and shown
- * to ADMIN/PM in TaskDetailModal for editing before the report is approved.
+ * just reached READY_FOR_REVIEW. The draft is saved directly into the existing
+ * Remarks field on the respective report table (density_reports.remarks,
+ * wp1_data.remarks, rebar_reports.result_remarks, proctor_data.remarks),
+ * but ONLY when that field is currently empty. This way it appears naturally in
+ * the existing Remarks section of the PDF without any separate "PE Notes" block.
  *
  * Requires ANTHROPIC_API_KEY in env. Returns null (silently) if key is absent.
  * Never throws — caller fire-and-forgets.
@@ -16,6 +19,11 @@ const MODEL = 'claude-sonnet-4-6';
 
 function isConfigured() {
   return Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
+function parseNum(val) {
+  const n = parseFloat(val);
+  return isNaN(n) ? null : n;
 }
 
 function callAnthropic(systemPrompt, userMessage) {
@@ -64,6 +72,18 @@ function callAnthropic(systemPrompt, userMessage) {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Save AI draft to a report table's remarks field only if currently empty. */
+async function saveToRemarks(table, taskId, remarkField, draft) {
+  if (!draft) return;
+  const { data } = await supabase.from(table).select(remarkField).eq('task_id', taskId).single();
+  if (data && data[remarkField]) return; // tech already wrote remarks — don't overwrite
+  await supabase.from(table).update({ [remarkField]: draft }).eq('task_id', taskId);
+}
+
+// ---------------------------------------------------------------------------
 // Per-type drafters
 // ---------------------------------------------------------------------------
 
@@ -83,32 +103,46 @@ async function draftDensity(taskId) {
 
   if (!report) return null;
 
-  const rows = (Array.isArray(report.test_rows) ? report.test_rows : []).filter(r => r.type !== 'section');
+  const allRows = Array.isArray(report.test_rows) ? report.test_rows : [];
+  // db adapter converts keys to snake_case on save — only include rows with actual data
+  const rows = allRows.filter(r => {
+    if (r.type === 'section') return false;
+    return parseNum(r.percent_proctor_density ?? r.percentProctorDensity) != null;
+  });
   if (rows.length === 0) return null;
 
-  const specList = Array.isArray(report.dens_specs) && report.dens_specs.length > 0
-    ? report.dens_specs.join('%, ') + '%'
-    : (report.dens_spec_percent ? `${report.dens_spec_percent}%` : 'not specified');
+  const specMin = Array.isArray(report.dens_specs) && report.dens_specs.length > 0
+    ? Math.min(...report.dens_specs.map(Number).filter(n => !isNaN(n)))
+    : parseNum(report.dens_spec_percent);
 
-  const results = rows.map(r =>
-    `Test #${r.testNo ?? '?'} at ${r.testLocation || 'unknown location'}: ${r.percentProctorDensity ?? '?'}% Proctor density`
-  ).join('; ');
+  const specList = specMin != null ? `${specMin}%` : 'not specified';
+
+  const results = rows.map(r => {
+    const pct = r.percent_proctor_density ?? r.percentProctorDensity;
+    const testNo = r.test_no ?? r.testNo ?? '?';
+    const loc = r.test_location ?? r.testLocation || 'unknown location';
+    return `Test #${testNo} at ${loc}: ${pct}%`;
+  }).join('; ');
 
   const fails = rows.filter(r => {
-    const pct = parseFloat(r.percentProctorDensity);
-    const spec = parseFloat(Array.isArray(report.dens_specs) ? report.dens_specs[0] : report.dens_spec_percent);
-    return !isNaN(pct) && !isNaN(spec) && pct < spec;
+    const pct = parseNum(r.percent_proctor_density ?? r.percentProctorDensity);
+    return pct != null && specMin != null && pct < specMin;
   });
 
   const userMessage = `Structure: ${report.structure || 'unspecified'}
 Specification: minimum ${specList} of maximum dry density
+Number of tests: ${rows.length}
 Test results: ${results}
-${fails.length > 0 ? `Failing tests: ${fails.map(r => `Test #${r.testNo} (${r.percentProctorDensity}%)`).join(', ')}` : 'All tests pass.'}
+${fails.length > 0
+  ? `FAILING tests: ${fails.map(r => `Test #${r.test_no ?? r.testNo ?? '?'} (${r.percent_proctor_density ?? r.percentProctorDensity}%)`).join(', ')}`
+  : 'All tests pass specification.'}
 ${report.remarks ? `Field remarks: ${report.remarks}` : ''}
 
 Write a PE review narrative for this density testing field report.`;
 
-  return callAnthropic(SYSTEM_PROMPT, userMessage);
+  const draft = await callAnthropic(SYSTEM_PROMPT, userMessage);
+  await saveToRemarks('density_reports', taskId, 'remarks', draft);
+  return draft;
 }
 
 async function draftCompressiveStrength(taskId) {
@@ -124,23 +158,29 @@ async function draftCompressiveStrength(taskId) {
   const specStrength = wp1.spec_strength;
   const cylinders = Array.isArray(wp1.cylinders) ? wp1.cylinders : [];
 
-  // Only comment on cylinders at the compliance break age
+  // db adapter converts keys to snake_case on save — read with snake ?? camel fallback
   const complianceCyls = cylinders.filter(c => {
-    const age = parseFloat(c.ageDays);
-    return !isNaN(age) && age === complianceDays;
+    const age = parseNum(c.age_days ?? c.ageDays);
+    return age != null && age === complianceDays;
   });
 
   const pendingCyls = cylinders.filter(c => {
-    const age = parseFloat(c.ageDays);
-    return isNaN(age) || age !== complianceDays;
+    const age = parseNum(c.age_days ?? c.ageDays);
+    return age == null || age !== complianceDays;
   });
 
   let cylSummary;
   if (complianceCyls.length === 0) {
     cylSummary = `No ${complianceDays}-day break results recorded yet (${cylinders.length} cylinder(s) on file at other ages).`;
   } else {
-    const strengths = complianceCyls.map(c => `${c.compressiveStrength ?? '?'} psi`).join(', ');
-    const fails = complianceCyls.filter(c => specStrength && parseFloat(c.compressiveStrength) < parseFloat(specStrength));
+    const strengths = complianceCyls.map(c => {
+      const s = c.compressive_strength ?? c.compressiveStrength;
+      return s != null ? `${s} psi` : '(no result)';
+    }).join(', ');
+    const fails = complianceCyls.filter(c => {
+      const s = parseNum(c.compressive_strength ?? c.compressiveStrength);
+      return s != null && specStrength != null && s < parseNum(specStrength);
+    });
     cylSummary = `${complianceDays}-day break results: ${strengths}. ${fails.length > 0 ? `${fails.length} cylinder(s) failed to meet ${specStrength} psi specification.` : 'All compliance-age cylinders meet specification.'}`;
   }
 
@@ -152,13 +192,15 @@ ${wp1.remarks ? `Field remarks: ${wp1.remarks}` : ''}
 
 Write a PE review narrative for this compressive strength field report. Only comment on ${complianceDays}-day compliance breaks.`;
 
-  return callAnthropic(SYSTEM_PROMPT, userMessage);
+  const draft = await callAnthropic(SYSTEM_PROMPT, userMessage);
+  await saveToRemarks('wp1_data', taskId, 'remarks', draft);
+  return draft;
 }
 
 async function draftProctor(taskId) {
   const { data: pd } = await supabase
     .from('proctor_data')
-    .select('opt_moisture_pct, max_dry_density_pcf, soil_description, test_method, remarks')
+    .select('opt_moisture_pct, max_dry_density_pcf, description, soil_classification, test_method, remarks')
     .eq('task_id', taskId)
     .order('id', { ascending: false })
     .limit(1)
@@ -167,7 +209,7 @@ async function draftProctor(taskId) {
   if (!pd) return null;
 
   const userMessage = `Proctor compaction test results:
-Soil description: ${pd.soil_description || 'not specified'}
+Soil description: ${pd.description || pd.soil_classification || 'not specified'}
 Test method: ${pd.test_method || 'ASTM D 698'}
 Maximum dry density: ${pd.max_dry_density_pcf ?? 'not recorded'} pcf
 Optimum moisture content: ${pd.opt_moisture_pct ?? 'not recorded'}%
@@ -175,7 +217,9 @@ ${pd.remarks ? `Field remarks: ${pd.remarks}` : ''}
 
 Write a PE review narrative for this Proctor compaction test report.`;
 
-  return callAnthropic(SYSTEM_PROMPT, userMessage);
+  const draft = await callAnthropic(SYSTEM_PROMPT, userMessage);
+  await saveToRemarks('proctor_data', taskId, 'remarks', draft);
+  return draft;
 }
 
 async function draftRebar(taskId) {
@@ -193,11 +237,13 @@ Location/element: ${rr.structure || rr.element || rr.location_name || 'not speci
 ${rr.bar_size ? `Bar size: ${rr.bar_size}` : ''}
 ${rr.spacing ? `Spacing: ${rr.spacing}` : ''}
 ${rr.cover ? `Cover: ${rr.cover}` : ''}
-${rr.remarks || rr.result_remarks ? `Field remarks: ${rr.remarks || rr.result_remarks}` : ''}
+${rr.result_remarks || rr.remarks ? `Field remarks: ${rr.result_remarks || rr.remarks}` : ''}
 
 Write a PE review narrative for this rebar inspection report.`;
 
-  return callAnthropic(SYSTEM_PROMPT, userMessage);
+  const draft = await callAnthropic(SYSTEM_PROMPT, userMessage);
+  await saveToRemarks('rebar_reports', taskId, 'result_remarks', draft);
+  return draft;
 }
 
 // ---------------------------------------------------------------------------
