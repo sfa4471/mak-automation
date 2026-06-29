@@ -156,14 +156,14 @@ async function draftCompressiveStrength(taskId) {
   const specStrength = wp1.spec_strength;
   const cylinders = Array.isArray(wp1.cylinders) ? wp1.cylinders : [];
 
-  // db adapter converts keys to snake_case on save — read with snake ?? camel fallback
+  // WP1Form stores age as `age` (single field); db adapter leaves single-word keys unchanged
   const complianceCyls = cylinders.filter(c => {
-    const age = parseNum(c.age_days ?? c.ageDays);
+    const age = parseNum(c.age);
     return age != null && age === complianceDays;
   });
 
   const pendingCyls = cylinders.filter(c => {
-    const age = parseNum(c.age_days ?? c.ageDays);
+    const age = parseNum(c.age);
     return age == null || age !== complianceDays;
   });
 

@@ -78,8 +78,9 @@ async function checkCompressiveStrength(taskId) {
   const cylinders = Array.isArray(wp1.cylinders) ? wp1.cylinders : [];
 
   // Only evaluate cylinders at the compliance break age
+  // WP1Form stores age as `age` (single field), which db adapter leaves as `age` (no change)
   const complianceCyls = cylinders.filter(c => {
-    const age = parseNum(c.age_days ?? c.ageDays);
+    const age = parseNum(c.age);
     return age != null && age === complianceDays;
   });
 
@@ -95,7 +96,7 @@ async function checkCompressiveStrength(taskId) {
   const flags = [];
   for (const cyl of complianceCyls) {
     const strength = parseNum(cyl.compressive_strength ?? cyl.compressiveStrength);
-    const cylNo = cyl.cyl_no ?? cyl.cylNo ?? null;
+    const cylNo = cyl.cylinder_number ?? null;
     if (strength == null) continue;
     if (strength < specStrength) {
       flags.push({
