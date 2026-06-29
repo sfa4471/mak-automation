@@ -12,12 +12,21 @@ const TEST_TYPE_LABELS: Record<string, string> = {
   CYLINDER_PICKUP: 'Cylinder Pickup',
 };
 
-function ConfidenceBadge({ level }: { level?: string }) {
-  const cls =
-    level === 'high' ? 'conf-badge conf-high'
+function scoreToLevel(score?: number): 'high' | 'medium' | 'low' | undefined {
+  if (score == null) return undefined;
+  if (score >= 80) return 'high';
+  if (score >= 50) return 'medium';
+  return 'low';
+}
+
+function ConfidenceBadge({ score }: { score?: number }) {
+  const level = scoreToLevel(score);
+  if (level == null) return null;
+  const cls = level === 'high' ? 'conf-badge conf-high'
     : level === 'medium' ? 'conf-badge conf-medium'
     : 'conf-badge conf-low';
-  return <span className={cls}>{level ?? 'unknown'}</span>;
+  const label = level === 'high' ? `${score}% confident` : level === 'medium' ? `${score}% — review` : `${score}% — low`;
+  return <span className={cls} title={label}>{level}</span>;
 }
 
 function formatDate(iso?: string | null) {
@@ -71,6 +80,10 @@ function DraftCard({
   const matchScore = draft.project_match_score != null
     ? Math.round(Number(draft.project_match_score) * 100)
     : null;
+
+  // Field-level confidence scores (0–100) from the AI scheduling extraction
+  const fieldConf = (draft.extraction_json as any)?.fieldConfidence as
+    { scheduledDate?: number; testTypes?: number; siteLocation?: number } | undefined;
 
   const matchedProject = projects.find(p => p.id === editing.parsed_project_id) ?? null;
 
@@ -156,7 +169,7 @@ function DraftCard({
           </div>
 
           <div className="draft-field">
-            <label>Scheduled Date</label>
+            <label>Scheduled Date <ConfidenceBadge score={fieldConf?.scheduledDate} /></label>
             <input
               type="date"
               value={editing.parsed_scheduled_date}
@@ -168,7 +181,7 @@ function DraftCard({
           </div>
 
           <div className="draft-field">
-            <label>Site Location</label>
+            <label>Site Location <ConfidenceBadge score={fieldConf?.siteLocation} /></label>
             <input
               type="text"
               value={editing.parsed_site_location}
@@ -178,7 +191,7 @@ function DraftCard({
           </div>
 
           <div className="draft-field">
-            <label>Test Types</label>
+            <label>Test Types <ConfidenceBadge score={fieldConf?.testTypes} /></label>
             <div className="test-type-chips">
               {Object.entries(TEST_TYPE_LABELS).map(([key, label]) => (
                 <button
