@@ -75,11 +75,9 @@ function callAnthropic(systemPrompt, userMessage) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Save AI draft to a report table's remarks field only if currently empty. */
+/** Save AI draft to a report table's remarks field — always overwrites so resubmissions get a fresh narrative. */
 async function saveToRemarks(table, taskId, remarkField, draft) {
   if (!draft) return;
-  const { data } = await supabase.from(table).select(remarkField).eq('task_id', taskId).single();
-  if (data && data[remarkField]) return; // tech already wrote remarks — don't overwrite
   await supabase.from(table).update({ [remarkField]: draft }).eq('task_id', taskId);
 }
 
