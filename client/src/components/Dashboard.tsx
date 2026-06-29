@@ -570,6 +570,14 @@ const Dashboard: React.FC = () => {
                 Intake Queue
               </button>
             )}
+            {isStaffReviewer() && (
+              <button
+                onClick={() => navigate('/admin/availability')}
+                className="secondary-button"
+              >
+                Team Availability
+              </button>
+            )}
             {isAdmin() && (
               <button
                 onClick={() => navigate('/admin/settings')}

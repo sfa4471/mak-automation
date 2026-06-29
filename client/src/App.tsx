@@ -38,6 +38,7 @@ const GaugeCheckout = lazy(() => import('./components/GaugeCheckout'));
 const ProjectFinancials = lazy(() => import('./components/admin/ProjectFinancials'));
 const ProjectSummary = lazy(() => import('./components/admin/ProjectSummary'));
 const IntakeQueue = lazy(() => import('./components/admin/IntakeQueue'));
+const TechAvailability = lazy(() => import('./components/admin/TechAvailability'));
 
 function App() {
   return (
@@ -268,6 +269,16 @@ function App() {
               <ProtectedRoute requireAdminOrPm>
                 <Suspense fallback={<LoadingSpinner fullScreen message="Loading intake queue…" />}>
                   <IntakeQueue />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/availability"
+            element={
+              <ProtectedRoute requireAdminOrPm>
+                <Suspense fallback={<LoadingSpinner fullScreen message="Loading availability…" />}>
+                  <TechAvailability />
                 </Suspense>
               </ProtectedRoute>
             }
