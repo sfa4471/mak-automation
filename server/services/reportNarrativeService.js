@@ -75,10 +75,13 @@ function callAnthropic(systemPrompt, userMessage) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Save AI draft to a report table's remarks field — always overwrites so resubmissions get a fresh narrative. */
+/** Save AI draft to a report table's remarks field and mark the task so the UI can show an "AI Draft" badge. */
 async function saveToRemarks(table, taskId, remarkField, draft) {
   if (!draft) return;
   await supabase.from(table).update({ [remarkField]: draft }).eq('task_id', taskId);
+  // Set pe_notes = 'AI_DRAFT' as a sentinel so the admin review panel knows this came from AI.
+  // Cleared when the PE manually saves the remarks via PUT /api/tasks/:id/remarks.
+  await supabase.from('tasks').update({ pe_notes: 'AI_DRAFT' }).eq('id', taskId);
 }
 
 // ---------------------------------------------------------------------------

@@ -240,6 +240,73 @@
   background: #5a6268;
 }
 
+/* ── PE Remarks panel ── */
+.pe-remarks-section {
+  margin-top: 20px;
+  padding: 16px;
+  background: #fafafa;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+.pe-remarks-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pe-remarks-header h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+.pe-remarks-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.pe-remarks-badge--ai     { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.pe-remarks-badge--edited { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.pe-remarks-badge--saved  { background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; }
+.pe-remarks-hint {
+  font-size: 11px;
+  color: #92400e;
+  margin: 0 0 8px;
+}
+.pe-remarks-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #111827;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.pe-remarks-textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99,102,241,.12);
+}
+.pe-remarks-save-btn {
+  padding: 6px 18px;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pe-remarks-save-btn:hover:not(:disabled) { background: #4f46e5; }
+.pe-remarks-save-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* Specification tables and subsection styles: ProjectSpecsReadOnly.css */
 
 /* Responsive adjustments */

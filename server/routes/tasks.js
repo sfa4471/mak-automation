@@ -3755,6 +3755,91 @@ router.put('/:id/pe-notes', authenticate, requireTenant, requireAdminOrPm, async
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/tasks/:id/remarks — load AI-drafted remarks for PE review
+// PUT /api/tasks/:id/remarks — PE saves edited remarks; clears AI_DRAFT sentinel
+// ---------------------------------------------------------------------------
+
+function remarksTableFor(taskType) {
+  switch (taskType) {
+    case 'DENSITY_MEASUREMENT':   return { table: 'density_reports', field: 'remarks' };
+    case 'COMPRESSIVE_STRENGTH':
+    case 'CYLINDER_PICKUP':       return { table: 'wp1_data',        field: 'remarks' };
+    case 'PROCTOR':               return { table: 'proctor_data',    field: 'remarks' };
+    case 'REBAR':                 return { table: 'rebar_reports',   field: 'result_remarks' };
+    default:                      return null;
+  }
+}
+
+router.get('/:id/remarks', authenticate, requireTenant, requireAdminOrPm, async (req, res) => {
+  const taskId = parseInt(req.params.id);
+  if (isNaN(taskId)) return res.status(400).json({ error: 'Invalid task ID' });
+
+  try {
+    const { data: task, error: taskErr } = await supabase
+      .from('tasks')
+      .select('task_type, pe_notes')
+      .eq('id', taskId)
+      .eq('tenant_id', req.tenantId)
+      .single();
+    if (taskErr || !task) return res.status(404).json({ error: 'Task not found' });
+
+    const mapping = remarksTableFor(task.task_type);
+    if (!mapping) return res.json({ remarks: null, isAiDraft: false });
+
+    const { data: report } = await supabase
+      .from(mapping.table)
+      .select(mapping.field)
+      .eq('task_id', taskId)
+      .maybeSingle();
+
+    res.json({
+      remarks: report?.[mapping.field] ?? null,
+      isAiDraft: task.pe_notes === 'AI_DRAFT',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/:id/remarks', authenticate, requireTenant, requireAdminOrPm, async (req, res) => {
+  const taskId = parseInt(req.params.id);
+  if (isNaN(taskId)) return res.status(400).json({ error: 'Invalid task ID' });
+
+  const { remarks } = req.body;
+  if (typeof remarks !== 'string') return res.status(400).json({ error: 'remarks must be a string' });
+
+  try {
+    const { data: task, error: taskErr } = await supabase
+      .from('tasks')
+      .select('task_type')
+      .eq('id', taskId)
+      .eq('tenant_id', req.tenantId)
+      .single();
+    if (taskErr || !task) return res.status(404).json({ error: 'Task not found' });
+
+    const mapping = remarksTableFor(task.task_type);
+    if (!mapping) return res.status(422).json({ error: 'Task type does not support remarks' });
+
+    const { error: reportErr } = await supabase
+      .from(mapping.table)
+      .update({ [mapping.field]: remarks || null })
+      .eq('task_id', taskId);
+    if (reportErr) throw reportErr;
+
+    // Clear the AI_DRAFT sentinel — PE has now touched the remarks
+    await supabase
+      .from('tasks')
+      .update({ pe_notes: null })
+      .eq('id', taskId)
+      .eq('tenant_id', req.tenantId);
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Attach logTaskHistory to router so it can be imported by other route files
 router.logTaskHistory = logTaskHistory;
 module.exports = router;

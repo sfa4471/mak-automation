@@ -1,10 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Task, taskTypeLabel, tasksAPI } from '../api/tasks';
 import { projectsAPI, Project, ProjectDrawing } from '../api/projects';
 import { useAuth } from '../context/AuthContext';
+import api from '../api/api';
 import ProjectSpecsReadOnly from './ProjectSpecsReadOnly';
 import './TaskDetailModal.css';
+
+const REMARKS_TASK_TYPES = new Set([
+  'DENSITY_MEASUREMENT', 'COMPRESSIVE_STRENGTH', 'CYLINDER_PICKUP', 'PROCTOR', 'REBAR',
+]);
 
 interface TaskDetailModalProps {
   task: Task;
@@ -21,6 +26,14 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
   const [drawingsExpanded, setDrawingsExpanded] = useState(false);
   const [openingDrawing, setOpeningDrawing] = useState<string | null>(null);
   const [drawingError, setDrawingError] = useState<string | null>(null);
+
+  // PE Remarks — only loaded for staff reviewers on report tasks
+  const [remarks, setRemarks] = useState<string>('');
+  const [isAiDraft, setIsAiDraft] = useState(false);
+  const [remarksDirty, setRemarksDirty] = useState(false);
+  const [remarksSaving, setRemarksSaving] = useState(false);
+  const [remarksSaved, setRemarksSaved] = useState(false);
+  const remarksTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const loadProject = async () => {
@@ -41,6 +54,36 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
       setLoadingProject(false);
     }
   }, [task.projectId]);
+
+  // Load AI-drafted remarks for staff reviewers on report task types
+  useEffect(() => {
+    if (!isStaffReviewer() || !REMARKS_TASK_TYPES.has(task.taskType)) return;
+    api.get<{ remarks: string | null; isAiDraft: boolean }>(`/tasks/${task.id}/remarks`)
+      .then(r => {
+        setRemarks(r.data.remarks ?? '');
+        setIsAiDraft(r.data.isAiDraft);
+        setRemarksDirty(false);
+        setRemarksSaved(false);
+      })
+      .catch(() => {});
+  }, [task.id, task.taskType]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function saveRemarks() {
+    setRemarksSaving(true);
+    try {
+      await api.put(`/tasks/${task.id}/remarks`, { remarks });
+      setIsAiDraft(false);
+      setRemarksDirty(false);
+      setRemarksSaved(true);
+      if (remarksTimerRef.current) clearTimeout(remarksTimerRef.current);
+      remarksTimerRef.current = setTimeout(() => setRemarksSaved(false), 4000);
+    } catch {
+      // non-fatal — user can retry
+    } finally {
+      setRemarksSaving(false);
+    }
+  }
+
   const formatDate = (dateString?: string): string => {
     if (!dateString) return 'Not specified';
     const [year, month, day] = dateString.split('-').map(Number);
@@ -234,6 +277,50 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose, isTech
             <h3>Specifications</h3>
             <ProjectSpecsReadOnly project={project} loadingProject={loadingProject} />
           </div>
+
+          {/* PE Remarks — visible to staff reviewers on report tasks */}
+          {isStaffReviewer() && !isTechnicianView && REMARKS_TASK_TYPES.has(task.taskType) && (
+            <div className="pe-remarks-section">
+              <div className="pe-remarks-header">
+                <h3 style={{ margin: 0 }}>Remarks</h3>
+                {isAiDraft && !remarksDirty && (
+                  <span className="pe-remarks-badge pe-remarks-badge--ai">AI Draft</span>
+                )}
+                {remarksDirty && (
+                  <span className="pe-remarks-badge pe-remarks-badge--edited">Edited</span>
+                )}
+                {remarksSaved && !remarksDirty && (
+                  <span className="pe-remarks-badge pe-remarks-badge--saved">Saved</span>
+                )}
+              </div>
+              {isAiDraft && !remarksDirty && (
+                <p className="pe-remarks-hint">
+                  AI-drafted narrative — review and edit before approving. Saving clears this label.
+                </p>
+              )}
+              <textarea
+                className="pe-remarks-textarea"
+                value={remarks}
+                rows={5}
+                placeholder="No remarks drafted yet. The AI will generate a narrative when the tech submits for review."
+                onChange={e => {
+                  setRemarks(e.target.value);
+                  setRemarksDirty(true);
+                  setRemarksSaved(false);
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="pe-remarks-save-btn"
+                  onClick={saveRemarks}
+                  disabled={remarksSaving || !remarksDirty}
+                >
+                  {remarksSaving ? 'Saving…' : 'Save Remarks'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Technician: Drawings list (expandable) */}
           {isTechnicianView && task.projectId && (
